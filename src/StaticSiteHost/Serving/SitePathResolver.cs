@@ -44,6 +44,14 @@ public sealed class SitePathResolver
     private const string IndexFile = "index.html";
     private const string NotFoundFile = "404.html";
 
+    /// <summary>
+    /// Deepest path this will consider. Resolution walks up the tree one directory at a
+    /// time, building a path and stat-ing it at each level, so an 8 KB URL of one-character
+    /// segments would buy thousands of syscalls and megabytes of allocation from a single
+    /// unauthenticated GET. Real sites nest fewer than ten deep.
+    /// </summary>
+    public const int MaxPathSegments = 64;
+
     private readonly SiteHostingOptions _options;
 
     public SitePathResolver(IOptions<SiteHostingOptions> options) => _options = options.Value;
@@ -119,6 +127,8 @@ public sealed class SitePathResolver
     {
         segments = [];
         var parts = requestPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > MaxPathSegments) return false;
+
         var result = new List<string>(parts.Length);
 
         foreach (var part in parts)

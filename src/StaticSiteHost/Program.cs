@@ -91,6 +91,17 @@ builder.Services.AddAuthorizationBuilder()
 
 builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
 
+builder.Services.Configure<RouteOptions>(options =>
+{
+    // Razor Pages derives routes from file paths, so Pages/Sites/Details.cshtml would
+    // generate /Sites/Details. Matching was always case-insensitive; this makes generated
+    // links lowercase to match.
+    //
+    // LowercaseQueryStrings is deliberately left off: invitation tokens are case-sensitive
+    // base64url, and lowercasing one would silently break every activation link.
+    options.LowercaseUrls = true;
+});
+
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizeFolder("/");

@@ -328,6 +328,9 @@ public sealed class ZipDeploymentService
             segments.Add(segment);
         }
 
+        // Anything nested deeper than the resolver will look could never be served anyway.
+        if (segments.Count > SitePathResolver.MaxPathSegments) return null;
+
         return segments.Count == 0 ? null : segments.ToArray();
     }
 

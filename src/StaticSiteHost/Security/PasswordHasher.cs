@@ -14,6 +14,14 @@ public static class PasswordHasher
     private const int KeySize = 32;
     private const string Prefix = "pbkdf2$sha256$";
 
+    /// <summary>
+    /// A valid hash of a random value nobody will ever supply. Verifying against it costs
+    /// exactly what a real check costs, so sign-in can spend the same work whether or not
+    /// the account exists — otherwise an unknown username returns noticeably faster and
+    /// becomes a way to enumerate who has an account here.
+    /// </summary>
+    public static string PlaceholderHash { get; } = Hash(Tokens.New());
+
     public static string Hash(string password)
     {
         ArgumentException.ThrowIfNullOrEmpty(password);
