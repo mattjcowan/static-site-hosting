@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hello, world — Demo Site</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-source="/blog/hello-world.html">
+  <header class="site-head">
+    <a class="logo" href="/">demo<span>.site</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+    </nav>
+  </header>
+
+  <main>
+    <a class="back" href="/blog/">← All posts</a>
+
+    <article class="post">
+      <h1>Hello, world</h1>
+      <time datetime="2026-07-14">14 July 2026</time>
+
+      <p>
+        This file lives on disk as <code>/blog/hello-world.html</code>, but you almost
+        certainly arrived here by clicking a link to <code>/blog/hello-world</code>.
+      </p>
+
+      <p>
+        That is the whole trick: when a path has no extension, the host tries the
+        <code>.html</code> sibling before it tries anything else. You write clean URLs in
+        your markup and never think about it again.
+      </p>
+
+      <blockquote>
+        Check the banner pinned to the bottom of this page — it shows what you asked for
+        and what you actually got.
+      </blockquote>
+
+      <h2>What happens if you get it wrong</h2>
+
+      <p>
+        Ask for <a href="/blog/hello-wrold">/blog/hello-wrold</a> and there is no file to
+        match. Rather than a bare 404, the request walks up the tree looking for an
+        <code>index.html</code> — and finds <code>/blog/index.html</code> one level up.
+      </p>
+    </article>
+  </main>
+
+  <footer class="site-foot">
+    <p>Uploaded as <code>sample-site.zip</code> · <span id="year"></span></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

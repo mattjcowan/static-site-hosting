@@ -1,0 +1,54 @@
+@page
+@model ActivateModel
+@{
+    ViewData["Title"] = "Set your password";
+}
+
+<div class="narrow">
+    @if (!Model.TokenIsValid)
+    {
+        <div class="page-head">
+            <h1>This link is no longer valid</h1>
+            <p>Invitation links expire, and each one can only be used once.</p>
+        </div>
+        <div class="card">
+            <p class="hint">Ask an administrator to send you a new link, then try again.</p>
+            <a class="btn" asp-page="/Login">Go to sign in</a>
+        </div>
+    }
+    else
+    {
+        <div class="page-head">
+            <h1>Set your password</h1>
+            <p>Choose a password for <strong>@Model.Username</strong>.</p>
+        </div>
+
+        <div class="card">
+            <form method="post">
+                <input type="hidden" asp-for="Token" />
+
+                @if (!ViewData.ModelState.IsValid)
+                {
+                    <div class="alert alert-error" role="alert">
+                        @foreach (var message in ViewData.ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).Distinct())
+                        {
+                            <div>@message</div>
+                        }
+                    </div>
+                }
+
+                <div class="field">
+                    <label asp-for="Input.Password">New password</label>
+                    <input asp-for="Input.Password" type="password" autocomplete="new-password" autofocus required />
+                </div>
+
+                <div class="field">
+                    <label asp-for="Input.ConfirmPassword">Confirm password</label>
+                    <input asp-for="Input.ConfirmPassword" type="password" autocomplete="new-password" required />
+                </div>
+
+                <button type="submit" class="btn-primary" style="width:100%">Set password and sign in</button>
+            </form>
+        </div>
+    }
+</div>

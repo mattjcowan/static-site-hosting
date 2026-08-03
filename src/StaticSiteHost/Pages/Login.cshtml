@@ -1,0 +1,40 @@
+@page
+@model LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+}
+
+<div class="narrow">
+    <div class="page-head">
+        <h1>Sign in</h1>
+        <p>Accounts are created by an administrator.</p>
+    </div>
+
+    <div class="card">
+        <form method="post">
+            <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+
+            @if (!ViewData.ModelState.IsValid)
+            {
+                <div class="alert alert-error" role="alert">
+                    @foreach (var message in ViewData.ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).Distinct())
+                    {
+                        <div>@message</div>
+                    }
+                </div>
+            }
+
+            <div class="field">
+                <label asp-for="Input.Username">Username</label>
+                <input asp-for="Input.Username" autocomplete="username" autofocus required />
+            </div>
+
+            <div class="field">
+                <label asp-for="Input.Password">Password</label>
+                <input asp-for="Input.Password" type="password" autocomplete="current-password" required />
+            </div>
+
+            <button type="submit" class="btn-primary" style="width:100%">Sign in</button>
+        </form>
+    </div>
+</div>

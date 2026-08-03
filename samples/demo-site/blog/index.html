@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blog — Demo Site</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-source="/blog/index.html">
+  <header class="site-head">
+    <a class="logo" href="/">demo<span>.site</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Blog</p>
+      <h1>Three posts</h1>
+      <p class="lede">
+        A subfolder with its own <code>index.html</code>. Ask for
+        <code>/blog/</code> and you get this page; ask for anything under
+        <code>/blog/</code> that does not exist and you get it too.
+      </p>
+    </section>
+
+    <section class="card">
+      <ul class="posts">
+        <li>
+          <h3><a href="/blog/hello-world">Hello, world</a></h3>
+          <time datetime="2026-07-14">14 July 2026</time>
+          <p>The shortest possible post, and the one to click when you want to see extensionless URLs resolve.</p>
+        </li>
+        <li>
+          <h3><a href="/blog/shipping-static-sites">Shipping static sites from a zip</a></h3>
+          <time datetime="2026-07-22">22 July 2026</time>
+          <p>Why an immutable release directory beats copying files over a live site.</p>
+        </li>
+        <li>
+          <h3><a href="/blog/spa-routing">Routing without a router</a></h3>
+          <time datetime="2026-08-01">1 August 2026</time>
+          <p>How walking up the tree to <code>index.html</code> gives you client-side routing for free.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Poke at it</h2>
+      <ul class="links">
+        <li><a href="/blog/hello-world">/blog/hello-world</a> <span class="muted">→ <code>hello-world.html</code></span></li>
+        <li><a href="/blog/does-not-exist">/blog/does-not-exist</a> <span class="muted">→ back to this page</span></li>
+        <li><a href="/blog/deeper/still/missing">/blog/deeper/still/missing</a> <span class="muted">→ also back to this page</span></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <p>Uploaded as <code>sample-site.zip</code> · <span id="year"></span></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+@page
+@model StaticSiteHost.Pages.Account.IndexModel
+@{
+    ViewData["Title"] = "Account";
+}
+
+<div class="page-head">
+    <h1>Account</h1>
+    <p>Your profile, password and API keys.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.NewApiKey))
+{
+    <div class="secret-box">
+        <h2>Your new API key</h2>
+        <p class="hint">This is the only time it will be shown. Store it somewhere safe.</p>
+        <div class="copyfield">
+            <input type="text" id="new-api-key" value="@Model.NewApiKey" readonly onclick="this.select()" />
+            <button type="button" class="btn" data-copy="#new-api-key">Copy</button>
+        </div>
+    </div>
+}
+
+<div class="grid-2">
+    <div class="card">
+        <h2>Profile</h2>
+        <p class="hint">
+            <strong>@Model.Account.Username</strong>
+            <span class="badge @(Model.Account.IsAdministrator ? "badge-admin" : null)">@Model.Account.Role</span>
+            <br />
+            Member since @Model.Account.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd")@(Model.Account.LastLoginUtc is { } seen ? $" · last signed in {seen.ToLocalTime():yyyy-MM-dd HH:mm}" : "")
+        </p>
+
+        <form method="post" asp-page-handler="Profile">
+            <div class="field">
+                <label for="displayName">Display name</label>
+                <input type="text" id="displayName" name="displayName" value="@Model.Account.DisplayName" maxlength="128" required />
+            </div>
+            <button type="submit">Save</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Password</h2>
+        <p class="hint">
+            @(Model.Account.PasswordChangedUtc is { } changed
+                ? $"Last changed {changed.ToLocalTime():yyyy-MM-dd HH:mm}."
+                : "You have not changed your password since the account was created.")
+        </p>
+        <a class="btn" asp-page="Password">Change password</a>
+    </div>
+</div>
+
+<div class="card">
+    <h2>API keys</h2>
+    <p class="hint">
+        Use a key to deploy from CI or the command line. It can do exactly what you can do.
+        Send it as <span class="mono">X-Api-Key</span> or <span class="mono">Authorization: Bearer …</span>.
+    </p>
+
+    <form method="post" asp-page-handler="CreateKey" class="row" style="margin-bottom:1.25rem">
+        <div class="field">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" placeholder="CI pipeline" maxlength="64" required />
+        </div>
+        <div class="field" style="flex:0 1 160px">
+            <label for="expiresInDays">Expires in (days)</label>
+            <input type="number" id="expiresInDays" name="expiresInDays" min="1" max="3650" placeholder="never" />
+        </div>
+        <button type="submit" class="btn-primary">Create key</button>
+    </form>
+
+    @if (Model.ApiKeys.Count == 0)
+    {
+        <p class="empty">You have no API keys yet.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Key</th>
+                        <th>Created</th>
+                        <th>Last used</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var key in Model.ApiKeys)
+                    {
+                        <tr>
+                            <td>@key.Name</td>
+                            <td class="mono nowrap">@key.Display</td>
+                            <td class="nowrap muted">@key.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd")</td>
+                            <td class="nowrap muted">@(key.LastUsedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
+                            <td>
+                                @if (key.Revoked)
+                                {
+                                    <span class="badge badge-off">revoked</span>
+                                }
+                                else if (key.IsExpired)
+                                {
+                                    <span class="badge badge-warn">expired</span>
+                                }
+                                else if (key.ExpiresUtc is { } expires)
+                                {
+                                    <span class="badge">until @expires.ToLocalTime().ToString("yyyy-MM-dd")</span>
+                                }
+                                else
+                                {
+                                    <span class="badge badge-ok">active</span>
+                                }
+                            </td>
+                            <td class="actions">
+                                @if (!key.Revoked)
+                                {
+                                    <form method="post" asp-page-handler="RevokeKey" data-confirm="Revoke '@key.Name'? Anything using it will stop working.">
+                                        <input type="hidden" name="keyId" value="@key.Id" />
+                                        <button type="submit" class="btn-link danger">Revoke</button>
+                                    </form>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>

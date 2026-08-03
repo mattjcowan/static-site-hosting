@@ -1,0 +1,19 @@
+@page
+@model ErrorModel
+@{
+    ViewData["Title"] = "Something went wrong";
+}
+
+<div class="narrow">
+    <div class="page-head">
+        <h1>Something went wrong</h1>
+        <p>The request could not be completed.</p>
+    </div>
+
+    @if (Model.ShowRequestId)
+    {
+        <p class="muted">Request ID: <code>@Model.RequestId</code></p>
+    }
+
+    <p class="right"><a asp-page="/Index">Back to deploy</a></p>
+</div>

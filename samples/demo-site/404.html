@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Not found — Demo Site</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-source="/404.html">
+  <header class="site-head">
+    <a class="logo" href="/">demo<span>.site</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="notfound">
+      <h1>404</h1>
+      <p class="lede">Nothing here.</p>
+      <p class="muted">
+        You reached this page because the request looked like an asset — a path with a
+        non-HTML extension — so it was not folded back into <code>index.html</code>.
+      </p>
+      <p><a class="btn" href="/">Back home</a></p>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <p>Uploaded as <code>sample-site.zip</code> · <span id="year"></span></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

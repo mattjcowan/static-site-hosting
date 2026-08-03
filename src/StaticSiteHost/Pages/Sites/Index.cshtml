@@ -1,0 +1,52 @@
+@page
+@model StaticSiteHost.Pages.Sites.IndexModel
+@{
+    ViewData["Title"] = "Sites";
+}
+
+<div class="page-head">
+    <h1>Sites</h1>
+    <p>Every domain that has content published on this server.</p>
+</div>
+
+<div class="card">
+    @if (Model.Sites.Count == 0)
+    {
+        <p class="empty">Nothing has been published yet. <a asp-page="/Index">Deploy your first site</a>.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Domain</th>
+                        <th>Files</th>
+                        <th>Size</th>
+                        <th>Updated</th>
+                        <th>By</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var site in Model.Sites)
+                    {
+                        var release = site.Current;
+                        <tr>
+                            <td>
+                                <a href="@($"{Request.Scheme}://{site.Domain}/")" target="_blank" rel="noopener">@site.Domain</a>
+                            </td>
+                            <td>@(release?.FileCount.ToString("N0") ?? "—")</td>
+                            <td class="nowrap">@(release is null ? "—" : Format.Bytes(release.TotalBytes))</td>
+                            <td class="nowrap muted">@(site.UpdatedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                            <td class="muted">@(site.LastDeployedBy ?? "—")</td>
+                            <td class="actions">
+                                <a class="btn btn-sm" asp-page="Details" asp-route-domain="@site.Domain">Details</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>

@@ -1,0 +1,167 @@
+@page
+@model StaticSiteHost.Pages.Admin.UsersModel
+@{
+    ViewData["Title"] = "Users";
+    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+}
+
+<div class="page-head">
+    <h1>Users</h1>
+    <p>Create accounts, hand out private links, and decide who administers this server.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.InviteLink))
+{
+    <div class="secret-box">
+        <h2>Private link for @Model.SecretFor</h2>
+        <p class="hint">
+            Send this to them over a channel you trust. It works once and expires in @Model.InviteLifetimeHours hours.
+            It is not shown again — generate a new one if you lose it.
+        </p>
+        <div class="copyfield">
+            <input type="text" id="invite-link" value="@Model.InviteLink" readonly onclick="this.select()" />
+            <button type="button" class="btn" data-copy="#invite-link">Copy</button>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(Model.TemporaryPassword))
+{
+    <div class="secret-box">
+        <h2>Temporary password for @Model.SecretFor</h2>
+        <p class="hint">Shown once. They will be forced to choose their own password at first sign-in.</p>
+        <div class="copyfield">
+            <input type="text" id="temp-password" value="@Model.TemporaryPassword" readonly onclick="this.select()" />
+            <button type="button" class="btn" data-copy="#temp-password">Copy</button>
+        </div>
+    </div>
+}
+
+<div class="card">
+    <h2>Add a user</h2>
+    <p class="hint">New accounts start as members. You can promote them afterwards.</p>
+
+    <form method="post" asp-page-handler="Create">
+        <div class="row">
+            <div class="field">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="off"
+                       placeholder="jordan" maxlength="64" />
+            </div>
+            <div class="field">
+                <label for="displayName">Display name</label>
+                <input type="text" id="displayName" name="displayName" autocomplete="off"
+                       placeholder="Jordan Reyes" maxlength="128" />
+            </div>
+            <div class="field" style="flex:0 1 170px">
+                <label for="role">Role</label>
+                <select id="role" name="role">
+                    <option value="@Roles.Member" selected>Member</option>
+                    <option value="@Roles.Administrator">Administrator</option>
+                </select>
+            </div>
+            <div class="field" style="flex:0 1 220px">
+                <label for="credential">First sign-in</label>
+                <select id="credential" name="credential">
+                    <option value="invite" selected>Private link</option>
+                    <option value="password">Temporary password</option>
+                </select>
+            </div>
+            <button type="submit" class="btn-primary">Create user</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>All users</h2>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last signed in</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var user in Model.Users)
+                {
+                    var isSelf = user.Id == currentUserId;
+                    <tr>
+                        <td>
+                            <strong>@user.Username</strong>
+                            @if (isSelf)
+                            {
+                                <span class="badge">you</span>
+                            }
+                            @if (user.IsBootstrap)
+                            {
+                                <span class="badge">bootstrap</span>
+                            }
+                            <br />
+                            <span class="muted">@user.DisplayName</span>
+                        </td>
+                        <td>
+                            <span class="badge @(user.IsAdministrator ? "badge-admin" : null)">@user.Role</span>
+                        </td>
+                        <td>
+                            @if (user.IsDisabled)
+                            {
+                                <span class="badge badge-off">disabled</span>
+                            }
+                            else if (!user.HasPassword && user.HasPendingInvite)
+                            {
+                                <span class="badge badge-warn">invited</span>
+                            }
+                            else if (!user.HasPassword)
+                            {
+                                <span class="badge badge-warn">no password</span>
+                            }
+                            else if (user.MustChangePassword)
+                            {
+                                <span class="badge badge-warn">must change password</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-ok">active</span>
+                            }
+                        </td>
+                        <td class="nowrap muted">@(user.LastLoginUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
+                        <td class="actions">
+                            <form method="post" asp-page-handler="Invite">
+                                <input type="hidden" name="userId" value="@user.Id" />
+                                <button type="submit" class="btn-link">New link</button>
+                            </form>
+
+                            @if (!isSelf)
+                            {
+                                <form method="post" asp-page-handler="Role">
+                                    <input type="hidden" name="userId" value="@user.Id" />
+                                    <input type="hidden" name="role" value="@(user.IsAdministrator ? Roles.Member : Roles.Administrator)" />
+                                    <button type="submit" class="btn-link">@(user.IsAdministrator ? "Demote" : "Promote")</button>
+                                </form>
+
+                                <form method="post" asp-page-handler="Disable">
+                                    <input type="hidden" name="userId" value="@user.Id" />
+                                    <input type="hidden" name="disabled" value="@((!user.IsDisabled).ToString().ToLowerInvariant())" />
+                                    <button type="submit" class="btn-link">@(user.IsDisabled ? "Enable" : "Disable")</button>
+                                </form>
+
+                                @if (!user.IsBootstrap)
+                                {
+                                    <form method="post" asp-page-handler="Delete"
+                                          data-confirm="Delete @user.Username? Their API keys stop working immediately.">
+                                        <input type="hidden" name="userId" value="@user.Id" />
+                                        <button type="submit" class="btn-link danger">Delete</button>
+                                    </form>
+                                }
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

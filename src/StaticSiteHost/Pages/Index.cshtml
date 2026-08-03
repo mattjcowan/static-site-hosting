@@ -1,0 +1,85 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Deploy";
+}
+
+<div class="page-head">
+    <h1>Deploy a site</h1>
+    <p>Upload a .zip archive and pick the domain it should be published to.</p>
+</div>
+
+<div class="card">
+    <form id="deploy-form" method="post" asp-page-handler="Deploy" enctype="multipart/form-data">
+        <div class="field">
+            <label for="domain">Domain</label>
+            <div class="row">
+                @if (Model.Sites.Count > 0)
+                {
+                    <div class="field" style="flex: 0 1 260px;">
+                        <select id="domain-select" aria-label="Replace an existing site">
+                            <option value="">— New domain —</option>
+                            @foreach (var site in Model.Sites)
+                            {
+                                <option value="@site.Domain">@site.Domain</option>
+                            }
+                        </select>
+                    </div>
+                }
+                <div class="field">
+                    <input type="text" id="domain" name="domain" placeholder="abc.def.com"
+                           autocomplete="off" autocapitalize="off" spellcheck="false" required />
+                </div>
+            </div>
+            <p class="hint" style="margin-bottom:0">
+                Point this hostname's DNS at this server. Uploading to an existing domain replaces its contents.
+            </p>
+        </div>
+
+        <div class="field">
+            <label for="archive">Archive</label>
+            <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Choose a zip archive">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                </svg>
+                <strong id="file-label">Drop a .zip here</strong>
+                <span id="file-hint">or click to choose a file</span>
+                <input type="file" id="archive" name="archive" accept=".zip,application/zip,application/x-zip-compressed" />
+            </div>
+            <p class="hint" style="margin-bottom:0">
+                Up to @Model.MaxUploadDisplay. If everything sits inside a single folder, that folder is unwrapped for you.
+            </p>
+        </div>
+
+        <progress id="deploy-progress" max="100" value="0" hidden></progress>
+
+        <div id="deploy-result"></div>
+
+        <button type="submit" id="deploy-button" class="btn-primary">Deploy</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>How requests are resolved</h2>
+    <p class="hint">Every hosted domain behaves like a static single-page app host.</p>
+    <table>
+        <tbody>
+            <tr>
+                <td class="mono nowrap">/abc/def/</td>
+                <td class="muted">serves <span class="mono">/abc/def/index.html</span></td>
+            </tr>
+            <tr>
+                <td class="mono nowrap">/abc/def/gemini</td>
+                <td class="muted">serves <span class="mono">gemini.html</span>, otherwise <span class="mono">/abc/def/index.html</span>, otherwise walks up to <span class="mono">/index.html</span></td>
+            </tr>
+            <tr>
+                <td class="mono nowrap">/assets/app.js</td>
+                <td class="muted">served as-is; a missing asset returns 404 rather than HTML</td>
+            </tr>
+            <tr>
+                <td class="mono nowrap">/404.html</td>
+                <td class="muted">used for anything that cannot be resolved, when present</td>
+            </tr>
+        </tbody>
+    </table>
+</div>

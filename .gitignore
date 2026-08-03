@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Local data volume used by the Development profile
+.data/
+data/
+
+.env

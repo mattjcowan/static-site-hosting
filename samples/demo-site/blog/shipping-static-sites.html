@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shipping static sites from a zip — Demo Site</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-source="/blog/shipping-static-sites.html">
+  <header class="site-head">
+    <a class="logo" href="/">demo<span>.site</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+    </nav>
+  </header>
+
+  <main>
+    <a class="back" href="/blog/">← All posts</a>
+
+    <article class="post">
+      <h1>Shipping static sites from a zip</h1>
+      <time datetime="2026-07-22">22 July 2026</time>
+
+      <p>
+        The naive way to update a static site is to copy the new files over the old ones.
+        It works right up until someone loads the page halfway through the copy and gets
+        a new <code>index.html</code> pointing at a stylesheet that has not landed yet.
+      </p>
+
+      <h2>Releases instead</h2>
+
+      <p>
+        Each upload is extracted into its own directory, named for the moment it arrived:
+      </p>
+
+      <pre><code>/data/sites/demo.site/
+  site.json                    ← which release is live
+  releases/
+    20260722-101503-4a1c/      ← previous
+    20260801-093311-9be2/      ← current</code></pre>
+
+      <p>
+        Only once every file is written does the pointer in <code>site.json</code> move.
+        A request either sees the whole old release or the whole new one, never a mixture.
+        A failed upload leaves nothing behind but a deleted staging directory.
+      </p>
+
+      <h2>Rollback is just a pointer</h2>
+
+      <p>
+        Because the previous release is still sitting there untouched, going back is not a
+        redeploy — it is a one-field edit. The last few releases are kept and the older
+        ones are pruned as new ones arrive.
+      </p>
+
+      <h2>Deploying from CI</h2>
+
+      <pre><code>curl -H "X-Api-Key: $SSH_KEY" \
+     -F "file=@site.zip" \
+     https://deploy.example.com/api/v1/sites/demo.site/deploy</code></pre>
+
+      <p>
+        Same code path as the drag-and-drop box in the browser, same atomic swap at the end.
+      </p>
+    </article>
+  </main>
+
+  <footer class="site-foot">
+    <p>Uploaded as <code>sample-site.zip</code> · <span id="year"></span></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

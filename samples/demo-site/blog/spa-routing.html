@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Routing without a router — Demo Site</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-source="/blog/spa-routing.html">
+  <header class="site-head">
+    <a class="logo" href="/">demo<span>.site</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+    </nav>
+  </header>
+
+  <main>
+    <a class="back" href="/blog/">← All posts</a>
+
+    <article class="post">
+      <h1>Routing without a router</h1>
+      <time datetime="2026-08-01">1 August 2026</time>
+
+      <p>
+        A single-page app owns its own URLs. The server's only job is to hand back the
+        right <code>index.html</code> no matter how deep the path goes, and let the
+        client take it from there.
+      </p>
+
+      <h2>The walk up</h2>
+
+      <p>
+        For a request to <code>/blog/deeper/still/missing</code>, the host looks for, in
+        order:
+      </p>
+
+      <pre><code>/blog/deeper/still/missing
+/blog/deeper/still/missing.html
+/blog/deeper/still/index.html
+/blog/deeper/index.html
+/blog/index.html          ← found
+/index.html</code></pre>
+
+      <p>
+        The first one that exists wins. Nest an app under <code>/blog/</code> with its own
+        <code>index.html</code> and it keeps its own routes; leave the folder empty and
+        requests fall through to the site root instead.
+      </p>
+
+      <h2>Assets are not routes</h2>
+
+      <p>
+        One deliberate exception: a request for something like
+        <code>/assets/chunk-4f2a.js</code> that does not exist returns a real 404 rather
+        than HTML. Serving an HTML document with a JavaScript content type produces
+        errors that look nothing like the actual problem, so a missing asset is allowed to
+        fail honestly.
+      </p>
+
+      <blockquote>
+        Browsers ask for <code>text/html</code> when you navigate and something else when
+        they fetch an asset, which is exactly the signal needed to tell the two apart.
+      </blockquote>
+
+      <h2>Try it</h2>
+
+      <ul class="links">
+        <li><a href="/blog/deeper/still/missing">/blog/deeper/still/missing</a> <span class="muted">→ the blog index</span></li>
+        <li><a href="/nowhere/at/all">/nowhere/at/all</a> <span class="muted">→ the site index</span></li>
+        <li><a href="/assets/chunk-4f2a.js">/assets/chunk-4f2a.js</a> <span class="muted">→ an honest 404</span></li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="site-foot">
+    <p>Uploaded as <code>sample-site.zip</code> · <span id="year"></span></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

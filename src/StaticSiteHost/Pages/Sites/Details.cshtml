@@ -1,0 +1,96 @@
+@page "{domain}"
+@model StaticSiteHost.Pages.Sites.DetailsModel
+@{
+    ViewData["Title"] = Model.Site.Domain;
+    var url = $"{Request.Scheme}://{Model.Site.Domain}/";
+}
+
+<div class="page-head">
+    <h1>@Model.Site.Domain</h1>
+    <p><a href="@url" target="_blank" rel="noopener">@url</a></p>
+</div>
+
+<div class="card">
+    <h2>Current release</h2>
+    @if (Model.Site.Current is { } current)
+    {
+        <p class="hint">
+            <span class="mono">@current.Id</span> — @current.FileCount.ToString("N0") files, @Format.Bytes(current.TotalBytes),
+            deployed @current.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") by @(current.DeployedBy ?? "unknown")
+            via @current.Source.
+        </p>
+        @if (!current.HasRootIndex)
+        {
+            <div class="alert alert-warning">This release has no <span class="mono">index.html</span> at its root, so unmatched requests return 404.</div>
+        }
+        @if (current.StrippedRootFolder)
+        {
+            <p class="hint">The archive wrapped everything in a single folder, which was unwrapped during extraction.</p>
+        }
+    }
+    else
+    {
+        <div class="alert alert-warning">No release is currently active for this domain.</div>
+    }
+    <a class="btn" asp-page="/Index">Deploy a new version</a>
+</div>
+
+<div class="card">
+    <h2>Releases</h2>
+    <p class="hint">Older releases stay on disk so you can switch back instantly.</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Release</th>
+                    <th>Deployed</th>
+                    <th>By</th>
+                    <th>Files</th>
+                    <th>Size</th>
+                    <th>Archive</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var release in Model.Site.Releases)
+                {
+                    <tr>
+                        <td class="mono nowrap">
+                            @release.Id
+                            @if (release.Id == Model.Site.CurrentRelease)
+                            {
+                                <span class="badge badge-ok">live</span>
+                            }
+                        </td>
+                        <td class="nowrap muted">@release.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="muted">@(release.DeployedBy ?? "—")</td>
+                        <td>@release.FileCount.ToString("N0")</td>
+                        <td class="nowrap">@Format.Bytes(release.TotalBytes)</td>
+                        <td class="muted">@(release.ArchiveName ?? "—")</td>
+                        <td class="actions">
+                            @if (release.Id != Model.Site.CurrentRelease)
+                            {
+                                <form method="post" asp-page-handler="Rollback" asp-route-domain="@Model.Site.Domain">
+                                    <input type="hidden" name="releaseId" value="@release.Id" />
+                                    <button type="submit" class="btn-link">Make live</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@if (Model.IsAdministrator)
+{
+    <div class="card">
+        <h2>Danger zone</h2>
+        <p class="hint">Removing a site deletes every release and all of its files from disk.</p>
+        <form method="post" asp-page-handler="Delete" asp-route-domain="@Model.Site.Domain"
+              data-confirm="Delete @Model.Site.Domain and all of its content? This cannot be undone.">
+            <button type="submit" class="btn-danger">Delete this site</button>
+        </form>
+    </div>
+}

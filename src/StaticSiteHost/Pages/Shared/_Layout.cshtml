@@ -1,0 +1,69 @@
+@{
+    var path = (Context.Request.Path.Value ?? "/").ToLowerInvariant();
+    bool Active(string prefix) => prefix == "/" ? path == "/" : path.StartsWith(prefix, StringComparison.Ordinal);
+
+    var signedIn = User.Identity?.IsAuthenticated == true;
+    var isAdmin = User.IsInRole(Roles.Administrator);
+    var displayName = User.FindFirstValue("display_name") ?? User.Identity?.Name;
+
+    var status = TempData["StatusMessage"] as string;
+    var error = TempData["ErrorMessage"] as string;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] — Static Site Host</title>
+    <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" asp-page="/Index">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                    <path d="m3.3 7 8.7 5 8.7-5M12 22V12" />
+                </svg>
+                Static Site Host
+            </a>
+
+            @if (signedIn)
+            {
+                <nav class="nav">
+                    <a asp-page="/Index" class="@(Active("/") ? "active" : null)">Deploy</a>
+                    <a asp-page="/Sites/Index" class="@(Active("/sites") ? "active" : null)">Sites</a>
+                    <a asp-page="/Account/Index" class="@(Active("/account") ? "active" : null)">Account</a>
+                    @if (isAdmin)
+                    {
+                        <a asp-page="/Admin/Users" class="@(Active("/admin") ? "active" : null)">Users</a>
+                    }
+                    <span class="nav-user">
+                        @displayName
+                        <form method="post" asp-page="/Logout">
+                            <button type="submit" class="btn-link">Sign out</button>
+                        </form>
+                    </span>
+                </nav>
+            }
+        </div>
+    </header>
+
+    <main>
+        @if (!string.IsNullOrEmpty(status))
+        {
+            <div class="alert alert-success">@status</div>
+        }
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert alert-error">@error</div>
+        }
+
+        @RenderBody()
+    </main>
+
+    <script src="~/js/app.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

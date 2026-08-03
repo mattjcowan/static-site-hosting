@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Site</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-source="/index.html">
+  <header class="site-head">
+    <a class="logo" href="/">demo<span>.site</span></a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Sample upload</p>
+      <h1>It works.</h1>
+      <p class="lede">
+        This page was served from a zip file. Everything you see — the stylesheet, the
+        script, the blog section — came out of one archive and landed on disk as an
+        immutable release.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Try the resolution rules</h2>
+      <p class="muted">Click through these and watch the banner at the bottom of each page.</p>
+      <ul class="links">
+        <li><a href="/blog/">/blog/</a> <span class="muted">→ the directory index</span></li>
+        <li><a href="/blog/hello-world">/blog/hello-world</a> <span class="muted">→ finds <code>hello-world.html</code></span></li>
+        <li><a href="/blog/hello-world.html">/blog/hello-world.html</a> <span class="muted">→ the same file, named directly</span></li>
+        <li><a href="/blog/does-not-exist">/blog/does-not-exist</a> <span class="muted">→ falls back to <code>/blog/index.html</code></span></li>
+        <li><a href="/nowhere/at/all">/nowhere/at/all</a> <span class="muted">→ walks all the way up to this page</span></li>
+        <li><a href="/missing.png">/missing.png</a> <span class="muted">→ an asset, so <code>404.html</code> with a 404 status</span></li>
+      </ul>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h3>Posts</h3>
+        <p class="muted">Three of them, in a subfolder with its own index.</p>
+        <a class="btn" href="/blog/">Read the blog</a>
+      </article>
+      <article class="card">
+        <h3>Assets</h3>
+        <p class="muted">
+          <a href="/style.css">/style.css</a> and <a href="/app.js">/app.js</a> are served
+          with real content types and a one-hour cache.
+        </p>
+      </article>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <p>Uploaded as <code>sample-site.zip</code> · <span id="year"></span></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
