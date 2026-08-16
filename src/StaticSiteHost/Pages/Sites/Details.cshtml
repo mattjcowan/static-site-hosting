@@ -36,6 +36,62 @@
 </div>
 
 <div class="card">
+    <h2>
+        Visibility
+        @if (Model.Site.IsPasscodeProtected)
+        {
+            <span class="badge badge-warn">passcode</span>
+        }
+        else
+        {
+            <span class="badge">public</span>
+        }
+    </h2>
+
+    @if (Model.Site.IsPasscodeProtected)
+    {
+        <p class="hint">
+            Visitors must enter a passcode before anything on this site is served, and it is kept out of
+            shared caches and search engines. Set
+            @(Model.Site.PasscodeSetUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")
+            by @(Model.Site.PasscodeSetBy ?? "unknown").
+        </p>
+    }
+    else
+    {
+        <p class="hint">
+            Anyone with the link can read this site. Set a passcode to keep a private report or an
+            unannounced idea from being readable by whoever finds the URL.
+        </p>
+    }
+
+    <form method="post" asp-page-handler="SetPasscode" asp-route-domain="@Model.Site.Domain">
+        <div class="row">
+            <div class="field">
+                <label for="passcode">@(Model.Site.IsPasscodeProtected ? "Replace the passcode" : "Passcode")</label>
+                <input id="passcode" name="passcode" type="text" autocomplete="off" spellcheck="false"
+                       minlength="@Model.MinPasscodeLength" maxlength="200"
+                       placeholder="At least @Model.MinPasscodeLength characters" required />
+            </div>
+            <button type="submit" class="btn-primary">@(Model.Site.IsPasscodeProtected ? "Replace passcode" : "Set passcode")</button>
+        </div>
+    </form>
+
+    <p class="hint" style="margin: 0.75rem 0 0">
+        It is stored hashed and cannot be read back, so keep a copy wherever you keep the link.
+        Everyone already inside stays in for @Model.PasscodeSession unless the passcode is changed or removed.
+    </p>
+
+    @if (Model.Site.IsPasscodeProtected)
+    {
+        <form method="post" asp-page-handler="RemovePasscode" asp-route-domain="@Model.Site.Domain"
+              data-confirm="Remove the passcode from @Model.Site.Domain? Anyone with the link will be able to read it.">
+            <button type="submit" class="btn-danger">Remove passcode</button>
+        </form>
+    }
+</div>
+
+<div class="card">
     <h2>Releases</h2>
     <p class="hint">Older releases stay on disk so you can switch back instantly.</p>
     <div class="table-wrap">

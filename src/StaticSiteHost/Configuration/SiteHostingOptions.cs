@@ -48,6 +48,15 @@ public sealed class SiteHostingOptions
     /// <summary>Minimum length enforced when a user sets a password.</summary>
     public int MinPasswordLength { get; set; } = 12;
 
+    /// <summary>Minimum length enforced when a site is given a visitor passcode.</summary>
+    public int MinPasscodeLength { get; set; } = 8;
+
+    /// <summary>
+    /// How long a visitor stays unlocked after entering a site's passcode. The cookie is
+    /// per-domain, so unlocking one private site never unlocks another.
+    /// </summary>
+    public int PasscodeSessionHours { get; set; } = 168;
+
     /// <summary>
     /// Honour X-Forwarded-Host/-Proto/-For. Turn this on only when the app sits behind a
     /// trusted reverse proxy: routing is driven by the Host header, so a spoofable

@@ -17,6 +17,18 @@ public sealed class SiteRecord
     public string? LastDeployedBy { get; set; }
     public List<ReleaseRecord> Releases { get; set; } = [];
 
+    /// <summary>
+    /// PBKDF2 hash of the visitor passcode, or null when the site is public. Never leaves
+    /// the server: the API and the management UI report only whether one is set.
+    /// </summary>
+    public string? PasscodeHash { get; set; }
+
+    public DateTimeOffset? PasscodeSetUtc { get; set; }
+    public string? PasscodeSetBy { get; set; }
+
+    [JsonIgnore]
+    public bool IsPasscodeProtected => !string.IsNullOrEmpty(PasscodeHash);
+
     [JsonIgnore]
     public ReleaseRecord? Current => Releases.FirstOrDefault(r => r.Id == CurrentRelease);
 }

@@ -65,6 +65,35 @@ public static class ApiEndpoints
                 : Results.BadRequest(new { error = failure });
         });
 
+        api.MapPut("/sites/{domain}/passcode", async (
+            string domain,
+            PasscodeRequest? body,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SitePasscodeGate passcodes) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var (ok, error) = await passcodes.SetAsync(site, body?.Passcode, Actor(principal));
+            return ok
+                ? Results.Ok(new { ok = true, domain = site.Domain, passcodeProtected = true })
+                : Results.BadRequest(new { error });
+        });
+
+        api.MapDelete("/sites/{domain}/passcode", async (
+            string domain,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SitePasscodeGate passcodes) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            await passcodes.ClearAsync(site, Actor(principal));
+            return Results.Ok(new { ok = true, domain = site.Domain, passcodeProtected = false });
+        });
+
         api.MapDelete("/sites/{domain}", async (
             string domain,
             ClaimsPrincipal principal,
@@ -125,6 +154,18 @@ public static class ApiEndpoints
         });
     }
 
+    /// <summary>Resolves a domain to a site, or the response to return instead.</summary>
+    private static (SiteRecord? Site, IResult? Failure) Find(string domain, SiteStore sites)
+    {
+        var (normalized, error) = SiteStore.NormalizeDomain(domain);
+        if (normalized is null) return (null, Results.BadRequest(new { error }));
+
+        var site = sites.TryGet(normalized);
+        return site is null
+            ? (null, Results.NotFound(new { error = $"No site is published at '{normalized}'." }))
+            : (site, null);
+    }
+
     private static object Describe(SiteRecord site) => new
     {
         domain = site.Domain,
@@ -133,6 +174,8 @@ public static class ApiEndpoints
         updatedUtc = site.UpdatedUtc,
         createdBy = site.CreatedBy,
         lastDeployedBy = site.LastDeployedBy,
+        passcodeProtected = site.IsPasscodeProtected,
+        passcodeSetUtc = site.PasscodeSetUtc,
         fileCount = site.Current?.FileCount ?? 0,
         totalBytes = site.Current?.TotalBytes ?? 0,
         releases = site.Releases
@@ -145,3 +188,6 @@ public static class ApiEndpoints
         return keyId is null ? name : $"{name} (key {keyId})";
     }
 }
+
+/// <summary>Body of PUT /api/v1/sites/{domain}/passcode.</summary>
+public sealed record PasscodeRequest(string? Passcode);

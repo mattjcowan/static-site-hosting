@@ -35,6 +35,10 @@
                         <tr>
                             <td>
                                 <a href="@($"{Request.Scheme}://{site.Domain}/")" target="_blank" rel="noopener">@site.Domain</a>
+                                @if (site.IsPasscodeProtected)
+                                {
+                                    <span class="badge badge-warn" title="Visitors must enter a passcode">passcode</span>
+                                }
                             </td>
                             <td>@(release?.FileCount.ToString("N0") ?? "—")</td>
                             <td class="nowrap">@(release is null ? "—" : Format.Bytes(release.TotalBytes))</td>

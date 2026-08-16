@@ -57,6 +57,7 @@ builder.Services.AddSingleton<SiteStore>();
 builder.Services.AddSingleton<AuditLog>();
 builder.Services.AddSingleton<SitePathResolver>();
 builder.Services.AddSingleton<SiteContentServer>();
+builder.Services.AddSingleton<SitePasscodeGate>();
 builder.Services.AddSingleton<ZipDeploymentService>();
 builder.Services.AddSingleton<BootstrapAdministrator>();
 builder.Services.AddSingleton<LoginThrottle>();

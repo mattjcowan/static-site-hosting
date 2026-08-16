@@ -7,6 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.FileProviders.Physical;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
 namespace StaticSiteHost.Serving;
@@ -23,6 +24,7 @@ public sealed class SiteContentServer
 {
     private const string StatusOverrideKey = "ssh.status-override";
     private const string FallbackKey = "ssh.fallback";
+    private const string PrivateKey = "ssh.private";
 
     private static readonly StringComparison PathComparison =
         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -66,8 +68,15 @@ public sealed class SiteContentServer
         }
     }
 
-    public async Task ServeAsync(HttpContext context, string domain)
+    public async Task ServeAsync(HttpContext context, SiteRecord site)
     {
+        var domain = site.Domain;
+
+        // A passcode-protected site has already been unlocked by the time it gets here.
+        // Its files still must not sit in a shared cache or a search index, where the
+        // gate no longer applies.
+        if (site.IsPasscodeProtected) context.Items[PrivateKey] = true;
+
         var root = _sites.GetCurrentReleasePath(domain);
         if (root is null)
         {
@@ -161,9 +170,16 @@ public sealed class SiteContentServer
         var isHtml = response.ContentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true;
         var isFallback = context.Context.Items.ContainsKey(FallbackKey);
 
+        // "private" keeps a proxy or CDN from holding a copy that would be handed to a
+        // visitor who never passed the gate. The browser cache is per-person already, so
+        // asset lifetimes are left alone.
+        var scope = context.Context.Items.ContainsKey(PrivateKey) ? "private" : "public";
+
         response.Headers.CacheControl = isHtml || isFallback
-            ? "no-cache"
-            : $"public, max-age={_options.AssetCacheSeconds}";
+            ? (scope == "private" ? "private, no-cache" : "no-cache")
+            : $"{scope}, max-age={_options.AssetCacheSeconds}";
+
+        if (scope == "private") response.Headers["X-Robots-Tag"] = "noindex, nofollow";
     }
 
     private static Task NotFoundAsync(HttpContext context) =>

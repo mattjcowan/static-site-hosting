@@ -1,8 +1,9 @@
 # Static Site Host
 
 Drop a zip, pick a domain, and it is live. A single ASP.NET Core app that hosts any
-number of static sites out of one data volume, with accounts, invitation links and an
-API for CI. No database — users, keys and site metadata are JSON files on the volume.
+number of static sites out of one data volume, with accounts, invitation links, optional
+[per-site passcodes](#private-sites) and an API for CI. No database — users, keys and site
+metadata are JSON files on the volume.
 
 ```
 you ──upload site.zip──▶  deploy.example.com   (management UI + API)
@@ -110,6 +111,37 @@ only once extraction succeeds, so a failed or half-finished upload never reaches
 visitor. The last three releases stay on disk (`SiteHosting:ReleasesToKeep`) and any of
 them can be made live again from the site's detail page.
 
+### Private sites
+
+Any site can be given a **passcode** under **Sites → the domain → Visibility**. Until a
+visitor enters it, that domain serves nothing — no page, no stylesheet, no image — just a
+form asking for the passcode:
+
+```
+visitor ──GET abc.def.com/report ──▶  401 + passcode form
+        ──POST /__passcode ────────▶  302 back to /report  + cookie
+        ──GET abc.def.com/report ──▶  the file
+```
+
+* The passcode is stored PBKDF2-hashed in `site.json`, so it cannot be read back — keep a
+  copy wherever you keep the link.
+* Unlocking sets a host-only cookie that lasts `SiteHosting:PasscodeSessionHours` (7 days).
+  It works for that one domain; unlocking one private site never unlocks another.
+* Replacing or removing the passcode invalidates every cookie issued under the old one.
+* Failed attempts are throttled per domain and client address, with an escalating delay
+  and a lockout after eight misses. Visitors who are already in are unaffected.
+* A protected site's responses are marked `private` and `X-Robots-Tag: noindex`, so a CDN
+  or proxy in front of it cannot hand a cached copy to someone who never passed the gate.
+* Deploys, rollbacks and release history are untouched by it — the passcode belongs to the
+  domain, not to a release.
+
+Only POSTs to `/__passcode` are intercepted, so a site that happens to ship a file at that
+path is still reachable once unlocked.
+
+This is a visibility gate: it keeps a link that leaks out of being readable by whoever
+finds it. Content that would be damaging to disclose wants a real account system, not a
+shared passcode.
+
 ---
 
 ## Accounts
@@ -134,6 +166,7 @@ them can be made live again from the site's detail page.
 | ---------------------------- | :----: | :-----------: |
 | Deploy to any domain         |   ✅   |      ✅       |
 | Roll back a release          |   ✅   |      ✅       |
+| Set or clear a site passcode |   ✅   |      ✅       |
 | Create API keys              |   ✅   |      ✅       |
 | Delete a site                |   —    |      ✅       |
 | Manage users                 |   —    |      ✅       |
@@ -163,6 +196,8 @@ Authorization: Bearer sshost_ppoc7CxI1CNd_Vr6kVNxk6CsN0z6bdylnNhPwfIQxizQHSZqTRT
 | `GET`    | `/api/v1/sites/{domain}`                    | one domain, with releases   |
 | `POST`   | `/api/v1/sites/{domain}/deploy`             | upload a zip                |
 | `POST`   | `/api/v1/sites/{domain}/rollback/{release}` | make an earlier release live |
+| `PUT`    | `/api/v1/sites/{domain}/passcode`           | `{"passcode":"…"}` — make it private |
+| `DELETE` | `/api/v1/sites/{domain}/passcode`           | make it public again        |
 | `DELETE` | `/api/v1/sites/{domain}`                    | administrators only         |
 
 Deploy accepts a multipart form field named `file`:
@@ -202,6 +237,20 @@ returns:
 }
 ```
 
+Putting a site behind a passcode, and taking it out again:
+
+```bash
+curl -X PUT -H "X-Api-Key: $SSH_KEY" -H "Content-Type: application/json" \
+     -d '{"passcode":"quarterly-numbers-2026"}' \
+     https://deploy.example.com/api/v1/sites/abc.def.com/passcode
+
+curl -X DELETE -H "X-Api-Key: $SSH_KEY" \
+     https://deploy.example.com/api/v1/sites/abc.def.com/passcode
+```
+
+`GET /api/v1/sites` and `GET /api/v1/sites/{domain}` report `passcodeProtected` and
+`passcodeSetUtc`. The passcode itself is never returned — only its hash is stored.
+
 Failures return `{ "ok": false, "error": "…" }` with a `4xx` status. `401` means the key
 is missing, unknown, revoked or expired; `403` means the key's owner lacks the role.
 
@@ -226,6 +275,8 @@ environment variable with `__` separators, or a compose `environment:` entry all
 | `SiteHosting:SpaFallbackForAllRequests`| `false`      | Fall back to `index.html` for assets too |
 | `SiteHosting:InviteLifetimeHours`      | `168`        | Private link lifetime |
 | `SiteHosting:MinPasswordLength`        | `12`         | Enforced when a password is set |
+| `SiteHosting:MinPasscodeLength`        | `8`          | Enforced when a site passcode is set |
+| `SiteHosting:PasscodeSessionHours`     | `168`        | How long a visitor stays unlocked |
 | `Bootstrap:Username`                   | `admin`      | Seeded administrator |
 | `Bootstrap:Password`                   | *(empty)*    | Empty generates one on first run |
 | `Bootstrap:MustChangePassword`         | `false`      | Force a change even with a configured password |
@@ -243,7 +294,7 @@ environment variable with `__` separators, or a compose `environment:` entry all
 │   └── bootstrap-password.txt     written only when a password was generated
 ├── sites/
 │   └── abc.def.com/
-│       ├── site.json              which release is live, plus history
+│       ├── site.json              which release is live, plus history and any passcode hash
 │       └── releases/
 │           └── 20260803-041429-5ab6/   the files being served
 └── tmp/                           streaming scratch space, cleared at startup
@@ -262,7 +313,12 @@ Back up `/data` and you have backed up everything.
   control sits in front. Routing is driven by the Host header, so a spoofable
   `X-Forwarded-Host` would let a caller choose which site answers.
 * **Single instance.** Users, keys and site metadata are JSON files owned by one
-  process. Scale up, not out.
+  process. Scale up, not out. Passcode throttling counters live in memory, so they reset
+  on restart.
+* **Caching in front.** Responses from a passcode-protected site are marked `private`,
+  which a well-behaved shared cache honours. If your proxy is configured to cache
+  aggressively regardless, exclude those domains — the gate runs in this app, not in the
+  cache.
 * **The data volume.** `docker-compose.yml` uses a named volume so the non-root
   container user owns it. If you swap in a bind mount, `chown` the host directory to
   UID 1654 first.
