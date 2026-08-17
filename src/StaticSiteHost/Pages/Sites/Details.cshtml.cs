@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using StaticSiteHost.Models;
@@ -6,12 +7,19 @@ using StaticSiteHost.Services;
 
 namespace StaticSiteHost.Pages.Sites;
 
+/// <summary>A ready-to-run command shown on a site's detail page.</summary>
+public sealed record DeploySnippet(string Id, string Title, string Hint, string Command)
+{
+    public int Lines => Command.Count(c => c == '\n') + 1;
+}
+
 public class DetailsModel : PageModel
 {
     private readonly SiteStore _sites;
     private readonly ZipDeploymentService _deployer;
     private readonly SiteContentServer _content;
     private readonly SitePasscodeGate _passcodes;
+    private readonly ApiKeyStore _apiKeys;
     private readonly AuditLog _audit;
 
     public DetailsModel(
@@ -19,12 +27,14 @@ public class DetailsModel : PageModel
         ZipDeploymentService deployer,
         SiteContentServer content,
         SitePasscodeGate passcodes,
+        ApiKeyStore apiKeys,
         AuditLog audit)
     {
         _sites = sites;
         _deployer = deployer;
         _content = content;
         _passcodes = passcodes;
+        _apiKeys = apiKeys;
         _audit = audit;
     }
 
@@ -46,13 +56,61 @@ public class DetailsModel : PageModel
         }
     }
 
-    public IActionResult OnGet(string domain)
+    /// <summary>Commands for this domain, already filled in. See <see cref="BuildDeploySnippets"/>.</summary>
+    public IReadOnlyList<DeploySnippet> DeploySnippets { get; private set; } = [];
+
+    /// <summary>False when the snippets would fail for want of a key the user has not made yet.</summary>
+    public bool HasUsableApiKey { get; private set; }
+
+    public async Task<IActionResult> OnGetAsync(string domain)
     {
         var site = Resolve(domain);
         if (site is null) return RedirectToPage("Index");
 
         Site = site;
+        DeploySnippets = BuildDeploySnippets(site.Domain);
+
+        var keys = await _apiKeys.ListForUserAsync(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+        HasUsableApiKey = keys.Any(k => k.IsUsable);
+
         return Page();
+    }
+
+    /// <summary>
+    /// The two deploy calls from the README, pointed at this server and this domain so they
+    /// can go straight into a terminal or a CI job without being edited first. The key stays
+    /// a <c>$SSH_KEY</c> reference — it is never rendered into the page.
+    /// </summary>
+    private IReadOnlyList<DeploySnippet> BuildDeploySnippets(string domain)
+    {
+        var endpoint = $"{Request.Scheme}://{Request.Host}/api/v1/sites/{domain}/deploy";
+
+        return
+        [
+            new DeploySnippet(
+                "deploy-zip",
+                "Upload a zip you already have",
+                "Point file=@ at your archive. The zip's contents land at the root of the site; a single wrapping folder is unwrapped for you.",
+                $"""
+                 curl -sS --fail-with-body -X POST \
+                   -H "X-Api-Key: $SSH_KEY" \
+                   -F "file=@site.zip" \
+                   "{endpoint}"
+                 """),
+
+            new DeploySnippet(
+                "deploy-folder",
+                "Zip a folder and upload it in one command",
+                "Streams the archive as it is built, so nothing is written to disk on your side. Change dist to your build output.",
+                $"""
+                 (cd dist && zip -qr - .) | curl -sS --fail-with-body -X POST \
+                   -H "X-Api-Key: $SSH_KEY" \
+                   -H "Content-Type: application/zip" \
+                   -H "X-Archive-Name: dist.zip" \
+                   --data-binary @- \
+                   "{endpoint}"
+                 """)
+        ];
     }
 
     public async Task<IActionResult> OnPostRollbackAsync(string domain, string releaseId)

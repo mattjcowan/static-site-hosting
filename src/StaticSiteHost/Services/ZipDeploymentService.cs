@@ -124,7 +124,7 @@ public sealed class ZipDeploymentService
     private async Task<DeployResult> ExtractAndPublishAsync(
         string domain, Stream archive, string? archiveName, string actor, string source, CancellationToken ct)
     {
-        using var zip = new ZipArchive(archive, ZipArchiveMode.Read, leaveOpen: true);
+        using var zip = OpenArchive(archive);
 
         if (zip.Entries.Count > _options.MaxEntries)
             return DeployResult.Failed($"The archive holds more than the {_options.MaxEntries:N0} allowed entries.");
@@ -241,6 +241,27 @@ public sealed class ZipDeploymentService
         {
             TryDeleteDirectory(stagingDir);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Opens the archive, treating a stream that cannot satisfy that seek as a malformed zip.
+    ///
+    /// ZipArchive locates the central directory by seeking backwards from the end, and a file
+    /// that is not a zip — or is shorter than the record it is looking for — asks for a
+    /// position before the start. Streams disagree on what that is: a multipart section
+    /// raises ArgumentOutOfRangeException and a FileStream an IOException, neither of which
+    /// means what it says here. Both are the same user error: a bad upload.
+    /// </summary>
+    private static ZipArchive OpenArchive(Stream archive)
+    {
+        try
+        {
+            return new ZipArchive(archive, ZipArchiveMode.Read, leaveOpen: true);
+        }
+        catch (Exception ex) when (ex is ArgumentOutOfRangeException or IOException)
+        {
+            throw new InvalidDataException("The archive's central directory could not be read.", ex);
         }
     }
 

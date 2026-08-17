@@ -36,6 +36,42 @@
 </div>
 
 <div class="card">
+    <h2>Deploy from the command line</h2>
+    <p class="hint">
+        Already pointed at <span class="mono">@Model.Site.Domain</span> — paste one into a terminal or a
+        CI job. Every deploy publishes a new release and the previous one stays here for rollback.
+    </p>
+
+    @if (Model.HasUsableApiKey)
+    {
+        <p class="hint">
+            Both read your key from <span class="mono">$SSH_KEY</span>, so export it first:
+            <span class="mono">export SSH_KEY=sshost_…</span>
+        </p>
+    }
+    else
+    {
+        <div class="alert alert-warning">
+            You have no active API key yet — <a asp-page="/Account/Index">create one</a>, then
+            <span class="mono">export SSH_KEY=sshost_…</span> before running these.
+        </div>
+    }
+
+    @foreach (var snippet in Model.DeploySnippets)
+    {
+        <div class="snippet">
+            <div class="snippet-head">
+                <label for="@snippet.Id">@snippet.Title</label>
+                <button type="button" class="btn btn-sm" data-copy="#@snippet.Id">Copy</button>
+            </div>
+            <textarea id="@snippet.Id" rows="@snippet.Lines" wrap="off" readonly spellcheck="false"
+                      onclick="this.select()">@snippet.Command</textarea>
+            <p class="hint snippet-hint">@snippet.Hint</p>
+        </div>
+    }
+</div>
+
+<div class="card">
     <h2>
         Visibility
         @if (Model.Site.IsPasscodeProtected)

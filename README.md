@@ -218,6 +218,10 @@ curl -H "X-Api-Key: $SSH_KEY" \
      https://deploy.example.com/api/v1/sites/abc.def.com/deploy
 ```
 
+You do not have to assemble either by hand: **Sites → the domain → Deploy from the command
+line** shows both shapes — a multipart upload, and one that zips a folder and streams it
+straight up — already pointed at that domain and at this server, each with a copy button.
+
 The domain is created if it does not exist and replaced if it does. A successful deploy
 returns:
 
