@@ -1,0 +1,17 @@
+# Redirects and rewrites travel with the build. See "Redirects and rewrites" in the README.
+#
+# from            to                       status
+
+# The demo has no /articles/, so this one shows a plain move.
+/posts            /blog/                   301
+
+# :1 stands for whatever the * matched — /posts/hello-world lands on
+# /blog/hello-world, which the demo really has.
+/posts/*          /blog/:1                 301
+
+# A rewrite: the address stays put and a different file answers. Watch the
+# banner at the bottom of the page report a path you did not request.
+/preview          /blog/hello-world.html   200
+
+# Nothing is published here any more, and saying so beats a soft landing.
+/drafts/**        /404.html                404

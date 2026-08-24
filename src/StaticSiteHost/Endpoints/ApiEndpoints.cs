@@ -94,6 +94,90 @@ public static class ApiEndpoints
             return Results.Ok(new { ok = true, domain = site.Domain, passcodeProtected = false });
         });
 
+        api.MapGet("/sites/{domain}/headers", (string domain, SiteStore sites) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            return Results.Ok(new
+            {
+                domain = site.Domain,
+                siteRules = site.Headers ?? [],
+                releaseRules = site.Current?.Headers ?? []
+            });
+        });
+
+        api.MapPut("/sites/{domain}/headers", async (
+            string domain,
+            HeaderRulesRequest? body,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteRuleService rules) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var (ok, errors) = await rules.SetHeadersAsync(site, body?.Headers ?? [], Actor(principal));
+            return ok
+                ? Results.Ok(new { ok = true, domain = site.Domain, rules = site.Headers.Count })
+                : Results.BadRequest(new { error = errors[0], errors });
+        });
+
+        api.MapDelete("/sites/{domain}/headers", async (
+            string domain,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteRuleService rules) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            await rules.SetHeadersAsync(site, [], Actor(principal));
+            return Results.Ok(new { ok = true, domain = site.Domain, rules = 0 });
+        });
+
+        api.MapGet("/sites/{domain}/redirects", (string domain, SiteStore sites) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            return Results.Ok(new
+            {
+                domain = site.Domain,
+                siteRules = site.Redirects ?? [],
+                releaseRules = site.Current?.Redirects ?? []
+            });
+        });
+
+        api.MapPut("/sites/{domain}/redirects", async (
+            string domain,
+            RedirectRulesRequest? body,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteRuleService rules) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var (ok, errors) = await rules.SetRedirectsAsync(site, body?.Redirects ?? [], Actor(principal));
+            return ok
+                ? Results.Ok(new { ok = true, domain = site.Domain, rules = site.Redirects.Count })
+                : Results.BadRequest(new { error = errors[0], errors });
+        });
+
+        api.MapDelete("/sites/{domain}/redirects", async (
+            string domain,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteRuleService rules) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            await rules.SetRedirectsAsync(site, [], Actor(principal));
+            return Results.Ok(new { ok = true, domain = site.Domain, rules = 0 });
+        });
+
         api.MapDelete("/sites/{domain}", async (
             string domain,
             ClaimsPrincipal principal,
@@ -176,6 +260,8 @@ public static class ApiEndpoints
         lastDeployedBy = site.LastDeployedBy,
         passcodeProtected = site.IsPasscodeProtected,
         passcodeSetUtc = site.PasscodeSetUtc,
+        headerRules = (site.Headers?.Count ?? 0) + (site.Current?.Headers?.Count ?? 0),
+        redirectRules = (site.Redirects?.Count ?? 0) + (site.Current?.Redirects?.Count ?? 0),
         fileCount = site.Current?.FileCount ?? 0,
         totalBytes = site.Current?.TotalBytes ?? 0,
         releases = site.Releases
@@ -191,3 +277,9 @@ public static class ApiEndpoints
 
 /// <summary>Body of PUT /api/v1/sites/{domain}/passcode.</summary>
 public sealed record PasscodeRequest(string? Passcode);
+
+/// <summary>Body of PUT /api/v1/sites/{domain}/headers. Replaces the site's whole rule list.</summary>
+public sealed record HeaderRulesRequest(List<HeaderRule>? Headers);
+
+/// <summary>Body of PUT /api/v1/sites/{domain}/redirects. Replaces the site's whole rule list.</summary>
+public sealed record RedirectRulesRequest(List<RedirectRule>? Redirects);

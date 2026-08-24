@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Models;
@@ -24,6 +25,9 @@ public sealed record DeployResult(
 public sealed class ZipDeploymentService
 {
     private const int CopyBufferSize = 81_920;
+
+    /// <summary>Cap on the archive's rule files. A rule set is a page of text at most.</summary>
+    private const long MaxRuleFileBytes = 64 * 1024;
 
     private static readonly string[] ExcludedNames =
         ["__MACOSX", ".DS_Store", "Thumbs.db", ".git", ".svn", ".hg", ".bzr", ".htpasswd"];
@@ -173,6 +177,8 @@ public sealed class ZipDeploymentService
 
         long totalBytes = 0;
         var fileCount = 0;
+        var headerRules = new List<HeaderRule>();
+        var redirectRules = new List<RedirectRule>();
 
         try
         {
@@ -182,6 +188,27 @@ public sealed class ZipDeploymentService
 
                 var relative = stripRoot ? segments[1..] : segments;
                 if (relative.Length == 0) continue;
+
+                // The rule files are configuration, not content: they are read here and never
+                // written into the release, so they cannot be fetched from the site.
+                if (relative.Length == 1)
+                {
+                    if (relative[0].Equals(HeaderRuleText.FileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var text = await ReadRuleFileAsync(entry, HeaderRuleText.FileName, warnings, ct);
+                        if (text is not null)
+                            headerRules = ParseRules<HeaderRule>(text, HeaderRuleText.FileName, warnings, HeaderRuleText.TryParse);
+                        continue;
+                    }
+
+                    if (relative[0].Equals(RedirectRuleText.FileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var text = await ReadRuleFileAsync(entry, RedirectRuleText.FileName, warnings, ct);
+                        if (text is not null)
+                            redirectRules = ParseRules<RedirectRule>(text, RedirectRuleText.FileName, warnings, RedirectRuleText.TryParse);
+                        continue;
+                    }
+                }
 
                 var destination = Path.GetFullPath(Path.Combine([stagingDir, .. relative]));
                 if (!PathHelpers.IsInside(stagingDir, destination))
@@ -219,7 +246,9 @@ public sealed class ZipDeploymentService
                 TotalBytes = totalBytes,
                 ArchiveName = archiveName,
                 StrippedRootFolder = stripRoot,
-                HasRootIndex = hasRootIndex
+                HasRootIndex = hasRootIndex,
+                Headers = headerRules,
+                Redirects = redirectRules
             };
 
             var site = _sites.TryGet(domain) ?? new SiteRecord { Domain = domain, CreatedBy = actor };
@@ -242,6 +271,43 @@ public sealed class ZipDeploymentService
             TryDeleteDirectory(stagingDir);
             throw;
         }
+    }
+
+    private delegate bool RuleParser<T>(string? text, out List<T> rules, out IReadOnlyList<string> errors);
+
+    /// <summary>Reads one of the archive's rule files, or null when it is too large to be one.</summary>
+    private static async Task<string?> ReadRuleFileAsync(
+        ZipArchiveEntry entry, string name, List<string> warnings, CancellationToken ct)
+    {
+        await using var stream = entry.Open();
+        using var buffer = new MemoryStream();
+
+        try
+        {
+            await CopyLimitedAsync(stream, buffer, MaxRuleFileBytes, ct);
+        }
+        catch (ExtractionLimitException)
+        {
+            warnings.Add($"'{name}' is larger than {Format.Bytes(MaxRuleFileBytes)} and was ignored.");
+            return null;
+        }
+
+        // TrimStart drops a byte-order mark, which would otherwise make the first line of
+        // the file look like it does not start with '/'.
+        return Encoding.UTF8.GetString(buffer.ToArray()).TrimStart('\uFEFF');
+    }
+
+    /// <summary>
+    /// A rule file that will not parse is a warning rather than a failed deploy — the site
+    /// itself is fine, and refusing to publish it would be a surprising way to report a typo
+    /// in a caching rule.
+    /// </summary>
+    private static List<T> ParseRules<T>(string text, string name, List<string> warnings, RuleParser<T> parse)
+    {
+        if (parse(text, out var rules, out var errors)) return rules;
+
+        warnings.Add($"'{name}' was ignored — {string.Join(" ", errors.Take(3))}");
+        return [];
     }
 
     /// <summary>

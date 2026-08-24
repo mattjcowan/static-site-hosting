@@ -128,6 +128,185 @@
 </div>
 
 <div class="card">
+    <h2>Header rules</h2>
+    <p class="hint">
+        Response headers for the paths that match a pattern. This is how you turn caching off on a
+        file that changes without its name changing, pin a fingerprinted asset for a year, or add a
+        security header. By default HTML is <span class="mono">no-cache</span> and everything else is
+        <span class="mono">public, max-age=@Model.AssetCacheSeconds</span>.
+    </p>
+
+    @if (Model.HeaderRuleErrors.Count > 0)
+    {
+        <div class="alert alert-error">
+            <strong>Nothing was saved.</strong>
+            <ul>
+                @foreach (var error in Model.HeaderRuleErrors.Take(8))
+                {
+                    <li>@error</li>
+                }
+            </ul>
+        </div>
+    }
+
+    <div class="examples">
+        <p class="examples-label">Click to add an example, then edit it:</p>
+        <div class="examples-list">
+            @foreach (var example in DetailsModel.HeaderExamples)
+            {
+                <button type="button" class="btn btn-sm" title="@example.Hint"
+                        data-insert="@example.Snippet" data-insert-into="#header-rules">@example.Label</button>
+            }
+        </div>
+    </div>
+
+    <form method="post" asp-page-handler="Headers" asp-route-domain="@Model.Site.Domain">
+        <div class="field">
+            <label for="header-rules">Rules for this site</label>
+            <textarea id="header-rules" name="rules" class="rules" rows="8" wrap="off" spellcheck="false"
+                      placeholder="/*.json&#10;  Cache-Control: no-cache">@Model.HeaderRules</textarea>
+        </div>
+        <button type="submit" class="btn-primary">Save header rules</button>
+    </form>
+
+    <details class="rule-help">
+        <summary>How a header rule is written</summary>
+        <pre class="rule-help-sample">/assets/**
+  Cache-Control: public, max-age=31536000, immutable
+
+# a comment
+/*.json
+  Cache-Control: no-cache
+  X-Generated-By: ci</pre>
+        <ul>
+            <li>A line starting with <span class="mono">/</span> opens a rule. The indented
+                <span class="mono">Name: value</span> lines under it are the headers it sets.</li>
+            <li><span class="mono">#</span> starts a comment; blank lines are ignored.</li>
+            <li>In a pattern <span class="mono">*</span> matches anything except
+                <span class="mono">/</span>, <span class="mono">**</span> matches across
+                <span class="mono">/</span>, and <span class="mono">?</span> matches one character.
+                Matching ignores case.</li>
+            <li>A rule matches the URL requested <em>or</em> the file that answered it, so
+                <span class="mono">/index.html</span> also covers <span class="mono">/</span>.</li>
+            <li>Every matching rule applies, top to bottom. When two name the same header the later one
+                wins, and rules here run after any that came with the release.</li>
+            <li><span class="mono">no-cache</span> means <em>revalidate every time</em>, not
+                <em>never store</em> — ETags still work, so unchanged content costs a
+                <span class="mono">304</span>. Use <span class="mono">no-store</span> when nothing may
+                be kept at all.</li>
+            <li>Headers the server owns cannot be set: <span class="mono">Content-Length</span>,
+                <span class="mono">Transfer-Encoding</span>, <span class="mono">Connection</span>,
+                <span class="mono">Content-Encoding</span>, <span class="mono">Set-Cookie</span>,
+                <span class="mono">X-Content-Type-Options</span> and the other transport headers.</li>
+        </ul>
+    </details>
+
+    @if (Model.ReleaseHeaderRules.Count > 0)
+    {
+        <div class="from-release">
+            <p class="hint">
+                The current release brought these in a <span class="mono">_headers</span> file. They run
+                before the rules above, so a rule above wins wherever both set the same header.
+            </p>
+            <pre class="rules-readonly">@StaticSiteHost.Serving.HeaderRuleText.Format(Model.ReleaseHeaderRules)</pre>
+        </div>
+    }
+</div>
+
+<div class="card">
+    <h2>Redirects and rewrites</h2>
+    <p class="hint">
+        Where a request should be answered from something other than the path it named.
+        A <strong>redirect</strong> (<span class="mono">301</span>, <span class="mono">302</span>,
+        <span class="mono">303</span>, <span class="mono">307</span>, <span class="mono">308</span>)
+        sends the visitor to a new address and the URL bar changes. A <strong>rewrite</strong>
+        (<span class="mono">200</span> or <span class="mono">404</span>) quietly serves a different file
+        at the address they asked for.
+    </p>
+
+    @if (Model.RedirectRuleErrors.Count > 0)
+    {
+        <div class="alert alert-error">
+            <strong>Nothing was saved.</strong>
+            <ul>
+                @foreach (var error in Model.RedirectRuleErrors.Take(8))
+                {
+                    <li>@error</li>
+                }
+            </ul>
+        </div>
+    }
+
+    <div class="examples">
+        <p class="examples-label">Click to add an example, then edit it:</p>
+        <div class="examples-list">
+            @foreach (var example in DetailsModel.RedirectExamples)
+            {
+                <button type="button" class="btn btn-sm" title="@example.Hint"
+                        data-insert="@example.Snippet" data-insert-into="#redirect-rules">@example.Label</button>
+            }
+        </div>
+    </div>
+
+    <form method="post" asp-page-handler="Redirects" asp-route-domain="@Model.Site.Domain">
+        <div class="field">
+            <label for="redirect-rules">Rules for this site</label>
+            <textarea id="redirect-rules" name="rules" class="rules" rows="8" wrap="off" spellcheck="false"
+                      placeholder="/old-page  /new-page  301">@Model.RedirectRules</textarea>
+        </div>
+        <button type="submit" class="btn-primary">Save redirects</button>
+    </form>
+
+    <details class="rule-help">
+        <summary>How a redirect is written</summary>
+        <pre class="rule-help-sample">from       to                            status
+
+/old-page  /new-page                     301
+/blog/*    /articles/:1                  301
+/docs/**   https://docs.example.com/:1   302
+/app/**    /app/index.html               200
+/removed   /404.html                     404
+/legacy/*  /new/:1                       301!</pre>
+        <ul>
+            <li>One rule per line: where it comes from, where it goes, and the status. The status is
+                optional and defaults to <span class="mono">301</span>.</li>
+            <li>Patterns use the same <span class="mono">*</span> / <span class="mono">**</span> /
+                <span class="mono">?</span> globs as header rules.
+                <span class="mono">:1</span>…<span class="mono">:9</span> in the target stand for what
+                each wildcard matched, in order, and <span class="mono">:splat</span> is another name for
+                <span class="mono">:1</span>.</li>
+            <li>The <strong>first</strong> rule that matches answers the request, so put specific rules
+                above broad ones. Rules here are tried before any that came with the release.</li>
+            <li>A rule <strong>stands aside for real content</strong>: if the site actually has a file at
+                the requested path, that file is served instead. This is what stops a broad rule such as
+                <span class="mono">/**</span> from swallowing your stylesheets. Put
+                <span class="mono">!</span> after the status to apply it anyway.</li>
+            <li>A redirect target may be a path on this site or a full <span class="mono">https://</span>
+                address; a rewrite target must be a path here. The visitor's query string is carried
+                across.</li>
+            <li>A rewrite's target is resolved straight against the files, so one rewrite never triggers
+                another and rules cannot loop.</li>
+            <li>Browsers hold a <span class="mono">301</span> for a long time. Header rules apply to
+                redirects too, so a matching <span class="mono">Cache-Control: no-store</span> above is
+                what keeps a permanent redirect from outliving the decision to make it.</li>
+            <li>You rarely need a catch-all rewrite to <span class="mono">index.html</span> — unmatched
+                paths already fall back to it on their own.</li>
+        </ul>
+    </details>
+
+    @if (Model.ReleaseRedirectRules.Count > 0)
+    {
+        <div class="from-release">
+            <p class="hint">
+                The current release brought these in a <span class="mono">_redirects</span> file. They are
+                tried after the rules above.
+            </p>
+            <pre class="rules-readonly">@StaticSiteHost.Serving.RedirectRuleText.Format(Model.ReleaseRedirectRules)</pre>
+        </div>
+    }
+</div>
+
+<div class="card">
     <h2>Releases</h2>
     <p class="hint">Older releases stay on disk so you can switch back instantly.</p>
     <div class="table-wrap">

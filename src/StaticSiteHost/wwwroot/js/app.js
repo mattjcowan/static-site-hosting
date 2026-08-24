@@ -29,6 +29,24 @@
     }
   });
 
+  // ---- example rules, appended into a rule editor --------------------------
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest('[data-insert]');
+    if (!button) return;
+
+    var target = document.querySelector(button.getAttribute('data-insert-into'));
+    if (!target) return;
+
+    var snippet = button.getAttribute('data-insert');
+    var current = target.value.replace(/\s+$/, '');
+    target.value = current ? current + '\n\n' + snippet + '\n' : snippet + '\n';
+
+    // Land the caret at the end of what was just added, so typing carries on from there.
+    target.focus();
+    target.setSelectionRange(target.value.length, target.value.length);
+    target.scrollTop = target.scrollHeight;
+  });
+
   // ---- confirmation on destructive forms ----------------------------------
   document.addEventListener('submit', function (event) {
     var message = event.target.getAttribute('data-confirm');

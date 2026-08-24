@@ -291,6 +291,50 @@ progress { width: 100%; height: 8px; margin-top: 1rem; accent-color: var(--accen
 
 .snippet-hint { margin: 0.4rem 0 0; }
 
+/* ---------- rule editors ---------- */
+
+.examples { margin-bottom: 1rem; }
+.examples-label { color: var(--muted); font-size: 0.875rem; margin: 0 0 0.5rem; }
+.examples-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.rule-help { margin-top: 0.9rem; font-size: 0.875rem; }
+.rule-help > summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0.2rem 0;
+  user-select: none;
+}
+.rule-help > summary:hover { color: var(--text); }
+.rule-help ul { margin: 0.75rem 0 0; padding-left: 1.1rem; color: var(--muted); }
+.rule-help li + li { margin-top: 0.4rem; }
+
+.rule-help-sample, .rules-readonly {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  margin: 0.75rem 0 0;
+  overflow-x: auto;
+}
+
+.from-release { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.from-release .hint { margin-bottom: 0; }
+.rules-readonly { margin-top: 0.6rem; }
+
+textarea.rules {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.825rem;
+  line-height: 1.55;
+  background: var(--surface-2);
+  white-space: pre;
+  overflow-x: auto;
+  resize: vertical;
+  tab-size: 2;
+}
+
 .secret-box {
   background: var(--warning-soft);
   border: 1px solid var(--warning);

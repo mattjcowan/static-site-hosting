@@ -25,11 +25,14 @@ public sealed class SiteContentServer
     private const string StatusOverrideKey = "ssh.status-override";
     private const string FallbackKey = "ssh.fallback";
     private const string PrivateKey = "ssh.private";
+    private const string RulesKey = "ssh.header-rules";
+    private const string RequestPathKey = "ssh.request-path";
 
     private static readonly StringComparison PathComparison =
         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private readonly ConcurrentDictionary<string, StaticFileMiddleware> _servers = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SiteRules> _rules = new(StringComparer.OrdinalIgnoreCase);
     private readonly FileExtensionContentTypeProvider _contentTypes = CreateContentTypeProvider();
 
     private readonly SitePathResolver _resolver;
@@ -55,9 +58,15 @@ public sealed class SiteContentServer
         _options = options.Value;
     }
 
-    /// <summary>Drops cached file providers for a domain after a deploy, rollback or delete.</summary>
+    /// <summary>
+    /// Drops the cached file providers and compiled rules for a domain. Called after a
+    /// deploy, a rollback, a delete or a change to the site's rules — anything that makes what
+    /// is cached here no longer describe what should be served.
+    /// </summary>
     public void Evict(string domain)
     {
+        _rules.TryRemove(domain, out _);
+
         var prefix = _paths.SiteDir(domain);
         foreach (var key in _servers.Keys)
         {
@@ -93,13 +102,51 @@ public sealed class SiteContentServer
             return;
         }
 
-        var resolution = _resolver.Resolve(root, context.Request.Path.Value ?? "/", context.Request.Headers.Accept);
+        // Compiled once per domain and dropped by Evict. The request path is stashed with the
+        // header rules because SendFileAsync is about to rewrite it to the file that answers,
+        // and a rule should still see the URL the visitor asked for.
+        var rules = _rules.GetOrAdd(domain, static (_, s) => SiteRules.Compile(s), site);
+        var requestPath = context.Request.Path.Value ?? "/";
+        var accept = context.Request.Headers.Accept;
+
+        if (!rules.Headers.IsEmpty)
+        {
+            context.Items[RulesKey] = rules.Headers;
+            context.Items[RequestPathKey] = requestPath;
+        }
+
+        SiteResolution resolution;
+
+        if (!rules.Redirects.IsEmpty &&
+            rules.Redirects.TryMatch(requestPath, path => _resolver.Exists(root, path), out var rule))
+        {
+            if (rule.IsRedirect)
+            {
+                SendRedirect(
+                    context,
+                    rules.Headers,
+                    requestPath,
+                    rule.Target.Contains('?') ? rule.Target : rule.Target + context.Request.QueryString,
+                    rule.Status);
+                return;
+            }
+
+            resolution = ResolveRewrite(root, rule, accept);
+        }
+        else
+        {
+            resolution = _resolver.Resolve(root, requestPath, accept);
+        }
 
         switch (resolution.Kind)
         {
             case SiteResolutionKind.Redirect:
-                context.Response.Headers.Location = resolution.Location + context.Request.QueryString;
-                context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
+                SendRedirect(
+                    context,
+                    rules.Headers,
+                    requestPath,
+                    resolution.Location + context.Request.QueryString,
+                    StatusCodes.Status301MovedPermanently);
                 return;
 
             case SiteResolutionKind.Serve:
@@ -111,6 +158,58 @@ public sealed class SiteContentServer
                     "Not found", $"{WebUtility.HtmlEncode(context.Request.GetDisplayUrl())} could not be found.");
                 return;
         }
+    }
+
+    /// <summary>
+    /// Answers with a redirect. Header rules are applied here as well as to files: a redirect
+    /// carries no Cache-Control of its own, and a browser will hold a 301 for a long time, so
+    /// being able to say otherwise from a rule is the difference between a redirect that can
+    /// be taken back and one that cannot.
+    /// </summary>
+    private static void SendRedirect(
+        HttpContext context, SiteHeaderRules headers, string requestPath, string location, int status)
+    {
+        var response = context.Response;
+        response.Headers.Location = location;
+        response.StatusCode = status;
+
+        headers.Apply(response.Headers, requestPath, null);
+
+        if (context.Items.ContainsKey(PrivateKey))
+        {
+            response.Headers.CacheControl = KeepPrivate(response.Headers.CacheControl.ToString());
+            response.Headers["X-Robots-Tag"] = "noindex, nofollow";
+        }
+    }
+
+    /// <summary>
+    /// Works out which file answers a rewrite. The target is resolved straight against the
+    /// filesystem and never run back through the rules, so one rewrite cannot trigger
+    /// another and no rule set can loop.
+    /// </summary>
+    private SiteResolution ResolveRewrite(string root, RedirectMatch rule, string? accept)
+    {
+        var target = rule.Target;
+
+        // A query on a rewrite target names no file; the visitor's own query is untouched.
+        var query = target.IndexOf('?');
+        if (query >= 0) target = target[..query];
+
+        var resolution = _resolver.Resolve(root, target, accept);
+
+        // A target naming a directory resolves to the 301 a visitor would have got. Inside a
+        // rewrite that is not an answer, so follow it the one step to the directory's index.
+        if (resolution.Kind == SiteResolutionKind.Redirect)
+            resolution = _resolver.Resolve(root, resolution.Location!, accept);
+
+        if (resolution.Kind != SiteResolutionKind.Serve) return SiteResolution.NotFound;
+
+        // A 200 rule keeps whatever the target resolved to, so a rewrite pointing at nothing
+        // still answers 404 rather than dressing the 404 page up as success.
+        return SiteResolution.Serve(
+            resolution.RelativePath!,
+            isFallback: true,
+            statusCode: rule.Status == StatusCodes.Status200OK ? resolution.StatusCode : rule.Status);
     }
 
     private async Task SendFileAsync(HttpContext context, string root, SiteResolution resolution)
@@ -157,10 +256,11 @@ public sealed class SiteContentServer
 
     private void OnPrepareResponse(StaticFileResponseContext context)
     {
-        var response = context.Context.Response;
+        var http = context.Context;
+        var response = http.Response;
         response.Headers["X-Content-Type-Options"] = "nosniff";
 
-        if (context.Context.Items.TryGetValue(StatusOverrideKey, out var value) &&
+        if (http.Items.TryGetValue(StatusOverrideKey, out var value) &&
             value is int status &&
             response.StatusCode == StatusCodes.Status200OK)
         {
@@ -168,18 +268,51 @@ public sealed class SiteContentServer
         }
 
         var isHtml = response.ContentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true;
-        var isFallback = context.Context.Items.ContainsKey(FallbackKey);
+        var isFallback = http.Items.ContainsKey(FallbackKey);
 
         // "private" keeps a proxy or CDN from holding a copy that would be handed to a
         // visitor who never passed the gate. The browser cache is per-person already, so
         // asset lifetimes are left alone.
-        var scope = context.Context.Items.ContainsKey(PrivateKey) ? "private" : "public";
+        var isPrivate = http.Items.ContainsKey(PrivateKey);
+        var scope = isPrivate ? "private" : "public";
 
         response.Headers.CacheControl = isHtml || isFallback
-            ? (scope == "private" ? "private, no-cache" : "no-cache")
+            ? (isPrivate ? "private, no-cache" : "no-cache")
             : $"{scope}, max-age={_options.AssetCacheSeconds}";
 
-        if (scope == "private") response.Headers["X-Robots-Tag"] = "noindex, nofollow";
+        if (http.Items.TryGetValue(RulesKey, out var compiled) && compiled is SiteHeaderRules rules)
+        {
+            var requestPath = http.Items.TryGetValue(RequestPathKey, out var original) && original is string path
+                ? path
+                : http.Request.Path.Value ?? "/";
+
+            rules.Apply(response.Headers, requestPath, http.Request.Path.Value);
+        }
+
+        // Last word, after the rules: a gated site's content must not end up in a shared
+        // cache or an index, and a rule saying "public, max-age=…" would put it there.
+        if (isPrivate)
+        {
+            response.Headers.CacheControl = KeepPrivate(response.Headers.CacheControl.ToString());
+            response.Headers["X-Robots-Tag"] = "noindex, nofollow";
+        }
+    }
+
+    /// <summary>Strips "public" out of a Cache-Control value and makes sure it says private.</summary>
+    private static string KeepPrivate(string cacheControl)
+    {
+        var directives = cacheControl
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(d => !d.Equals("public", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (!directives.Any(d => d.Equals("private", StringComparison.OrdinalIgnoreCase) ||
+                                 d.Equals("no-store", StringComparison.OrdinalIgnoreCase)))
+        {
+            directives.Insert(0, "private");
+        }
+
+        return string.Join(", ", directives);
     }
 
     private static Task NotFoundAsync(HttpContext context) =>

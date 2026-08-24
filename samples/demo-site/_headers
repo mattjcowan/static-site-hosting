@@ -1,0 +1,16 @@
+# Header rules travel with the build. See "Header rules" in the README.
+
+# The demo's stylesheet and script are not fingerprinted, so they are left on the
+# default hour. A real build would name them app.a1b2c3.css and pin them here:
+#
+# /assets/**
+#   Cache-Control: public, max-age=31536000, immutable
+
+# Anything regenerated in place on every deploy has to be revalidated every time,
+# or visitors keep reading the copy they already have.
+/*.json
+  Cache-Control: no-cache
+
+# A header the browser will show you, so you can watch a rule take effect.
+/**
+  X-Demo-Rules: on

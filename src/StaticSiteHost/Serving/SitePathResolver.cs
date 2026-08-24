@@ -104,6 +104,41 @@ public sealed class SitePathResolver
         return NotFoundOrCustomPage(root);
     }
 
+    /// <summary>
+    /// Whether the site really has something at this path — the question a redirect rule
+    /// steps aside for unless it was forced.
+    ///
+    /// Deliberately narrower than <see cref="Resolve"/>: it asks "is there something here",
+    /// not "what would answer this request". The index.html walk-up means almost every path
+    /// resolves to something, and if that counted as occupied no unforced rule would ever
+    /// fire.
+    /// </summary>
+    public bool Exists(string root, string requestPath)
+    {
+        requestPath ??= "/";
+        if (!TrySplit(requestPath, out var segments)) return false;
+
+        if (requestPath.EndsWith('/') || segments.Length == 0)
+        {
+            var index = Combine(root, Append(segments, IndexFile));
+            return index is not null && File.Exists(index);
+        }
+
+        var full = Combine(root, segments);
+        if (full is null) return false;
+        if (File.Exists(full)) return true;
+
+        var last = segments[^1];
+        if (!Path.HasExtension(last))
+        {
+            var html = Combine(root, Replace(segments, last + ".html"));
+            if (html is not null && File.Exists(html)) return true;
+        }
+
+        // A directory answers with a 301 to its slash form, which is still an answer.
+        return Directory.Exists(full);
+    }
+
     private static SiteResolution NotFoundOrCustomPage(string root) =>
         File.Exists(Path.Combine(root, NotFoundFile))
             ? SiteResolution.Serve("/" + NotFoundFile, isFallback: true, statusCode: 404)

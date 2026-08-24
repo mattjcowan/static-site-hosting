@@ -26,6 +26,18 @@ public sealed class SiteRecord
     public DateTimeOffset? PasscodeSetUtc { get; set; }
     public string? PasscodeSetBy { get; set; }
 
+    /// <summary>
+    /// Header rules managed for the site itself. They run after the rules that arrived with
+    /// the release, so they win wherever both name the same header, and they survive a rollback.
+    /// </summary>
+    public List<HeaderRule> Headers { get; set; } = [];
+
+    /// <summary>
+    /// Redirects and rewrites managed for the site itself. Matched before the ones that
+    /// arrived with the release, so they win, and they survive a rollback.
+    /// </summary>
+    public List<RedirectRule> Redirects { get; set; } = [];
+
     [JsonIgnore]
     public bool IsPasscodeProtected => !string.IsNullOrEmpty(PasscodeHash);
 
@@ -50,4 +62,10 @@ public sealed class ReleaseRecord
     public bool StrippedRootFolder { get; set; }
 
     public bool HasRootIndex { get; set; }
+
+    /// <summary>Header rules read from the archive's <c>_headers</c> file, if it had one.</summary>
+    public List<HeaderRule> Headers { get; set; } = [];
+
+    /// <summary>Redirects read from the archive's <c>_redirects</c> file, if it had one.</summary>
+    public List<RedirectRule> Redirects { get; set; } = [];
 }
