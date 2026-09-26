@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About · Night Sky Field Notes</title>
+  <meta name="description" content="Who writes these notes, and how this site is built.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/sky.css">
+</head>
+<body>
+  <header class="site-head">
+    <div class="wrap">
+      <a class="brand" href="/">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#121b36" stroke="#f6d98b" stroke-opacity=".4"/><path d="M19 7a9 9 0 1 0 6 15.5A10 10 0 0 1 19 7z" fill="#f6d98b"/><circle cx="9" cy="10" r="1.2" fill="#fff"/><circle cx="24" cy="8" r=".8" fill="#fff"/></svg>
+        Night Sky Field Notes
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/">Tonight</a>
+        <a href="/journal.html">Journal</a>
+        <a href="/guide.html">Stargazing 101</a>
+        <a href="/about.html">About</a>
+        <span id="nav-auth"></span>
+        <button type="button" class="red-toggle" data-red-toggle title="Red-light mode keeps your night vision at the eyepiece"><span class="dot"></span>Red light</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero small">
+      <canvas data-starfield aria-hidden="true"></canvas>
+      <div class="wrap">
+        <span class="eyebrow">About</span>
+        <h1>A backyard, a chair, and a lot of patience</h1>
+        <p class="lead">Night Sky Field Notes is a journal kept by the observers of a small backyard observatory under a Bortle 3 high-desert sky.</p>
+      </div>
+      <svg class="hills" viewBox="0 0 1440 110" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 64 C160 26 300 78 470 52 S780 14 960 56 S1250 30 1440 54 V110 H0Z" fill="#101a38"/>
+        <path d="M0 88 C210 58 390 100 620 76 S1010 58 1190 84 S1380 72 1440 80 V110 H0Z" fill="#070b18"/>
+      </svg>
+    </section>
+
+    <section class="wrap">
+      <div class="grid grid-2">
+        <div class="panel">
+          <h2 style="margin-top:0">Why a journal?</h2>
+          <p>Because the sky changes slowly and memory changes quickly. Writing down what you saw, and what it took to see it, is how a list of objects turns into knowing the sky.</p>
+          <p>Every entry is written the same night or the morning after, while the details are still sharp. If an entry helps you find something for the first time, it has done its job.</p>
+        </div>
+        <div class="panel">
+          <h2 style="margin-top:0">How this site works</h2>
+          <svg class="illustration" viewBox="0 0 420 200" role="img" aria-label="Pages and scripts are served as files; the journal and accounts come from C# functions backed by a SQLite database">
+            <g font-family="system-ui, sans-serif" font-size="12" fill="#e7ebf7">
+              <rect x="10" y="20" width="120" height="60" rx="10" fill="#1e2a52" stroke="#7fd4d0" stroke-opacity=".6"/>
+              <text x="70" y="46" text-anchor="middle">Static pages</text><text x="70" y="64" text-anchor="middle" fill="#98a3c2" font-size="10">HTML · CSS · JS</text>
+              <rect x="150" y="20" width="120" height="60" rx="10" fill="#1e2a52" stroke="#f6d98b" stroke-opacity=".7"/>
+              <text x="210" y="46" text-anchor="middle">_functions/</text><text x="210" y="64" text-anchor="middle" fill="#98a3c2" font-size="10">C# · built on deploy</text>
+              <rect x="290" y="20" width="120" height="60" rx="10" fill="#1e2a52" stroke="#f29aa6" stroke-opacity=".6"/>
+              <text x="350" y="46" text-anchor="middle">blog.db</text><text x="350" y="64" text-anchor="middle" fill="#98a3c2" font-size="10">SQLite · Dapper</text>
+              <path d="M270 50 H290" stroke="#98a3c2" marker-end="url(#arrow)"/>
+              <rect x="80" y="130" width="260" height="50" rx="10" fill="none" stroke="#98a3c2" stroke-dasharray="4 4"/>
+              <text x="210" y="160" text-anchor="middle">one zip → Static Site Host</text>
+              <path d="M70 80 V120 M210 80 V120 M350 80 V120" stroke="#98a3c2" stroke-dasharray="2 4"/>
+            </g>
+            <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#98a3c2"/></marker></defs>
+          </svg>
+          <p>The pages are plain files. The journal, accounts and sign-in are <strong>C# functions</strong> shipped in the same zip, in a <code>_functions/</code> folder, and compiled by the host when the site is deployed. They keep their data in a <strong>SQLite</strong> database in the site's own data folder, which survives every redeploy and rollback.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap">
+      <span>Night Sky Field Notes: a static site with C# functions and a SQLite database, on Static Site Host.</span>
+      <span>Clear skies.</span>
+    </div>
+  </footer>
+
+  <script src="/js/sky.js"></script>
+</body>
+</html>

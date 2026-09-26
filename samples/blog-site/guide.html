@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stargazing 101 · Night Sky Field Notes</title>
+  <meta name="description" content="Everything you need for your first night out: eyes, binoculars, dark skies and finding your way.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/sky.css">
+</head>
+<body>
+  <header class="site-head">
+    <div class="wrap">
+      <a class="brand" href="/">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#121b36" stroke="#f6d98b" stroke-opacity=".4"/><path d="M19 7a9 9 0 1 0 6 15.5A10 10 0 0 1 19 7z" fill="#f6d98b"/><circle cx="9" cy="10" r="1.2" fill="#fff"/><circle cx="24" cy="8" r=".8" fill="#fff"/></svg>
+        Night Sky Field Notes
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/">Tonight</a>
+        <a href="/journal.html">Journal</a>
+        <a href="/guide.html">Stargazing 101</a>
+        <a href="/about.html">About</a>
+        <span id="nav-auth"></span>
+        <button type="button" class="red-toggle" data-red-toggle title="Red-light mode keeps your night vision at the eyepiece"><span class="dot"></span>Red light</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero small">
+      <canvas data-starfield aria-hidden="true"></canvas>
+      <div class="wrap">
+        <span class="eyebrow">Your first night out</span>
+        <h1>Stargazing 101</h1>
+        <p class="lead">You do not need a telescope to start. You need twenty minutes, a chair, and a few tricks every observer learns the hard way.</p>
+      </div>
+      <svg class="hills" viewBox="0 0 1440 110" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 64 C160 26 300 78 470 52 S780 14 960 56 S1250 30 1440 54 V110 H0Z" fill="#101a38"/>
+        <path d="M0 88 C210 58 390 100 620 76 S1010 58 1190 84 S1380 72 1440 80 V110 H0Z" fill="#070b18"/>
+      </svg>
+    </section>
+
+    <section class="wrap">
+      <div class="grid grid-2">
+        <div class="panel" id="dark-adaptation">
+          <span class="eyebrow">1 · Your eyes</span>
+          <h2 style="margin-top:0">Twenty minutes of darkness</h2>
+          <p>Your eyes need 20–30 minutes in the dark to reach full sensitivity. One glance at a white screen resets the clock, which is what red light is for: press <strong>Red light</strong> above and this page turns red.</p>
+          <div class="timer">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="ring-bg" cx="60" cy="60" r="52" fill="none" stroke-width="8"/>
+              <circle class="ring" id="timer-ring" cx="60" cy="60" r="52" fill="none" stroke-width="8" stroke-linecap="round"
+                      transform="rotate(-90 60 60)" stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+              <text x="60" y="66" text-anchor="middle" fill="#e7ebf7" font-size="20" font-family="Georgia, serif" id="timer-text">20:00</text>
+            </svg>
+            <div>
+              <p class="muted small" id="timer-note">Start this when you step outside. Put the phone away; come back when it is full.</p>
+              <div class="actions" style="margin-top:.4rem">
+                <button type="button" class="btn primary" id="timer-start">Start adapting</button>
+                <button type="button" class="btn" id="timer-reset">Reset</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <span class="eyebrow">2 · Binoculars first</span>
+          <h2 style="margin-top:0">Your first instrument</h2>
+          <svg class="illustration" viewBox="0 0 400 150" role="img" aria-label="A pair of binoculars beside a small telescope on a tripod">
+            <g fill="#1e2a52" stroke="#f6d98b" stroke-opacity=".6" stroke-width="1.5">
+              <rect x="30" y="50" width="52" height="80" rx="12"/><rect x="92" y="50" width="52" height="80" rx="12"/>
+              <rect x="74" y="70" width="26" height="22" rx="4"/>
+              <circle cx="56" cy="130" r="20"/><circle cx="118" cy="130" r="20"/>
+            </g>
+            <g stroke="#98a3c2" stroke-width="3" stroke-linecap="round">
+              <line x1="300" y1="92" x2="262" y2="148"/><line x1="300" y1="92" x2="338" y2="148"/><line x1="300" y1="92" x2="300" y2="150"/>
+            </g>
+            <g transform="rotate(-28 300 80)">
+              <rect x="215" y="66" width="170" height="30" rx="6" fill="#1e2a52" stroke="#f6d98b" stroke-opacity=".6" stroke-width="1.5"/>
+              <rect x="372" y="60" width="18" height="42" rx="4" fill="#27366a"/>
+              <rect x="200" y="72" width="18" height="18" rx="3" fill="#27366a"/>
+            </g>
+            <circle cx="360" cy="18" r="2" fill="#fff"/><circle cx="330" cy="30" r="1.2" fill="#fff"/><circle cx="385" cy="40" r="1.5" fill="#fff"/>
+          </svg>
+          <p>A pair of <strong>10×50</strong> binoculars (10 times magnification, 50 mm lenses) shows craters on the Moon, Jupiter's moons, the Orion Nebula and hundreds of star clusters. They are also the best way to learn the sky, because they show wide fields you can match to a chart.</p>
+          <p class="muted small">When you do buy a telescope, a 6–8 inch Dobsonian gives the most light for the money.</p>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:1.2rem">
+        <span class="eyebrow">3 · How dark is your sky?</span>
+        <h2 style="margin-top:0">The Bortle scale</h2>
+        <p>Astronomers rate sky darkness from 1 (the darkest skies on Earth) to 9 (a city centre). Most suburbs sit around 5–6, where the Milky Way is gone but the Moon, planets and bright clusters are all still there.</p>
+        <div class="bortle" aria-hidden="true">
+          <span style="background:#1a2350;color:#e7ebf7">1</span><span style="background:#243066;color:#e7ebf7">2</span><span style="background:#2f3f7d;color:#e7ebf7">3</span>
+          <span style="background:#465a96">4</span><span style="background:#6b7bac">5</span><span style="background:#9a9fb6">6</span>
+          <span style="background:#c7b89a">7</span><span style="background:#e2b37a">8</span><span style="background:#f3c078">9</span>
+        </div>
+        <div class="meta"><span>Truly dark</span><span style="margin-left:auto">City centre</span></div>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:1.2rem">
+        <div class="panel">
+          <span class="eyebrow">4 · Finding your way</span>
+          <h2 style="margin-top:0">Star-hopping</h2>
+          <ol>
+            <li>Start from a star you <em>know</em>, like Vega or Betelgeuse.</li>
+            <li>Use shapes as signposts: "two belt-lengths below Orion's belt".</li>
+            <li>Your fist at arm's length covers about 10° of sky: a ruler you always have with you.</li>
+            <li>Sketch what you see. It trains your eye faster than anything else.</li>
+          </ol>
+        </div>
+        <div class="panel">
+          <span class="eyebrow">5 · Before you go</span>
+          <h2 style="margin-top:0">A short checklist</h2>
+          <ul>
+            <li>Check the <a href="/">Moon tonight</a>: a bright Moon hides faint things.</li>
+            <li>Dress one layer warmer than seems reasonable. Standing still is cold.</li>
+            <li>A red light, a chair, and a hot drink.</li>
+            <li>Tell someone where you are going if you drive somewhere dark.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap">
+      <span>Night Sky Field Notes: a static site with C# functions and a SQLite database, on Static Site Host.</span>
+      <span>Clear skies.</span>
+    </div>
+  </footer>
+
+  <script src="/js/sky.js"></script>
+  <script src="/js/guide.js"></script>
+</body>
+</html>

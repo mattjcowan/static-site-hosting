@@ -1,5 +1,16 @@
 # syntax=docker/dockerfile:1
 
+# Two images from one file:
+#
+#   runtime            ASP.NET runtime only (~220 MB). Static hosting; functions cannot be
+#                      compiled, and the app says so rather than failing.
+#   runtime-functions  The full .NET SDK (~900 MB), so uploaded functions can be built with
+#                      `dotnet publish`. The default: it is the last stage, and compose
+#                      selects it unless IMAGE_TARGET says otherwise.
+#
+# Only building a function needs the SDK. Running one that is already built needs just the
+# runtime, because the build output is kept on the /data volume.
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
@@ -28,6 +39,46 @@ COPY --from=build /app/publish ./
 RUN mkdir -p /data && chown -R app:app /data
 
 USER app
+VOLUME ["/data"]
+EXPOSE 8080
+
+ENTRYPOINT ["dotnet", "StaticSiteHost.dll"]
+
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS runtime-functions
+WORKDIR /app
+
+# NUGET_PACKAGES puts the package cache on the volume. Left in the container's home
+# directory, it is lost whenever the container is recreated, and the next function build
+# downloads every package (ScottPlot, SkiaSharp's native binaries, ...) all over again.
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    ASPNETCORE_URLS=http://+:8080 \
+    SiteHosting__DataRoot=/data \
+    NUGET_PACKAGES=/data/nuget \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1
+
+COPY --from=build /app/publish ./
+
+# The SDK's first command for a user tries to verify workloads under /usr/share/dotnet,
+# which a non-root user cannot write, and prints "An issue was encountered verifying
+# workloads" into the build output an administrator reads. Function builds use no
+# workloads, so: manifest mode (set as root), then one throwaway command as the app user
+# so the first-use marker is baked into its home directory instead of being recreated,
+# and the warning repeated, every time the container is.
+#
+# Fonts: the base image has none, and SkiaSharp (what ScottPlot and most .NET drawing
+# libraries render with) then draws text as nothing at all, with no error. DejaVu is a sane
+# default; Liberation matches Arial/Times metrics, so text lays out as it does on Windows.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core fonts-liberation \
+ && rm -rf /var/lib/apt/lists/* \
+ && dotnet workload config --update-mode manifests \
+ && mkdir -p /data/nuget && chown -R app:app /data
+
+USER app
+RUN dotnet workload list > /dev/null
+
 VOLUME ["/data"]
 EXPOSE 8080
 

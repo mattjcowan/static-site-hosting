@@ -1,0 +1,55 @@
+@model StaticSiteHost.Pages.Shared.FunctionUploadView
+@*
+    One upload form for a site's functions and the global ones. The picker gets a line of its
+    own, then (when something is live) the choice of merging or replacing, then the actions.
+    The remove form is separate and empty; its button sits with the others through the form
+    attribute, since forms cannot nest.
+*@
+<form method="post" enctype="multipart/form-data" class="fn-upload" action="@Model.Action" asp-antiforgery="true"
+      data-busy="Compiling… the first build restores packages and can take a minute">
+    <div class="field">
+        <span class="label">@(Model.Live is null ? "Upload functions" : "Upload files")</span>
+        @* Not "required": the input is hidden inside the drop zone, and a browser cannot point at a
+           hidden field to say it is empty. app.js checks for files instead. *@
+        <div class="dropzone dropzone-sm" data-dropzone tabindex="0" role="button" aria-label="Choose function files">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+            </svg>
+            <div>
+                <strong data-dropzone-label>Drop .cs, .linq or .zip files here</strong>
+                <span data-dropzone-hint>or click to choose</span>
+            </div>
+            <input id="function-file" name="files" type="file" accept=".cs,.linq,.zip" multiple />
+        </div>
+        <p class="hint" style="margin-top: 0.4rem">Several at once is fine. The .zip from <em>Download source</em> goes straight back in.</p>
+    </div>
+
+    @if (Model.Live is not null)
+    {
+        <fieldset class="fn-mode">
+            <legend class="sr-only">What to do with the files already live</legend>
+            <label class="checkline">
+                <input type="radio" name="mode" value="merge" checked />
+                <span><strong>Add or update these files.</strong> A file with the same name is replaced; the other live files stay.</span>
+            </label>
+            <label class="checkline">
+                <input type="radio" name="mode" value="replace" />
+                <span><strong>Replace all files.</strong> What you upload becomes the whole set; live files you leave out are removed.</span>
+            </label>
+        </fieldset>
+    }
+
+    <div class="fn-actions">
+        <button type="submit" class="btn-primary">Compile and deploy</button>
+        <a class="btn" href="@Model.EditorUrl">Open the editor</a>
+        @if (Model.Live is not null && Model.RemoveAction is not null)
+        {
+            <button type="submit" form="remove-functions" class="btn-danger">@Model.RemoveLabel</button>
+        }
+    </div>
+</form>
+
+@if (Model.Live is not null && Model.RemoveAction is not null)
+{
+    <form id="remove-functions" method="post" action="@Model.RemoveAction" asp-antiforgery="true" data-confirm="@Model.RemoveConfirm"></form>
+}

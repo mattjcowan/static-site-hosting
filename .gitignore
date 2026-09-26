@@ -11,3 +11,6 @@ obj/
 data/
 
 .env
+
+# Screenshot tooling (scripts/screenshots.sh)
+scripts/screenshots/node_modules/

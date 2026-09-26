@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Models;
+using StaticSiteHost.Pages.Shared;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
 
@@ -30,6 +31,8 @@ public class DetailsModel : PageModel
     private readonly ApiKeyStore _apiKeys;
     private readonly SiteRuleService _rules;
     private readonly AuditLog _audit;
+    private readonly FunctionHost _functions;
+    private readonly FunctionDeploymentService _functionDeployer;
     private readonly SiteHostingOptions _options;
 
     public DetailsModel(
@@ -40,8 +43,12 @@ public class DetailsModel : PageModel
         ApiKeyStore apiKeys,
         SiteRuleService rules,
         AuditLog audit,
+        FunctionHost functions,
+        FunctionDeploymentService functionDeployer,
         IOptions<SiteHostingOptions> options)
     {
+        _functions = functions;
+        _functionDeployer = functionDeployer;
         _sites = sites;
         _deployer = deployer;
         _content = content;
@@ -92,6 +99,16 @@ public class DetailsModel : PageModel
     public IReadOnlyList<string> HeaderRuleErrors { get; private set; } = [];
 
     public IReadOnlyList<string> RedirectRuleErrors { get; private set; } = [];
+
+    /// <summary>Why the last function upload was refused, shown in the Functions card.</summary>
+    public string? FunctionError { get; private set; }
+
+    /// <summary>The compiler's messages for a refused upload, with the author's line numbers.</summary>
+    public IReadOnlyList<FunctionDiagnostic> FunctionDiagnostics { get; private set; } = [];
+
+    /// <summary>How a release's functions read in the releases table and the rollback choice.</summary>
+    public string BundleLabel(string? bundleId) =>
+        Site.FindBundle(bundleId)?.Label ?? "no functions";
 
     /// <summary>Starting points offered under the header rule editor.</summary>
     public static IReadOnlyList<RuleExample> HeaderExamples { get; } =
@@ -206,13 +223,14 @@ public class DetailsModel : PageModel
         ];
     }
 
-    public async Task<IActionResult> OnPostRollbackAsync(string domain, string releaseId)
+    public async Task<IActionResult> OnPostRollbackAsync(string domain, string releaseId, string? functions)
     {
         var site = Resolve(domain);
         if (site is null) return RedirectToPage("Index");
 
         var actor = User.Identity?.Name ?? "unknown";
-        var (ok, error) = await _deployer.RollbackAsync(site.Domain, releaseId, actor);
+        var keep = functions == "keep";
+        var (ok, error) = await _deployer.RollbackAsync(site.Domain, releaseId, actor, keep);
 
         if (ok) TempData["StatusMessage"] = $"{site.Domain} is now serving release {releaseId}.";
         else TempData["ErrorMessage"] = error;
@@ -300,6 +318,98 @@ public class DetailsModel : PageModel
         return Page();
     }
 
+    public async Task<IActionResult> OnPostFunctionsAsync(string domain, List<IFormFile> files, string? mode, CancellationToken ct)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var (uploaded, readError) = await FunctionUploads.ReadAsync(files, ct);
+        var result = uploaded is null
+            ? FunctionDeployResult.Failed(readError!)
+            : await _functionDeployer.DeployAsync(site.Domain, uploaded, User.Identity?.Name ?? "unknown", "web", replace: mode == "replace", ct);
+
+        if (result.Ok)
+        {
+            TempData["StatusMessage"] = FunctionUploads.Describe(result, site.Domain);
+            return RedirectToPage(new { domain = site.Domain });
+        }
+
+        // Rendered in place rather than redirected, so the compiler's messages can be shown in full.
+        await LoadAsync(site);
+        FunctionError = result.Error;
+        FunctionDiagnostics = result.Diagnostics ?? [];
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRemoveFunctionFileAsync(string domain, string? fileName, CancellationToken ct)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var result = await _functionDeployer.RemoveFileAsync(site.Domain, fileName ?? "", User.Identity?.Name ?? "unknown", "web", ct);
+        if (result.Ok)
+        {
+            TempData["StatusMessage"] = $"Removed {fileName}. " + FunctionUploads.Describe(result, site.Domain);
+            return RedirectToPage(new { domain = site.Domain });
+        }
+
+        await LoadAsync(site);
+        FunctionError = result.Error;
+        FunctionDiagnostics = result.Diagnostics ?? [];
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRemoveFunctionsAsync(string domain)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var (ok, error) = await _functionDeployer.RemoveAsync(site.Domain, User.Identity?.Name ?? "unknown");
+        if (ok) TempData["StatusMessage"] = $"{site.Domain} no longer runs any functions. Earlier releases keep theirs.";
+        else TempData["ErrorMessage"] = error;
+
+        return RedirectToPage(new { domain = site.Domain });
+    }
+
+    public async Task<IActionResult> OnGetFunctionSourceAsync(string domain)
+    {
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        return await _functionDeployer.DownloadAsync(site.Domain) is { } download
+            ? File(download.Content, download.ContentType, download.FileName)
+            : NotFound();
+    }
+
+    public async Task<IActionResult> OnPostRenameAsync(string domain, string? newDomain)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var from = site.Domain;
+        var (ok, error, to) = await _deployer.RenameAsync(from, newDomain, User.Identity?.Name ?? "unknown");
+
+        if (!ok)
+        {
+            TempData["ErrorMessage"] = error;
+            return RedirectToPage(new { domain = from });
+        }
+
+        TempData["StatusMessage"] = site.IsPasscodeProtected
+            ? $"{from} is now {to}. {from} no longer serves anything, and visitors have to enter the passcode again."
+            : $"{from} is now {to}. {from} no longer serves anything.";
+
+        return RedirectToPage(new { domain = to });
+    }
+
     public async Task<IActionResult> OnPostDeleteAsync(string domain)
     {
         if (!IsAdministrator) return Forbid();
@@ -307,6 +417,7 @@ public class DetailsModel : PageModel
         var site = Resolve(domain);
         if (site is null) return RedirectToPage("Index");
 
+        _functions.Evict(site.Domain);
         await _sites.DeleteAsync(site.Domain);
         _content.Evict(site.Domain);
         await _audit.WriteAsync("site.delete", User.Identity?.Name, new { domain = site.Domain });

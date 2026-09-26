@@ -34,7 +34,7 @@
                         var release = site.Current;
                         <tr>
                             <td>
-                                <a href="@($"{Request.Scheme}://{site.Domain}/")" target="_blank" rel="noopener">@site.Domain</a>
+                                <a href="@SiteLinks.For(Request, site.Domain)" target="_blank" rel="noopener">@site.Domain</a>
                                 @if (site.IsPasscodeProtected)
                                 {
                                     <span class="badge badge-warn" title="Visitors must enter a passcode">passcode</span>

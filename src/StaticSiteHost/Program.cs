@@ -60,6 +60,13 @@ builder.Services.AddSingleton<SiteContentServer>();
 builder.Services.AddSingleton<SitePasscodeGate>();
 builder.Services.AddSingleton<SiteRuleService>();
 builder.Services.AddSingleton<ZipDeploymentService>();
+builder.Services.AddSingleton<FunctionSourceReader>();
+builder.Services.AddSingleton<FunctionProjectGenerator>();
+builder.Services.AddSingleton<FunctionBuildService>();
+builder.Services.AddSingleton<FunctionHost>();
+builder.Services.AddSingleton<FunctionBundleBuilder>();
+builder.Services.AddSingleton<FunctionTestRunner>();
+builder.Services.AddSingleton<FunctionDeploymentService>();
 builder.Services.AddSingleton<BootstrapAdministrator>();
 builder.Services.AddSingleton<LoginThrottle>();
 

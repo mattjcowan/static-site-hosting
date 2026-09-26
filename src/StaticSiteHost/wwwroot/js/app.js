@@ -53,6 +53,92 @@
     if (message && !window.confirm(message)) event.preventDefault();
   });
 
+  // ---- slow forms: say what is happening and stop a second submit -----------
+  document.addEventListener('submit', function (event) {
+    var message = event.target.getAttribute('data-busy');
+    if (!message || event.defaultPrevented) return;
+
+    var button = event.target.querySelector('button[type=submit]');
+    if (!button) return;
+
+    // Disabled on the next tick: disabling the button inside its own submit event can
+    // cancel the submission in some browsers.
+    setTimeout(function () {
+      button.disabled = true;
+      button.textContent = message;
+    }, 0);
+  });
+
+  // ---- small drop zones ([data-dropzone]) -----------------------------------
+  //
+  // A dashed box that takes files by click or by drop, around a hidden file input. The input's
+  // accept list is honoured for dropped files too, which the browser only does for the picker.
+  document.querySelectorAll('[data-dropzone]').forEach(function (zone) {
+    var input = zone.querySelector('input[type=file]');
+    var label = zone.querySelector('[data-dropzone-label]');
+    var hint = zone.querySelector('[data-dropzone-hint]');
+    var form = zone.closest('form');
+    var emptyLabel = label.textContent;
+    var emptyHint = hint.textContent;
+    var accepted = (input.getAttribute('accept') || '').split(',')
+      .map(function (a) { return a.trim().toLowerCase(); })
+      .filter(function (a) { return a.charAt(0) === '.'; });
+
+    function acceptable(file) {
+      var name = file.name.toLowerCase();
+      return !accepted.length || accepted.some(function (ext) { return name.slice(-ext.length) === ext; });
+    }
+
+    function show(rejected) {
+      var files = Array.prototype.slice.call(input.files || []);
+      zone.classList.toggle('has-file', files.length > 0);
+      zone.classList.remove('invalid');
+      label.textContent = files.length === 0 ? emptyLabel
+        : files.length === 1 ? files[0].name
+        : files.length + ' files: ' + files.map(function (f) { return f.name; }).join(', ');
+      hint.textContent = rejected ? 'Skipped ' + rejected + ': only ' + accepted.join(', ') + ' files are accepted.'
+        : files.length ? 'Click to choose different files' : emptyHint;
+    }
+
+    zone.addEventListener('click', function () { input.click(); });
+    zone.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); }
+    });
+    input.addEventListener('click', function (event) { event.stopPropagation(); });
+    input.addEventListener('change', function () { show(); });
+
+    ['dragenter', 'dragover'].forEach(function (name) {
+      zone.addEventListener(name, function (event) { event.preventDefault(); zone.classList.add('dragover'); });
+    });
+    ['dragleave', 'drop'].forEach(function (name) {
+      zone.addEventListener(name, function (event) { event.preventDefault(); zone.classList.remove('dragover'); });
+    });
+
+    zone.addEventListener('drop', function (event) {
+      var dropped = Array.prototype.slice.call((event.dataTransfer && event.dataTransfer.files) || []);
+      if (!dropped.length) return;
+
+      var keep = new DataTransfer();
+      var rejected = [];
+      dropped.forEach(function (file) { if (acceptable(file)) keep.items.add(file); else rejected.push(file.name); });
+
+      input.files = keep.files;
+      show(rejected.join(', '));
+    });
+
+    // On the form itself, so it runs before the document-level busy handler and can stop it.
+    if (form) {
+      form.addEventListener('submit', function (event) {
+        if (event.submitter && event.submitter.getAttribute('form')) return; // another form's button
+        if (input.files && input.files.length) return;
+        event.preventDefault();
+        zone.classList.add('invalid');
+        hint.textContent = 'Choose or drop at least one file first.';
+        zone.focus();
+      });
+    }
+  });
+
   // ---- deploy form --------------------------------------------------------
   var form = document.getElementById('deploy-form');
   if (!form) return;
@@ -177,13 +263,23 @@
       }
 
       if (!payload.ok) {
-        message('error', escapeHtml(payload.error || 'The deployment failed.'));
+        var failure = escapeHtml(payload.error || 'The deployment failed.');
+        if (payload.diagnostics && payload.diagnostics.length) {
+          failure += '<ul class="mono">' + payload.diagnostics.slice(0, 20).map(function (d) {
+            return '<li>' + escapeHtml(d) + '</li>';
+          }).join('') + '</ul>';
+        }
+        message('error', failure);
         return;
       }
 
       var html = '<strong>Published ' + payload.fileCount + ' file' + (payload.fileCount === 1 ? '' : 's') +
                  ' (' + escapeHtml(payload.size) + ') to <a href="' + escapeHtml(payload.url) + '" target="_blank" rel="noopener">' +
                  escapeHtml(payload.domain) + '</a>.</strong>';
+      if (payload.functions && payload.functions.length) {
+        html += '<p>Functions from <span class="mono">_functions/</span> are live: ' +
+                payload.functions.map(function (r) { return '<span class="mono">' + escapeHtml(r) + '</span>'; }).join(', ') + '</p>';
+      }
       if (payload.warnings && payload.warnings.length) {
         html += '<ul>' + payload.warnings.map(function (w) { return '<li>' + escapeHtml(w) + '</li>'; }).join('') + '</ul>';
       }

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Night Sky Field Notes</title>
+  <meta name="description" content="Sign in to write in the journal.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/sky.css">
+</head>
+<body>
+  <header class="site-head">
+    <div class="wrap">
+      <a class="brand" href="/">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#121b36" stroke="#f6d98b" stroke-opacity=".4"/><path d="M19 7a9 9 0 1 0 6 15.5A10 10 0 0 1 19 7z" fill="#f6d98b"/><circle cx="9" cy="10" r="1.2" fill="#fff"/><circle cx="24" cy="8" r=".8" fill="#fff"/></svg>
+        Night Sky Field Notes
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/">Tonight</a>
+        <a href="/journal.html">Journal</a>
+        <a href="/guide.html">Stargazing 101</a>
+        <a href="/about.html">About</a>
+        <span id="nav-auth"></span>
+        <button type="button" class="red-toggle" data-red-toggle title="Red-light mode keeps your night vision at the eyepiece"><span class="dot"></span>Red light</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap">
+      <div class="panel auth-card" id="sign-in">
+        <span class="eyebrow">Studio</span>
+        <h1 style="font-size:2rem">Sign in</h1>
+        <form id="login-form">
+          <label for="username">Username</label>
+          <input type="text" id="username" autocomplete="username" required autofocus>
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" required>
+          <div id="login-message"></div>
+          <div class="actions"><button class="btn primary" type="submit">Sign in</button></div>
+        </form>
+      </div>
+
+      <div class="panel auth-card" id="change-password" hidden>
+        <span class="eyebrow">One more step</span>
+        <h1 style="font-size:2rem">Choose your password</h1>
+        <p class="muted">You signed in with a password someone else chose. Pick your own before going on.</p>
+        <form id="password-form">
+          <label for="next">New password</label>
+          <input type="password" id="next" autocomplete="new-password" minlength="10" required>
+          <label for="confirm">Once more</label>
+          <input type="password" id="confirm" autocomplete="new-password" minlength="10" required>
+          <div id="password-message"></div>
+          <div class="actions"><button class="btn primary" type="submit">Save and continue</button></div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap">
+      <span>Night Sky Field Notes: a static site with C# functions and a SQLite database, on Static Site Host.</span>
+      <span>Clear skies.</span>
+    </div>
+  </footer>
+
+  <script src="/js/sky.js"></script>
+  <script src="/js/login.js"></script>
+</body>
+</html>

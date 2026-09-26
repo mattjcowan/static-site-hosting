@@ -38,11 +38,21 @@ public sealed class SiteRecord
     /// </summary>
     public List<RedirectRule> Redirects { get; set; } = [];
 
+    /// <summary>Every function bundle some retained release still runs.</summary>
+    public List<FunctionBundle> FunctionBundles { get; set; } = [];
+
     [JsonIgnore]
     public bool IsPasscodeProtected => !string.IsNullOrEmpty(PasscodeHash);
 
     [JsonIgnore]
     public ReleaseRecord? Current => Releases.FirstOrDefault(r => r.Id == CurrentRelease);
+
+    /// <summary>The functions the live release runs, if it runs any.</summary>
+    [JsonIgnore]
+    public FunctionBundle? CurrentFunctions => FindBundle(Current?.Functions);
+
+    public FunctionBundle? FindBundle(string? id) =>
+        id is null ? null : FunctionBundles.FirstOrDefault(b => b.Id == id);
 }
 
 public sealed class ReleaseRecord
@@ -68,4 +78,11 @@ public sealed class ReleaseRecord
 
     /// <summary>Redirects read from the archive's <c>_redirects</c> file, if it had one.</summary>
     public List<RedirectRule> Redirects { get; set; } = [];
+
+    /// <summary>
+    /// Id of the <see cref="FunctionBundle"/> this release runs, or null for none. A deploy
+    /// carries the previous release's value forward, so new content keeps its endpoints, and
+    /// a rollback brings back the functions that went with the release.
+    /// </summary>
+    public string? Functions { get; set; }
 }

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Models;
+using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
 
 namespace StaticSiteHost.Pages;
@@ -37,12 +38,13 @@ public class IndexModel : PageModel
         await using var stream = archive.OpenReadStream();
 
         var actor = User.Identity?.Name ?? "unknown";
-        var result = await _deployer.DeployAsync(domain, stream, archive.FileName, actor, "web", cancellationToken);
+        var result = await _deployer.DeployAsync(domain, stream, archive.FileName, actor, "web",
+            canDeployFunctions: User.IsInRole(Roles.Administrator), cancellationToken);
 
-        if (!result.Ok) return Respond(false, result.Error);
+        if (!result.Ok) return Respond(false, result.Error, result.Diagnostics);
 
         var release = result.Release!;
-        var url = $"{Request.Scheme}://{result.Domain}/";
+        var url = SiteLinks.For(Request, result.Domain!);
 
         if (IsXhr)
         {
@@ -54,6 +56,7 @@ public class IndexModel : PageModel
                 release = release.Id,
                 fileCount = release.FileCount,
                 size = Format.Bytes(release.TotalBytes),
+                functions = result.Functions?.Routes,
                 warnings = result.Warnings ?? []
             });
         }
@@ -65,9 +68,11 @@ public class IndexModel : PageModel
 
     private bool IsXhr => Request.Headers.XRequestedWith == "fetch";
 
-    private IActionResult Respond(bool ok, string? message)
+    private IActionResult Respond(bool ok, string? message, IReadOnlyList<FunctionDiagnostic>? diagnostics = null)
     {
-        if (IsXhr) return new JsonResult(new { ok, error = message });
+        // Only errors: warnings would bury the line that stopped the deploy.
+        if (IsXhr)
+            return new JsonResult(new { ok, error = message, diagnostics = diagnostics?.Where(d => d.Severity == "error").Select(d => d.ToString()) });
 
         TempData["ErrorMessage"] = message;
         return RedirectToPage();

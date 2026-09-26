@@ -12,9 +12,12 @@ public sealed record DeployResult(
     string? Error,
     string? Domain = null,
     ReleaseRecord? Release = null,
-    IReadOnlyList<string>? Warnings = null)
+    IReadOnlyList<string>? Warnings = null,
+    FunctionBundle? Functions = null,
+    IReadOnlyList<FunctionDiagnostic>? Diagnostics = null)
 {
-    public static DeployResult Failed(string error) => new(false, error);
+    public static DeployResult Failed(string error, IReadOnlyList<FunctionDiagnostic>? diagnostics = null) =>
+        new(false, error, Diagnostics: diagnostics);
 }
 
 /// <summary>
@@ -25,6 +28,12 @@ public sealed record DeployResult(
 public sealed class ZipDeploymentService
 {
     private const int CopyBufferSize = 81_920;
+
+    /// <summary>
+    /// A top-level folder of this name holds the site's functions. It is compiled, never
+    /// served, and only an administrator may deploy it: it is code that runs in this server.
+    /// </summary>
+    public const string FunctionsFolder = "_functions";
 
     /// <summary>Cap on the archive's rule files. A rule set is a page of text at most.</summary>
     private const long MaxRuleFileBytes = 64 * 1024;
@@ -38,6 +47,8 @@ public sealed class ZipDeploymentService
     private readonly SiteStore _sites;
     private readonly SiteContentServer _content;
     private readonly AuditLog _audit;
+    private readonly FunctionHost _functions;
+    private readonly FunctionBundleBuilder _functionBuilder;
     private readonly SiteHostingOptions _options;
     private readonly ILogger<ZipDeploymentService> _logger;
 
@@ -50,9 +61,13 @@ public sealed class ZipDeploymentService
         SiteStore sites,
         SiteContentServer content,
         AuditLog audit,
+        FunctionHost functions,
+        FunctionBundleBuilder functionBuilder,
         IOptions<SiteHostingOptions> options,
         ILogger<ZipDeploymentService> logger)
     {
+        _functions = functions;
+        _functionBuilder = functionBuilder;
         _paths = paths;
         _sites = sites;
         _content = content;
@@ -67,6 +82,7 @@ public sealed class ZipDeploymentService
         string? archiveName,
         string actor,
         string source,
+        bool canDeployFunctions,
         CancellationToken ct = default)
     {
         var (domain, domainError) = SiteStore.NormalizeDomain(domainInput);
@@ -99,7 +115,7 @@ public sealed class ZipDeploymentService
             if (archive.Length > _options.MaxUploadBytes)
                 return DeployResult.Failed($"The archive is larger than the {Format.Bytes(_options.MaxUploadBytes)} upload limit.");
 
-            return await ExtractAndPublishAsync(domain, archive, archiveName, actor, source, ct);
+            return await ExtractAndPublishAsync(domain, archive, archiveName, actor, source, canDeployFunctions, ct);
         }
         catch (InvalidDataException)
         {
@@ -126,7 +142,8 @@ public sealed class ZipDeploymentService
     }
 
     private async Task<DeployResult> ExtractAndPublishAsync(
-        string domain, Stream archive, string? archiveName, string actor, string source, CancellationToken ct)
+        string domain, Stream archive, string? archiveName, string actor, string source,
+        bool canDeployFunctions, CancellationToken ct)
     {
         using var zip = OpenArchive(archive);
 
@@ -171,6 +188,40 @@ public sealed class ZipDeploymentService
         var stripRoot = planned.All(p => p.Segments.Length >= 2)
                         && planned.Select(p => p.Segments[0]).Distinct(StringComparer.Ordinal).Count() == 1;
 
+        // Refused before a byte is extracted: a non-administrator's zip with functions in it
+        // does not deploy at all, rather than deploying without them and looking like it worked.
+        var functionEntries = planned
+            .Select(p => (p.Entry, Relative: stripRoot ? p.Segments[1..] : p.Segments))
+            .Where(p => p.Relative.Length >= 2 && p.Relative[0].Equals(FunctionsFolder, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (functionEntries.Count > 0 && !canDeployFunctions)
+        {
+            return DeployResult.Failed(
+                $"This archive contains a {FunctionsFolder}/ folder, which only administrators can deploy because it runs " +
+                "as code on the server. Remove the folder, or ask an administrator to deploy it.");
+        }
+
+        var functionFiles = new List<FunctionFile>();
+        foreach (var (entry, relative) in functionEntries)
+        {
+            if (relative.Length != 2 || !FunctionBundleBuilder.IsFunctionFileName(relative[1]))
+            {
+                warnings.Add($"{FunctionsFolder}/{string.Join('/', relative[1..])} was ignored: only .cs and .linq files " +
+                             $"directly inside {FunctionsFolder}/ are compiled.");
+                continue;
+            }
+
+            if (entry.Length > FunctionSourceReader.MaxSourceBytes)
+                return DeployResult.Failed($"{FunctionsFolder}/{relative[1]} is over the {Format.Bytes(FunctionSourceReader.MaxSourceBytes)} limit for one function file.");
+
+            using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
+            functionFiles.Add(new FunctionFile(relative[1], await reader.ReadToEndAsync(ct)));
+        }
+
+        if (functionEntries.Count > 0 && functionFiles.Count == 0)
+            warnings.Add($"{FunctionsFolder}/ holds no .cs or .linq files, so the site keeps the functions it had.");
+
         var releaseId = NewReleaseId();
         var stagingDir = Path.Combine(_paths.StagingDir(domain), releaseId);
         Directory.CreateDirectory(stagingDir);
@@ -178,6 +229,8 @@ public sealed class ZipDeploymentService
         long totalBytes = 0;
         var fileCount = 0;
         var headerRules = new List<HeaderRule>();
+        FunctionBundle? bundle = null;
+        IReadOnlyList<FunctionDiagnostic>? functionDiagnostics = null;
         var redirectRules = new List<RedirectRule>();
 
         try
@@ -188,6 +241,9 @@ public sealed class ZipDeploymentService
 
                 var relative = stripRoot ? segments[1..] : segments;
                 if (relative.Length == 0) continue;
+
+                // Read above and compiled below; never part of what is served.
+                if (relative.Length >= 2 && relative[0].Equals(FunctionsFolder, StringComparison.OrdinalIgnoreCase)) continue;
 
                 // The rule files are configuration, not content: they are read here and never
                 // written into the release, so they cannot be fetched from the site.
@@ -233,6 +289,22 @@ public sealed class ZipDeploymentService
             if (!hasRootIndex)
                 warnings.Add("No index.html was found at the root of the site — requests will fall back to a 404.");
 
+            // Built after the content is staged and before anything goes live, so a function
+            // that does not compile fails the whole deploy: new content never goes out beside
+            // old code it may have been written against.
+            if (functionFiles.Count > 0)
+            {
+                var built = await _functionBuilder.BuildAsync(_paths.FunctionsDir(domain), functionFiles, actor, source, ct);
+                if (!built.Ok)
+                {
+                    TryDeleteDirectory(stagingDir);
+                    return DeployResult.Failed($"Nothing was deployed: the functions did not build. {built.Error}", built.Diagnostics);
+                }
+
+                bundle = built.Bundle;
+                functionDiagnostics = built.Diagnostics;
+            }
+
             var releaseDir = _paths.ReleaseDir(domain, releaseId);
             Directory.CreateDirectory(_paths.ReleasesDir(domain));
             Directory.Move(stagingDir, releaseDir);
@@ -252,6 +324,13 @@ public sealed class ZipDeploymentService
             };
 
             var site = _sites.TryGet(domain) ?? new SiteRecord { Domain = domain, CreatedBy = actor };
+
+            // Functions that came with the zip are the release's own. Otherwise new content keeps
+            // the endpoints the site already had: a bundle is referenced, not copied, so that
+            // costs nothing and needs no rebuild.
+            if (bundle is not null) site.FunctionBundles.Add(bundle);
+            release.Functions = bundle?.Id ?? site.Current?.Functions;
+
             site.Releases.Insert(0, release);
             site.CurrentRelease = releaseId;
             site.LastDeployedBy = actor;
@@ -264,11 +343,12 @@ public sealed class ZipDeploymentService
             _logger.LogInformation("Deployed {Files} file(s) ({Bytes}) to {Domain} as release {Release}",
                 fileCount, Format.Bytes(totalBytes), domain, releaseId);
 
-            return new DeployResult(true, null, domain, release, warnings);
+            return new DeployResult(true, null, domain, release, warnings, bundle, functionDiagnostics);
         }
         catch (Exception)
         {
             TryDeleteDirectory(stagingDir);
+            if (bundle is not null) TryDeleteDirectory(_paths.FunctionBundleDir(domain, bundle.Id));
             throw;
         }
     }
@@ -331,8 +411,13 @@ public sealed class ZipDeploymentService
         }
     }
 
-    /// <summary>Points a site back at an earlier release that is still on disk.</summary>
-    public async Task<(bool Ok, string? Error)> RollbackAsync(string domain, string releaseId, string actor)
+    /// <summary>
+    /// Points a site back at an earlier release that is still on disk. By default the release
+    /// comes back with the functions it last ran; <paramref name="keepCurrentFunctions"/> makes
+    /// it run whatever is live now instead, and records that on the release.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> RollbackAsync(
+        string domain, string releaseId, string actor, bool keepCurrentFunctions = false)
     {
         // Same gate as a deploy: both mutate the site's release list and current pointer.
         await _deployGate.WaitAsync();
@@ -344,11 +429,55 @@ public sealed class ZipDeploymentService
             if (!Directory.Exists(_paths.ReleaseDir(domain, releaseId)))
                 return (false, "That release is no longer on disk.");
 
+            if (keepCurrentFunctions)
+            {
+                site.Releases.First(r => r.Id == releaseId).Functions = site.Current?.Functions;
+                PruneFunctionBundles(site);
+            }
+
             site.CurrentRelease = releaseId;
             await _sites.SaveAsync(site);
             _content.Evict(domain);
-            await _audit.WriteAsync("site.rollback", actor, new { domain, release = releaseId });
+            await _audit.WriteAsync("site.rollback", actor,
+                new { domain, release = releaseId, functions = keepCurrentFunctions ? "kept" : "restored" });
             return (true, null);
+        }
+        finally
+        {
+            _deployGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Moves a site to a new domain. The old domain stops answering straight away; nothing
+    /// redirects from it.
+    /// </summary>
+    public async Task<(bool Ok, string? Error, string? Domain)> RenameAsync(string domain, string? newDomainInput, string actor)
+    {
+        var (to, error) = SiteStore.NormalizeDomain(newDomainInput);
+        if (to is null) return (false, error, null);
+        if (_options.IsManagementHost(to))
+            return (false, $"'{to}' is reserved for the management interface.", null);
+        if (to == domain) return (false, $"The site is already published at '{to}'.", null);
+
+        // Same gate as a deploy: a release extracting into the old directory mid-move would
+        // land in a folder that no longer exists.
+        await _deployGate.WaitAsync();
+        try
+        {
+            var (ok, failure) = await _sites.RenameAsync(domain, to);
+            if (!ok) return (false, failure, null);
+
+            _content.Evict(domain);
+            _content.Evict(to);
+
+            // The loaded functions resolve their dependencies from the old path, which is gone.
+            _functions.Evict(domain);
+
+            await _audit.WriteAsync("site.rename", actor, new { from = domain, to });
+            _logger.LogInformation("Moved site {From} to {To}", domain, to);
+
+            return (true, null, to);
         }
         finally
         {
@@ -376,7 +505,11 @@ public sealed class ZipDeploymentService
     private void PruneReleases(SiteRecord site)
     {
         var keep = Math.Max(1, _options.ReleasesToKeep);
-        if (site.Releases.Count <= keep) return;
+        if (site.Releases.Count <= keep)
+        {
+            PruneFunctionBundles(site);
+            return;
+        }
 
         var retained = site.Releases
             .OrderByDescending(r => r.Id == site.CurrentRelease)
@@ -390,6 +523,46 @@ public sealed class ZipDeploymentService
         }
 
         site.Releases.RemoveAll(r => !retained.Contains(r));
+        PruneFunctionBundles(site);
+    }
+
+    /// <summary>Drops function bundles that no retained release runs any more.</summary>
+    private void PruneFunctionBundles(SiteRecord site)
+    {
+        var used = site.Releases.Select(r => r.Functions).OfType<string>().ToHashSet(StringComparer.Ordinal);
+
+        foreach (var bundle in site.FunctionBundles.Where(b => !used.Contains(b.Id)).ToList())
+        {
+            TryDeleteDirectory(_paths.FunctionBundleDir(site.Domain, bundle.Id));
+            site.FunctionBundles.Remove(bundle);
+        }
+    }
+
+    /// <summary>
+    /// Makes <paramref name="bundle"/> the functions of the live release, or removes them when
+    /// null. Under the deploy gate because it edits the same release list a deploy does.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> SetFunctionsAsync(string domain, FunctionBundle? bundle)
+    {
+        await _deployGate.WaitAsync();
+        try
+        {
+            var site = _sites.TryGet(domain);
+            if (site is null) return (false, $"No site is published at '{domain}'.");
+            if (site.Current is not { } current) return (false, "This site has no live release to attach functions to.");
+            if (bundle is null && current.Functions is null) return (false, "This site has no functions to remove.");
+
+            if (bundle is not null) site.FunctionBundles.Add(bundle);
+            current.Functions = bundle?.Id;
+
+            PruneFunctionBundles(site);
+            await _sites.SaveAsync(site);
+            return (true, null);
+        }
+        finally
+        {
+            _deployGate.Release();
+        }
     }
 
     /// <summary>

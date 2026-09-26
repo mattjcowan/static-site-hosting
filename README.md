@@ -5,6 +5,8 @@ number of static sites out of one data volume, with accounts, invitation links, 
 [per-site passcodes](#private-sites) and an API for CI. No database — users, keys and site
 metadata are JSON files on the volume.
 
+![Deploying a site: drop a zip, pick a domain, and it is live](docs/screenshots/deploy.png)
+
 ```
 you ──upload site.zip──▶  deploy.example.com   (management UI + API)
                                 │
@@ -54,11 +56,45 @@ open the network tab and you can watch a [header rule](#header-rules) apply — 
 `_redirects` file, so `/posts/hello-world` bounces to `/blog/hello-world` and `/preview`
 serves a post without the address changing. See [redirects and rewrites](#redirects-and-rewrites).
 
-The sources live in `samples/demo-site/`. To rebuild the archive after editing them:
+The sources live in `samples/demo-site/`. After editing any sample, rebuild the archives
+with:
 
 ```bash
-cd samples/demo-site && zip -qr ../../sample-site.zip . -x '.*'
+scripts/build-samples.sh             # both zips
+scripts/build-samples.sh blog-site   # or just one
 ```
+
+`blog-site.zip` is a bigger one: **Night Sky Field Notes**, an astronomy journal that shows
+off [functions](#functions). It has a live Moon phase, a constellation of the season, a
+dark-adaptation timer and a red-light mode. Its `_functions/` folder adds sign-in, user
+management and a Markdown journal, stored in SQLite (through Dapper) in the site's
+[data folder](#functions). Deploy it as an administrator, since a `_functions/` folder is
+refused otherwise. The first request creates an `admin` account with a generated password,
+printed to the server log (`docker compose logs`), and it must be changed at first sign-in.
+The sources are in `samples/blog-site/`, and `scripts/build-samples.sh` rebuilds the zip.
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/screenshots/sites.png"><img src="docs/screenshots/sites.png" alt="The list of hosted sites"></a><br><sub><b>Sites</b>: every domain on the server, with size and last deploy.</sub></td>
+    <td width="50%"><a href="docs/screenshots/functions.png"><img src="docs/screenshots/functions.png" alt="A site's Functions card with its routes"></a><br><sub><b>Functions</b>: each route with the file and line it is written on.</sub></td>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/editor.png"><img src="docs/screenshots/editor.png" alt="The function editor marking a compile error"></a><br><sub><b>Editor</b>: <b>Check</b> compiles without going live and marks errors in the code.</sub></td>
+    <td><a href="docs/screenshots/editor-test.png"><img src="docs/screenshots/editor-test.png" alt="Testing a function that returns a PNG"></a><br><sub><b>Test</b>: run a request against the checked build; images, PDFs and JSON render inline.</sub></td>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/blog-home.png"><img src="docs/screenshots/blog-home.png" alt="Night Sky Field Notes home page"></a><br><sub><b>blog-site.zip</b>: an astronomy journal with a live Moon phase and a starfield.</sub></td>
+    <td><a href="docs/screenshots/blog-studio.png"><img src="docs/screenshots/blog-studio.png" alt="The blog's studio editing a post"></a><br><sub>Its studio: sign-in, accounts and Markdown posts, all C# functions and SQLite.</sub></td>
+  </tr>
+</table>
+
+The screenshots are taken by `scripts/screenshots.sh`, which starts a throwaway instance,
+deploys the samples through the UI and captures each screen. Run it again after changing the
+UI. It needs Node, and downloads a Chromium the first time; the app itself needs neither.
 
 ---
 
@@ -261,6 +297,101 @@ This is a visibility gate: it keeps a link that leaks out of being readable by w
 finds it. Content that would be damaging to disclose wants a real account system, not a
 shared passcode.
 
+### Functions
+
+A site can answer requests with C# as well as files: something like a small Cloudflare
+Worker, written as `.cs` files or LINQPad `.linq` queries. There are three ways in, all
+for administrators only, since a function is code running inside this server:
+
+* **Upload** `.cs` and `.linq` files, or a `.zip` of them (such as the one **Download
+  source** gives you), under **Sites → the domain → Functions**, or under **Functions** in
+  the top bar for handlers every site should answer. By default an upload **adds or
+  updates**: a file with the same name is replaced and the other live files stay. Choose
+  **Replace all files** to make the upload the whole set.
+* **Write them in the browser** with **Open the editor**: tabs per file, syntax
+  highlighting, **Check** to compile without going live, and a test panel (below).
+* **Ship them in the zip** in a top-level `_functions/` folder. They are compiled with the
+  deploy and never served. If they fail to compile, nothing is deployed. A zip containing
+  `_functions/` is refused outright when the person deploying it is not an administrator.
+
+```csharp
+#:sdk Microsoft.NET.Sdk.Web
+// NuGet packages work too, restored on the server: #:package ScottPlot@5.1.59
+
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+
+public static class Handlers
+{
+    // Owned by this file, so its cache is thrown away with the file on the next deploy.
+    private static readonly JsonSerializerOptions Json = new();
+
+    [HttpPost("/ping/{name?}")]
+    public static IResult Ping(HttpContext context, string? name) =>
+        Results.Json(new { pong = name is null ? "Hi" : $"Hi {name}" }, Json);
+}
+```
+
+`samples/functions/` has the same handlers in both formats, with a `#if LINQPAD` block so
+the file also runs as-is in LINQPad 9.
+
+* **The Functions table** lists each route with the file and line its handler is written
+  on, read from the build's debug information. Click one to open the editor there. The ×
+  beside a file removes it by compiling and deploying the others in one step. If another
+  file still uses it, the build fails and nothing changes.
+* **Several files** compile together as one project, so they can share helper classes. Give
+  every class its own name: two files that both declare `class Handlers` fail with
+  `CS0101`, naming the file and line. Their packages and imports are merged. Two files
+  pinning different versions of the same package are refused, and so are two handlers
+  claiming the same route.
+* **Routes** come from ASP.NET's own attributes on `public static` methods:
+  `[HttpGet("/path")]`, `[HttpPost]`, `[HttpPut]`, `[HttpPatch]`, `[HttpDelete]`, or
+  `[Route]` for any method. `{name}` captures a segment and `{name?}` makes it optional.
+  The path is used as written: `[HttpPost("/ping")]` answers at `demo.example.com/ping`.
+* **Parameters** are filled by name: `HttpContext`, `HttpRequest`, `HttpResponse`,
+  `CancellationToken`, or a simple value taken from the route, then the query string. A
+  value that does not convert gets a 400.
+* **Data:** ask for a `DirectoryInfo` and you get the site's data folder,
+  `/data/sites/<domain>/data/`. Put a SQLite database, uploads or JSON files there. It sits
+  beside the releases, so it is never served, and deploys and rollbacks leave it alone. A
+  rename moves it with the site, and deleting the site deletes it. Global functions share
+  `/data/config/functions-data/`. The path is also in
+  `HttpContext.Items["StaticSiteHost.DataDirectory"]`. Editor tests use the same folder, so
+  they see and change real data.
+* **Packages that hook into the process** are handled for you. Some libraries (Microsoft.Data.Sqlite,
+  for one) subscribe to process-wide events or start background timers that would keep an
+  old build in memory forever. When a build is replaced, the host releases those hooks, and
+  logs a warning if a build still lingers five minutes later.
+* **Return** an `IResult` (`Results.Json`, `Results.File`, `Results.Text`, …), a `string`,
+  an `int` status code, or nothing, optionally wrapped in a `Task`. Returning any other
+  object is refused. Serialise it yourself with `Results.Json(value, options)`, using
+  options held in a static field of your file as above. Options owned by the server would
+  keep every version of your code in memory forever.
+* **Order:** the site's own functions, then the global functions, then the site's files.
+  A path no function matches is served exactly as before; a matching path with the wrong
+  method gets a 405. Functions sit behind a site's passcode like everything else.
+* **Uploading** compiles the files with the .NET SDK (`dotnet publish`), loads them once
+  to find their routes, and only then makes them live. A compile error names the file and
+  line you wrote, and the functions already live keep answering. The first build restores
+  packages and can take a minute; later ones take a few seconds.
+* **Testing** in the editor runs one request in memory against the checked build or the
+  live one: pick a route, fill in its parameters, query, headers and body, and **Run**. No
+  DNS, passcode or cross-origin rules get in the way, and an exception comes back with its
+  stack trace. JSON is pretty-printed, text and HTML source are shown (HTML also as a
+  sandboxed preview that cannot run scripts), images and PDFs render inline, and anything
+  else, or anything sent as an attachment, is offered as a download. A test runs your real
+  code: whatever a handler writes or sends, it writes or sends.
+* **Releases:** functions belong to the live release. Deploying new content keeps them.
+  Rolling back brings back the functions that release had, or, if you choose, keeps the
+  ones running now: the choice appears next to **Make live** whenever the two differ.
+  Global functions have no history; uploading replaces them everywhere.
+* A `.linq` file compiles with LINQPad's default namespace imports, so a query that runs
+  in LINQPad compiles here. Imports added in LINQPad's own settings rather than the query's
+  are not saved in the file; add them to the query.
+
+Functions need the `runtime-functions` Docker image (the default), which includes the SDK.
+
 ---
 
 ## Accounts
@@ -323,7 +454,27 @@ Authorization: Bearer sshost_ppoc7CxI1CNd_Vr6kVNxk6CsN0z6bdylnNhPwfIQxizQHSZqTRT
 | `GET`    | `/api/v1/sites/{domain}/redirects`          | redirects, site and release |
 | `PUT`    | `/api/v1/sites/{domain}/redirects`          | replace the site's redirects |
 | `DELETE` | `/api/v1/sites/{domain}/redirects`          | remove them                 |
+| `POST`   | `/api/v1/sites/{domain}/rename`             | `{"domain":"…"}` — move to a new domain; administrators only |
+| `GET`    | `/api/v1/sites/{domain}/functions`          | the live functions and their routes |
+| `GET`    | `/api/v1/sites/{domain}/functions/source`   | download the source as uploaded |
+| `PUT`    | `/api/v1/sites/{domain}/functions`          | upload `.cs`/`.linq` files; administrators only |
+| `DELETE` | `/api/v1/sites/{domain}/functions`          | stop running functions; administrators only |
+| `DELETE` | `/api/v1/sites/{domain}/functions/files/{name}` | remove one file and redeploy the rest; administrators only |
+| `GET`    | `/api/v1/functions`                         | the global functions        |
+| `GET`    | `/api/v1/functions/source`                  | their source                |
+| `PUT`    | `/api/v1/functions`                         | upload global functions; administrators only |
+| `DELETE` | `/api/v1/functions`                         | remove them; administrators only |
+| `DELETE` | `/api/v1/functions/files/{name}`            | remove one global file and redeploy the rest; administrators only |
 | `DELETE` | `/api/v1/sites/{domain}`                    | administrators only         |
+
+Rollback brings back the functions the release had; add `?functions=keep` to run the
+current ones on it instead. Functions upload as multipart fields (`-F file=@Orders.cs -F
+file=@Reports.linq`, or `-F file=@functions.zip`), or one file as the raw body with its
+name in `X-File-Name`. The extension picks the `.cs` or `.linq` reader. An upload merges
+into the live files unless you add `?mode=replace`; the response's `kept` lists the live
+files a merge carried over. A refused upload returns 400 with `error` and
+a `diagnostics` list carrying each problem's file and line. Source downloads as the file
+itself, or as a zip when there are several.
 
 Deploy accepts a multipart form field named `file`:
 
@@ -441,12 +592,17 @@ environment variable with `__` separators, or a compose `environment:` entry all
 │   ├── apikeys.json               API keys (hashed secrets)
 │   ├── audit.log                  JSON lines: deploys, logins, user and key changes
 │   ├── keys/                      data-protection keys, so cookies survive restarts
+│   ├── functions.json             which global functions are live
+│   ├── functions/<id>/            global function bundles: src/ as uploaded, bin/ as built
 │   └── bootstrap-password.txt     written only when a password was generated
 ├── sites/
 │   └── abc.def.com/
 │       ├── site.json              which release is live, plus history, rules and any passcode hash
-│       └── releases/
-│           └── 20260803-041429-5ab6/   the files being served
+│       ├── data/                  functions' own data (SQLite, uploads…); never served
+│       ├── releases/
+│       │   └── 20260803-041429-5ab6/   the files being served
+│       └── functions/
+│           └── 20260803-052210-9c1f/   a function bundle: src/ as uploaded, bin/ as built
 └── tmp/                           streaming scratch space, cleared at startup
 ```
 
@@ -472,6 +628,10 @@ Back up `/data` and you have backed up everything.
 * **The data volume.** `docker-compose.yml` uses a named volume so the non-root
   container user owns it. If you swap in a bind mount, `chown` the host directory to
   UID 1654 first.
+* **Image size.** The default image (`runtime-functions`, ~920 MB) includes the .NET SDK
+  so uploaded functions can be compiled; the NuGet cache lives on the volume at
+  `/data/nuget`. Set `IMAGE_TARGET=runtime` for a ~230 MB image that serves static sites
+  only. A function build briefly uses 0.5–1 GB of memory.
 
 ---
 
@@ -487,6 +647,14 @@ already taken.
 
 The Development profile writes to `src/StaticSiteHost/.data`, treats `localhost` and
 `127.0.0.1` as management hosts, and seeds `admin` / `development-password`.
+
+To host sites locally, publish them under `.localhost` names such as `blog.localhost`
+and `docs.localhost`, then open <http://blog.localhost:8080>. Browsers resolve every
+`*.localhost` name to your own machine, so no hosts file entries or proxy are needed, and
+each site gets its own origin just as it would in production. Sites are told apart by
+hostname only, so `localhost:8010` becomes plain `localhost` — the management UI.
+Command-line tools older than curl 7.85 do not resolve `*.localhost` on their own; use
+`curl --resolve blog.localhost:8080:127.0.0.1 http://blog.localhost:8080/`.
 
 Deploying the sample site from the command line, start to finish — run this from the
 repo root, with a key from **Account → API keys**:

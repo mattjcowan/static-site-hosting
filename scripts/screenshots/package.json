@@ -1,0 +1,9 @@
+{
+  "name": "static-site-host-screenshots",
+  "private": true,
+  "description": "Retakes the README screenshots. Run through scripts/screenshots.sh.",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.57.0"
+  }
+}

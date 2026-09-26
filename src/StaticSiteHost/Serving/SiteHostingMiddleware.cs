@@ -10,8 +10,9 @@ namespace StaticSiteHost.Serving;
 /// hosted site, decided purely by the Host header.
 ///
 ///   * a host listed in SiteHosting:ManagementHosts  → management UI and API
-///   * a host with a deployed site                   → static content for that site,
-///                                                     behind its passcode if it has one
+///   * a host with a deployed site                   → its functions, then the global
+///                                                     functions, then static content —
+///                                                     all behind its passcode if it has one
 ///   * anything else                                 → management app when no management
 ///                                                     hosts are configured, otherwise 404
 /// </summary>
@@ -23,6 +24,7 @@ public sealed class SiteHostingMiddleware
     private readonly SiteStore _sites;
     private readonly SiteContentServer _content;
     private readonly SitePasscodeGate _passcodes;
+    private readonly FunctionHost _functions;
     private readonly SiteHostingOptions _options;
 
     public SiteHostingMiddleware(
@@ -30,12 +32,14 @@ public sealed class SiteHostingMiddleware
         SiteStore sites,
         SiteContentServer content,
         SitePasscodeGate passcodes,
+        FunctionHost functions,
         IOptions<SiteHostingOptions> options)
     {
         _next = next;
         _sites = sites;
         _content = content;
         _passcodes = passcodes;
+        _functions = functions;
         _options = options.Value;
     }
 
@@ -60,6 +64,7 @@ public sealed class SiteHostingMiddleware
         if (_sites.TryGet(host) is { } site)
         {
             if (await _passcodes.TryHandleAsync(context, site)) return;
+            if (await _functions.TryHandleAsync(context, site)) return;
 
             await _content.ServeAsync(context, site);
             return;

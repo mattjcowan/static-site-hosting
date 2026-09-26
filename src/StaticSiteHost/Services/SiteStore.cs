@@ -77,20 +77,78 @@ public sealed class SiteStore
         await _writeGate.WaitAsync();
         try
         {
-            site.UpdatedUtc = DateTimeOffset.UtcNow;
-            Directory.CreateDirectory(_paths.SiteDir(site.Domain));
-
-            var file = _paths.SiteMetaFile(site.Domain);
-            var temp = file + ".tmp";
-            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(site, SerializerOptions));
-            File.Move(temp, file, overwrite: true);
-
+            await WriteMetaAsync(site);
             _sites[site.Domain] = site;
         }
         finally
         {
             _writeGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Moves a site to another domain: its whole directory — every release, the rules and
+    /// the passcode — is renamed in one step on the same volume, so nothing is copied and
+    /// there is no moment where half the site lives under each name. Both domains must
+    /// already be normalized; the caller holds the deploy gate so no release lands mid-move.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> RenameAsync(string from, string to)
+    {
+        await _writeGate.WaitAsync();
+        try
+        {
+            if (!_sites.TryGetValue(from, out var site)) return (false, $"No site is published at '{from}'.");
+            if (_sites.ContainsKey(to)) return (false, $"A site is already published at '{to}'.");
+
+            var target = _paths.SiteDir(to);
+            if (Directory.Exists(target))
+            {
+                return (false,
+                    $"'{to}' still has files on disk from an earlier site. Remove {target} and try again.");
+            }
+
+            try
+            {
+                Directory.Move(_paths.SiteDir(from), target);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(ex, "Could not move {From} to {To}", from, to);
+                return (false, "The site's files could not be moved. Nothing was changed.");
+            }
+
+            site.Domain = to;
+            _sites[to] = site;
+            _sites.TryRemove(from, out _);
+
+            // The directory name is what Load trusts, so the move above is what counts; this
+            // only brings the file's copy of the domain and its timestamp up to date.
+            try
+            {
+                await WriteMetaAsync(site);
+            }
+            catch (IOException ex)
+            {
+                _logger.LogWarning(ex, "Moved {From} to {To} but could not rewrite site.json", from, to);
+            }
+
+            return (true, null);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    private async Task WriteMetaAsync(SiteRecord site)
+    {
+        site.UpdatedUtc = DateTimeOffset.UtcNow;
+        Directory.CreateDirectory(_paths.SiteDir(site.Domain));
+
+        var file = _paths.SiteMetaFile(site.Domain);
+        var temp = file + ".tmp";
+        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(site, SerializerOptions));
+        File.Move(temp, file, overwrite: true);
     }
 
     public async Task<bool> DeleteAsync(string domain)

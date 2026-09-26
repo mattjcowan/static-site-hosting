@@ -1,0 +1,27 @@
+@model StaticSiteHost.Pages.Shared.FunctionErrorsView
+@{
+    var errors = Model.Diagnostics.Where(d => d.Severity == "error").ToList();
+}
+@if (Model.Error is not null)
+{
+    <div class="alert alert-error">
+        <strong>Nothing was deployed; the functions already live are unchanged.</strong>
+        @if (errors.Count == 0)
+        {
+            <p>@Model.Error</p>
+        }
+        else
+        {
+            <ul class="mono">
+                @foreach (var error in errors.Take(20))
+                {
+                    <li>@(error.File.Length > 0 ? error.File + (error.Line > 0 ? $":{error.Line}:{error.Column}" : "") : error.Line > 0 ? $"line {error.Line}:{error.Column}" : "") @error.Code @error.Message</li>
+                }
+            </ul>
+            @if (errors.Count > 20)
+            {
+                <p>…and @(errors.Count - 20) more.</p>
+            }
+        }
+    </div>
+}

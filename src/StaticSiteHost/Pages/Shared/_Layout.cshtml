@@ -37,7 +37,8 @@
                     <a asp-page="/Account/Index" class="@(Active("/account") ? "active" : null)">Account</a>
                     @if (isAdmin)
                     {
-                        <a asp-page="/Admin/Users" class="@(Active("/admin") ? "active" : null)">Users</a>
+                        <a asp-page="/Admin/Users" class="@(Active("/admin/users") ? "active" : null)">Users</a>
+                        <a asp-page="/Admin/Functions" class="@(Active("/admin/functions") ? "active" : null)">Functions</a>
                     }
                     <span class="nav-user">
                         @displayName

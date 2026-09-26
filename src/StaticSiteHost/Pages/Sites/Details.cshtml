@@ -2,7 +2,7 @@
 @model StaticSiteHost.Pages.Sites.DetailsModel
 @{
     ViewData["Title"] = Model.Site.Domain;
-    var url = $"{Request.Scheme}://{Model.Site.Domain}/";
+    var url = SiteLinks.For(Request, Model.Site.Domain);
 }
 
 <div class="page-head">
@@ -306,6 +306,50 @@
     }
 </div>
 
+<div class="card" id="functions">
+    <h2>Functions</h2>
+    <p class="hint">
+        C# handlers that answer requests on this site, checked before its files: <span class="mono">.cs</span> files
+        or LINQPad <span class="mono">.linq</span> queries with public static methods marked
+        <span class="mono">[HttpGet("/path")]</span>, <span class="mono">[HttpPost]</span> and so on. Upload them here,
+        write and test them in the editor, or ship them in a zip's <span class="mono">_functions/</span> folder.
+        They belong to the live release: deploying new content keeps them, and rolling back asks what to run.
+    </p>
+
+    <partial name="_FunctionErrors" model="new StaticSiteHost.Pages.Shared.FunctionErrorsView(Model.FunctionError, Model.FunctionDiagnostics)" />
+
+    @if (Model.Site.CurrentFunctions is { } bundle)
+    {
+        // Editing and removing files is for administrators; everyone else sees plain names.
+        var view = new StaticSiteHost.Pages.Shared.FunctionBundleView(
+            bundle, url,
+            Url.Page(null, "FunctionSource", new { domain = Model.Site.Domain })!,
+            Model.IsAdministrator ? Url.Page("/Admin/FunctionEditor", new { domain = Model.Site.Domain }) : null,
+            Model.IsAdministrator ? Url.Page(null, "RemoveFunctionFile", new { domain = Model.Site.Domain }) : null);
+        <partial name="_FunctionBundle" model="view" />
+    }
+    else
+    {
+        <p class="muted">The live release runs no functions.</p>
+    }
+
+    @if (Model.IsAdministrator)
+    {
+        var upload = new StaticSiteHost.Pages.Shared.FunctionUploadView(
+            Url.Page(null, "Functions", new { domain = Model.Site.Domain })!,
+            Model.Site.CurrentFunctions,
+            Url.Page("/Admin/FunctionEditor", new { domain = Model.Site.Domain })!,
+            Url.Page(null, "RemoveFunctions", new { domain = Model.Site.Domain }),
+            "Remove functions",
+            $"Stop running functions on {Model.Site.Domain}? Earlier releases keep theirs.");
+        <partial name="_FunctionUpload" model="upload" />
+    }
+    else
+    {
+        <p class="hint">Only administrators can upload functions, because they run as code inside this server.</p>
+    }
+</div>
+
 <div class="card">
     <h2>Releases</h2>
     <p class="hint">Older releases stay on disk so you can switch back instantly.</p>
@@ -319,6 +363,7 @@
                     <th>Files</th>
                     <th>Size</th>
                     <th>Archive</th>
+                    <th>Functions</th>
                     <th></th>
                 </tr>
             </thead>
@@ -338,11 +383,20 @@
                         <td>@release.FileCount.ToString("N0")</td>
                         <td class="nowrap">@Format.Bytes(release.TotalBytes)</td>
                         <td class="muted">@(release.ArchiveName ?? "—")</td>
+                        <td class="mono muted">@(release.Functions is null ? "—" : Model.BundleLabel(release.Functions))</td>
                         <td class="actions">
                             @if (release.Id != Model.Site.CurrentRelease)
                             {
                                 <form method="post" asp-page-handler="Rollback" asp-route-domain="@Model.Site.Domain">
                                     <input type="hidden" name="releaseId" value="@release.Id" />
+                                    @if (release.Functions != Model.Site.Current?.Functions)
+                                    {
+                                        @* The two releases run different code, so which one comes along is a real choice. *@
+                                        <select name="functions" aria-label="Functions to run on release @release.Id">
+                                            <option value="restore" selected>with its own: @Model.BundleLabel(release.Functions)</option>
+                                            <option value="keep">with the current: @Model.BundleLabel(Model.Site.Current?.Functions)</option>
+                                        </select>
+                                    }
                                     <button type="submit" class="btn-link">Make live</button>
                                 </form>
                             }
@@ -356,6 +410,26 @@
 
 @if (Model.IsAdministrator)
 {
+    <div class="card">
+        <h2>Change domain</h2>
+        <p class="hint">
+            Moves the site, with every release, its rules and its passcode, to another domain.
+            @Model.Site.Domain stops answering immediately and nothing redirects from it, so point
+            DNS at this server first, and update any deploy scripts: API calls name the domain.
+        </p>
+        <form method="post" asp-page-handler="Rename" asp-route-domain="@Model.Site.Domain"
+              data-confirm="Move @Model.Site.Domain to the new domain? The current address stops working immediately.">
+            <div class="row">
+                <div class="field">
+                    <label for="newDomain">New domain</label>
+                    <input id="newDomain" name="newDomain" type="text" autocomplete="off" spellcheck="false"
+                           maxlength="253" placeholder="www.example.com" required />
+                </div>
+                <button type="submit" class="btn-primary">Change domain</button>
+            </div>
+        </form>
+    </div>
+
     <div class="card">
         <h2>Danger zone</h2>
         <p class="hint">Removing a site deletes every release and all of its files from disk.</p>

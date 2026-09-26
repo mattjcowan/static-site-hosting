@@ -1,0 +1,105 @@
+@page "/admin/function-editor/{domain?}"
+@model StaticSiteHost.Pages.Admin.FunctionEditorModel
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
+@{
+    ViewData["Title"] = Model.Domain is null ? "Global functions editor" : $"Functions — {Model.Domain}";
+}
+
+<div class="page-head">
+    <h1>Function editor</h1>
+    @if (Model.Domain is null)
+    {
+        <p>Global functions: every site answers these after its own. <a asp-page="/Admin/Functions">Back to global functions</a></p>
+    }
+    else
+    {
+        <p>Functions for <strong>@Model.Domain</strong>. <a asp-page="/Sites/Details" asp-route-domain="@Model.Domain" asp-fragment="functions">Back to the site</a></p>
+    }
+</div>
+
+<input type="hidden" id="fe-csrf" value="@Antiforgery.GetAndStoreTokens(HttpContext).RequestToken" />
+<script id="fe-data" type="application/json">@Html.Raw(Model.BootstrapJson)</script>
+
+<div class="card">
+    <div class="fe-tabs" id="fe-tabs" role="tablist" aria-label="Files"></div>
+    <div class="fe-editor" id="fe-editor"></div>
+
+    <div class="fe-toolbar">
+        <button type="button" id="fe-check">Check</button>
+        <button type="button" id="fe-deploy" class="btn-primary">Deploy</button>
+        <span id="fe-status" class="muted" role="status"></span>
+    </div>
+    <p class="hint">
+        <strong>Check</strong> compiles exactly as a deploy would, without going live, so you can test the result below.
+        <strong>Deploy</strong> compiles again and makes these files the live functions@(Model.Domain is null ? " of every site" : "")@(Model.Live is null ? "." : $", replacing {Model.Live.Label}.")
+        Double-click a tab to rename it.
+    </p>
+    <div id="fe-problems"></div>
+</div>
+
+<div class="card">
+    <h2>Test</h2>
+    <p class="hint">
+        Runs one request in memory against a build: no DNS, passcode or browser in the way. It runs your real code
+        against the site's real data folder, so anything a handler writes or sends, a test writes or sends too.
+    </p>
+
+    <div class="row">
+        <div class="field">
+            <label for="fe-target">Build</label>
+            <select id="fe-target">
+                <option value="" disabled>Checked build (check first)</option>
+                <option value="live">Live</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="fe-route">Route</label>
+            <select id="fe-route"></select>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="field fe-method">
+            <label for="fe-method">Method</label>
+            <select id="fe-method">
+                <option>GET</option><option>POST</option><option>PUT</option>
+                <option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="fe-path">Path</label>
+            <input id="fe-path" type="text" spellcheck="false" autocomplete="off" value="/" />
+        </div>
+        <div class="field">
+            <label for="fe-query">Query string</label>
+            <input id="fe-query" type="text" spellcheck="false" autocomplete="off" placeholder="page=2&amp;sort=name" />
+        </div>
+        @if (Model.Domain is null)
+        {
+            <div class="field">
+                <label for="fe-host">Host</label>
+                <input id="fe-host" type="text" spellcheck="false" autocomplete="off" placeholder="demo.example.com" />
+            </div>
+        }
+    </div>
+    <div id="fe-params" class="row"></div>
+
+    <div class="grid-2">
+        <div class="field">
+            <label for="fe-headers">Headers, one per line</label>
+            <textarea id="fe-headers" rows="4" wrap="off" spellcheck="false" placeholder="Content-Type: application/json"></textarea>
+        </div>
+        <div class="field">
+            <label for="fe-body">Body</label>
+            <textarea id="fe-body" rows="4" wrap="off" spellcheck="false" placeholder='{ "name": "Jane" }'></textarea>
+        </div>
+    </div>
+
+    <button type="button" id="fe-run" class="btn-primary">Run</button>
+    <div id="fe-result" class="fe-result"></div>
+</div>
+
+@section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+    <script src="~/js/function-editor.js" asp-append-version="true"></script>
+}

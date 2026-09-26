@@ -1,0 +1,9 @@
+# Pretty addresses for journal entries: /journal/orion-nebula-in-binoculars is answered by
+# post.html, which reads the slug from the address. A rewrite (200), so the URL stays put.
+#
+# from          to            status
+/journal/*      /post.html    200
+
+# Everything else that is not a real page gets the "Lost in space" page and an honest 404,
+# instead of the home page the host would fall back to for a single-page app.
+/**             /404.html     404

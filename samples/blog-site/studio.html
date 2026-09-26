@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio · Night Sky Field Notes</title>
+  <meta name="description" content="Write posts and manage accounts.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/sky.css">
+</head>
+<body>
+  <header class="site-head">
+    <div class="wrap">
+      <a class="brand" href="/">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#121b36" stroke="#f6d98b" stroke-opacity=".4"/><path d="M19 7a9 9 0 1 0 6 15.5A10 10 0 0 1 19 7z" fill="#f6d98b"/><circle cx="9" cy="10" r="1.2" fill="#fff"/><circle cx="24" cy="8" r=".8" fill="#fff"/></svg>
+        Night Sky Field Notes
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/">Tonight</a>
+        <a href="/journal.html">Journal</a>
+        <a href="/guide.html">Stargazing 101</a>
+        <a href="/about.html">About</a>
+        <span id="nav-auth"></span>
+        <button type="button" class="red-toggle" data-red-toggle title="Red-light mode keeps your night vision at the eyepiece"><span class="dot"></span>Red light</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap" style="padding-top:2.2rem">
+      <span class="eyebrow">Studio</span>
+      <h1 style="font-size:2.2rem" id="studio-greeting">Studio</h1>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="posts" aria-selected="true">Posts</button>
+        <button type="button" role="tab" data-tab="users" id="users-tab" hidden>Users</button>
+        <button type="button" role="tab" data-tab="account">Account</button>
+      </div>
+      <div id="studio-message"></div>
+
+      <div data-panel="posts">
+        <div class="panel" id="post-list-panel">
+          <div class="actions" style="margin-top:0;justify-content:space-between;align-items:center">
+            <h2 style="margin:0">Posts</h2>
+            <button type="button" class="btn primary" id="new-post">New post</button>
+          </div>
+          <ul class="list" id="post-list"></ul>
+        </div>
+
+        <div class="panel" id="post-editor" hidden>
+          <h2 style="margin-top:0" id="editor-heading">New post</h2>
+          <form id="post-form">
+            <div class="grid grid-2">
+              <div><label for="post-title-input">Title</label><input type="text" id="post-title-input" required maxlength="160"></div>
+              <div><label for="post-slug">Address</label><input type="text" id="post-slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="orion-in-binoculars"></div>
+            </div>
+            <label for="post-summary">Summary</label>
+            <input type="text" id="post-summary" maxlength="300" placeholder="One or two sentences for the journal listing">
+            <div class="grid grid-2">
+              <div><label for="post-tags">Tags, comma separated</label><input type="text" id="post-tags" placeholder="moon, beginner"></div>
+              <div><label class="check" style="margin-top:2.4rem"><input type="checkbox" id="post-published" checked> Published</label></div>
+            </div>
+            <div class="editor-grid">
+              <div><label for="post-body">Markdown</label><textarea id="post-body" required spellcheck="true"></textarea></div>
+              <div><label>Preview</label><div class="preview prose" id="post-preview"></div></div>
+            </div>
+            <div class="actions">
+              <button class="btn primary" type="submit">Save</button>
+              <button class="btn" type="button" id="cancel-edit">Close</button>
+              <button class="btn danger" type="button" id="delete-post" hidden>Delete</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div data-panel="users" hidden>
+        <div class="panel">
+          <h2 style="margin-top:0">Accounts</h2>
+          <div style="overflow-x:auto"><table class="users"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody id="user-rows"></tbody></table></div>
+        </div>
+        <div class="panel" style="margin-top:1.2rem">
+          <h2 style="margin-top:0">Add an account</h2>
+          <form id="user-form">
+            <div class="grid grid-2">
+              <div><label for="new-username">Username</label><input type="text" id="new-username" required pattern="[a-z0-9][a-z0-9._\-]{1,31}" placeholder="vera"></div>
+              <div><label for="new-display">Display name</label><input type="text" id="new-display" placeholder="Vera Rubin"></div>
+              <div><label for="new-role">Role</label><select id="new-role"><option value="editor">Editor: writes posts</option><option value="admin">Admin: also manages accounts</option></select></div>
+              <div><label for="new-password">Password</label><input type="text" id="new-password" autocomplete="off" placeholder="Leave empty to generate one"></div>
+            </div>
+            <p class="muted small">Either way, they choose their own password the first time they sign in.</p>
+            <div class="actions"><button class="btn primary" type="submit">Add account</button></div>
+          </form>
+        </div>
+      </div>
+
+      <div data-panel="account" hidden>
+        <div class="panel auth-card" style="margin:0">
+          <h2 style="margin-top:0">Change your password</h2>
+          <form id="account-form">
+            <label for="current-password">Current password</label><input type="password" id="current-password" autocomplete="current-password" required>
+            <label for="account-next">New password</label><input type="password" id="account-next" autocomplete="new-password" minlength="10" required>
+            <div class="actions"><button class="btn primary" type="submit">Change password</button></div>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap">
+      <span>Night Sky Field Notes: a static site with C# functions and a SQLite database, on Static Site Host.</span>
+      <span>Clear skies.</span>
+    </div>
+  </footer>
+
+  <script src="/js/sky.js"></script>
+  <script src="/js/studio.js"></script>
+</body>
+</html>

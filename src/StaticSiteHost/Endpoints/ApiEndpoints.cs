@@ -53,13 +53,17 @@ public static class ApiEndpoints
         api.MapPost("/sites/{domain}/rollback/{releaseId}", async (
             string domain,
             string releaseId,
+            string? functions,
             ClaimsPrincipal principal,
             ZipDeploymentService deployer) =>
         {
             var (normalized, error) = SiteStore.NormalizeDomain(domain);
             if (normalized is null) return Results.BadRequest(new { error });
 
-            var (ok, failure) = await deployer.RollbackAsync(normalized, releaseId, Actor(principal));
+            // ?functions=keep runs the current functions on the older release; the default brings
+            // back the functions that release had.
+            var keep = string.Equals(functions, "keep", StringComparison.OrdinalIgnoreCase);
+            var (ok, failure) = await deployer.RollbackAsync(normalized, releaseId, Actor(principal), keep);
             return ok
                 ? Results.Ok(new { ok = true, domain = normalized, release = releaseId })
                 : Results.BadRequest(new { error = failure });
@@ -178,16 +182,34 @@ public static class ApiEndpoints
             return Results.Ok(new { ok = true, domain = site.Domain, rules = 0 });
         });
 
+        api.MapPost("/sites/{domain}/rename", async (
+            string domain,
+            RenameRequest? body,
+            ClaimsPrincipal principal,
+            ZipDeploymentService deployer,
+            HttpContext http) =>
+        {
+            var (normalized, error) = SiteStore.NormalizeDomain(domain);
+            if (normalized is null) return Results.BadRequest(new { error });
+
+            var (ok, failure, to) = await deployer.RenameAsync(normalized, body?.Domain, Actor(principal));
+            return ok
+                ? Results.Ok(new { ok = true, from = normalized, domain = to, url = SiteLinks.For(http.Request, to!) })
+                : Results.BadRequest(new { error = failure });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
         api.MapDelete("/sites/{domain}", async (
             string domain,
             ClaimsPrincipal principal,
             SiteStore sites,
             SiteContentServer content,
+            FunctionHost functions,
             AuditLog audit) =>
         {
             var (normalized, error) = SiteStore.NormalizeDomain(domain);
             if (normalized is null) return Results.BadRequest(new { error });
 
+            functions.Evict(normalized);
             if (!await sites.DeleteAsync(normalized))
                 return Results.NotFound(new { error = $"No site is published at '{normalized}'." });
 
@@ -195,6 +217,8 @@ public static class ApiEndpoints
             await audit.WriteAsync("site.delete", Actor(principal), new { domain = normalized });
             return Results.Ok(new { ok = true, domain = normalized });
         }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapFunctionEndpoints();
 
         return app;
     }
@@ -225,15 +249,17 @@ public static class ApiEndpoints
             archiveName = http.Request.Headers["X-Archive-Name"].FirstOrDefault();
         }
 
-        var result = await deployer.DeployAsync(domain, archive, archiveName, Actor(principal), "api", ct);
-        if (!result.Ok) return Results.BadRequest(new { error = result.Error });
+        var result = await deployer.DeployAsync(domain, archive, archiveName, Actor(principal), "api",
+            canDeployFunctions: principal.IsInRole(Roles.Administrator), ct);
+        if (!result.Ok) return Results.BadRequest(new { error = result.Error, diagnostics = result.Diagnostics });
 
         return Results.Ok(new
         {
             ok = true,
             domain = result.Domain,
-            url = $"{http.Request.Scheme}://{result.Domain}/",
+            url = SiteLinks.For(http.Request, result.Domain!),
             release = result.Release,
+            functions = result.Functions,
             warnings = result.Warnings ?? []
         });
     }
@@ -264,16 +290,20 @@ public static class ApiEndpoints
         redirectRules = (site.Redirects?.Count ?? 0) + (site.Current?.Redirects?.Count ?? 0),
         fileCount = site.Current?.FileCount ?? 0,
         totalBytes = site.Current?.TotalBytes ?? 0,
+        functions = site.CurrentFunctions,
         releases = site.Releases
     };
 
-    private static string Actor(ClaimsPrincipal principal)
+    internal static string Actor(ClaimsPrincipal principal)
     {
         var name = principal.Identity?.Name ?? "unknown";
         var keyId = principal.FindFirstValue(ApiKeyAuthenticationHandler.ApiKeyIdClaim);
         return keyId is null ? name : $"{name} (key {keyId})";
     }
 }
+
+/// <summary>Body of POST /api/v1/sites/{domain}/rename.</summary>
+public sealed record RenameRequest(string? Domain);
 
 /// <summary>Body of PUT /api/v1/sites/{domain}/passcode.</summary>
 public sealed record PasscodeRequest(string? Passcode);

@@ -1,0 +1,11 @@
+# Security headers for every page. Scripts and styles only come from this site; the
+# functions answer with JSON, never HTML, so nothing here needs inline script.
+/**
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), camera=(), microphone=()
+
+# Pages change on every deploy; revalidate them so a new post layout shows up at once.
+/*.html
+  Cache-Control: no-cache

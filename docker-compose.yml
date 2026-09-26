@@ -1,6 +1,10 @@
 services:
   static-site-host:
-    build: .
+    build:
+      context: .
+      # runtime-functions carries the .NET SDK so uploaded functions can be compiled.
+      # Set IMAGE_TARGET=runtime for the smaller image that only serves static sites.
+      target: ${IMAGE_TARGET:-runtime-functions}
     image: static-site-host
     container_name: static-site-host
     restart: unless-stopped
@@ -26,6 +30,11 @@ services:
       Bootstrap__Username: "${ADMIN_USERNAME:-admin}"
       Bootstrap__Password: "${ADMIN_PASSWORD:-}"
       Bootstrap__DisplayName: "${ADMIN_DISPLAY_NAME:-Administrator}"
+
+      # Recovery switch for a forgotten password. When true, the administrator's password is
+      # reset on every start — to ADMIN_PASSWORD, or to a newly generated one if that is
+      # empty. Turn it on for one start, sign in, then set it back to false.
+      Bootstrap__ResetPasswordOnStartup: "${ADMIN_RESET_PASSWORD_ON_STARTUP:-false}"
 
     volumes:
       - site-data:/data

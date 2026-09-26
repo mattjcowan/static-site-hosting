@@ -1,0 +1,43 @@
+@page
+@model StaticSiteHost.Pages.Admin.FunctionsModel
+@{
+    ViewData["Title"] = "Functions";
+}
+
+<div class="page-head">
+    <h1>Global functions</h1>
+    <p>Handlers every hosted site answers with. A site's own functions are checked first, then these, then its files.</p>
+</div>
+
+<div class="card">
+    <h2>Live functions</h2>
+
+    <partial name="_FunctionErrors" model="new StaticSiteHost.Pages.Shared.FunctionErrorsView(Model.FunctionError, Model.FunctionDiagnostics)" />
+
+    @if (Model.Current is { } bundle)
+    {
+        var view = new StaticSiteHost.Pages.Shared.FunctionBundleView(
+            bundle, null, Url.Page(null, "Source")!, Url.Page("/Admin/FunctionEditor")!, Url.Page(null, "RemoveFile"));
+        <partial name="_FunctionBundle" model="view" />
+    }
+    else
+    {
+        <p class="muted">No global functions are deployed.</p>
+    }
+
+    @{
+        var upload = new StaticSiteHost.Pages.Shared.FunctionUploadView(
+            Url.Page(null)!,
+            Model.Current,
+            Url.Page("/Admin/FunctionEditor")!,
+            Url.Page(null, "Remove"),
+            "Remove global functions",
+            "Remove the global functions? Every site stops answering their routes.");
+    }
+    <partial name="_FunctionUpload" model="upload" />
+
+    <p class="hint" style="margin: 0.75rem 0 0">
+        Global functions have no rollback: every upload goes live on every site at once. Download the
+        source first if you might want the current set back.
+    </p>
+</div>
