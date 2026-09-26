@@ -20,10 +20,28 @@ visitor ──GET abc.def.com/──────┘   served straight from disk
 
 ## Quick start
 
+Run the published image. It's on Docker Hub, and mirrored at `ghcr.io/mattjcowan/static-site-hosting`:
+
 ```bash
-cp .env.example .env      # optional — sensible defaults work as-is
-docker compose up --build
+docker run -d --name static-site-host -p 8080:8080 -v site-data:/data mattjcowan/static-site-hosting
+docker logs static-site-host     # the generated administrator password
 ```
+
+Or, from a clone, with Docker Compose:
+
+```bash
+cp .env.example .env                          # optional — sensible defaults work as-is
+docker compose pull && docker compose up -d   # the published image
+docker compose up -d --build                  # or build it from source
+```
+
+| Tag | What it is |
+|---|---|
+| `latest`, `1.2.3`, `1.2` | Includes the .NET SDK, so [functions](#functions) can be compiled (~930 MB) |
+| `slim`, `1.2.3-slim`, `1.2-slim` | Static hosting only (~230 MB) |
+
+Both are built for `linux/amd64` and `linux/arm64`. With Compose, set `IMAGE_TAG=slim` in
+`.env` for the smaller image.
 
 Open <http://localhost:8080>. On the first run the container prints the generated
 administrator password:
@@ -628,10 +646,10 @@ Back up `/data` and you have backed up everything.
 * **The data volume.** `docker-compose.yml` uses a named volume so the non-root
   container user owns it. If you swap in a bind mount, `chown` the host directory to
   UID 1654 first.
-* **Image size.** The default image (`runtime-functions`, ~920 MB) includes the .NET SDK
-  so uploaded functions can be compiled; the NuGet cache lives on the volume at
-  `/data/nuget`. Set `IMAGE_TARGET=runtime` for a ~230 MB image that serves static sites
-  only. A function build briefly uses 0.5–1 GB of memory.
+* **Image size.** The default image (`latest`, ~930 MB) includes the .NET SDK so uploaded
+  functions can be compiled; the NuGet cache lives on the volume at `/data/nuget`. The
+  `slim` image (~230 MB) serves static sites only. A function build briefly uses 0.5–1 GB
+  of memory.
 
 ---
 
@@ -683,3 +701,15 @@ The whole app is under `src/StaticSiteHost`:
 | `Security/`      | Password hashing, tokens, API key authentication, throttling  |
 | `Endpoints/`     | The `/api/v1` surface                                         |
 | `Pages/`         | The management UI (Razor Pages)                               |
+
+### Publishing images
+
+Pushing a version tag publishes both images to Docker Hub and GitHub's registry, built
+for amd64 and arm64 by `.github/workflows/publish-image.yml`:
+
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+Only plain `vMAJOR.MINOR.PATCH` tags publish. The workflow needs `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` (a Docker Hub access token) as repository secrets.

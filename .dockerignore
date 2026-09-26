@@ -12,3 +12,10 @@ data/
 README.md
 docker-compose*.yml
 Dockerfile
+
+# Not part of the image: the image copies only src/.
+docs/
+samples/
+scripts/
+*.zip
+.github/

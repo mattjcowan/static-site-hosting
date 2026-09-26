@@ -11,7 +11,10 @@
 # Only building a function needs the SDK. Running one that is already built needs just the
 # runtime, because the build output is kept on the /data volume.
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# The build stage runs on the build machine's own architecture even when the image is for
+# another: the published app is architecture-neutral IL, so there is nothing to gain from
+# compiling it under emulation, and a lot of time to lose.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Restore first so dependency layers are cached independently of source changes.

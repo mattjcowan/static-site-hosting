@@ -1,11 +1,13 @@
 services:
   static-site-host:
+    # The published image: `docker compose pull` fetches it. IMAGE_TAG=slim is the smaller
+    # image that serves static sites only; latest also compiles functions.
+    image: mattjcowan/static-site-hosting:${IMAGE_TAG:-latest}
+    # Or build it from this checkout with `docker compose up --build`. Pair IMAGE_TARGET=runtime
+    # with IMAGE_TAG=slim so a local build is named for what it is.
     build:
       context: .
-      # runtime-functions carries the .NET SDK so uploaded functions can be compiled.
-      # Set IMAGE_TARGET=runtime for the smaller image that only serves static sites.
       target: ${IMAGE_TARGET:-runtime-functions}
-    image: static-site-host
     container_name: static-site-host
     restart: unless-stopped
 
