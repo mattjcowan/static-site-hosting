@@ -6,10 +6,21 @@
 # the 1.2.3 server compiles functions against its own copy of StaticSiteHost.Abstractions
 # 1.2.3, and this is that copy for authors' editors and LINQPad.
 #
-# Only plain vMAJOR.MINOR.PATCH tags publish. Needs NUGET_API_KEY as a repository secret: an
-# API key created on nuget.org with permission to push StaticSiteHost.Abstractions. Create the
-# key, and reserve the package id (or push its first version by hand), before the first tag.
-# --skip-duplicate makes re-running the workflow for a tag already published a no-op.
+# Only plain vMAJOR.MINOR.PATCH tags publish. It can also be run by hand from the Actions tab
+# for a version that is already tagged, such as after a push that failed.
+#
+# It signs in with Trusted Publishing rather than a stored API key: the job asks GitHub for a
+# short-lived OIDC token, NuGet/login exchanges it for an API key that lasts an hour, and the
+# push uses that. Two things must exist first:
+#
+#   * On nuget.org, under your username → Trusted Publishing, a policy for this repository:
+#     Repository Owner "mattjcowan", Repository "static-site-hosting", Workflow File
+#     "publish-package.yml" (the file name only), no environment, and a scope that allows
+#     publishing new packages as well as new versions.
+#   * A NUGET_USER repository secret holding the nuget.org profile name (not the email) the
+#     policy belongs to.
+#
+# --skip-duplicate makes re-running the workflow for a version already published a no-op.
 
 name: Publish package
 
@@ -17,9 +28,16 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version to publish, without the v, such as 0.2.0. It must match a tag.'
+        required: true
+        type: string
 
 permissions:
   contents: read
+  id-token: write # asked for the OIDC token that Trusted Publishing exchanges for an API key
 
 # Not the image workflow's group: sharing one would queue or cancel one workflow behind the other.
 concurrency:
@@ -32,21 +50,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # The tag's own commit, or the tag named by the version given by hand.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', inputs.version) || github.ref }}
 
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
 
-      - name: Pack
-        run: dotnet pack src/StaticSiteHost.Abstractions -c Release -p:Version=${GITHUB_REF_NAME#v} -o out
+      - name: Read the version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
 
-      # The key goes through the environment rather than into the command line as written.
+      - name: Pack
+        run: dotnet pack src/StaticSiteHost.Abstractions -c Release -p:Version=${{ steps.version.outputs.version }} -o out
+
+      # Just before the push, since the key it returns lasts an hour.
+      - name: Sign in to nuget.org
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Push to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: >-
           dotnet nuget push out/*.nupkg
           --source https://api.nuget.org/v3/index.json
-          --api-key "$NUGET_API_KEY"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
           --skip-duplicate

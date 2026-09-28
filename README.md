@@ -2275,9 +2275,19 @@ Only plain `vMAJOR.MINOR.PATCH` tags publish. The workflow needs two repository 
 `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token).
 
 The same tags publish the `StaticSiteHost.Abstractions` package to nuget.org, with the same
-version as the images, through `.github/workflows/publish-package.yml`. That needs a
-`NUGET_API_KEY` secret: an API key from nuget.org that may push the package. Reserve the package
-id on nuget.org before the first tag.
+version as the images, through `.github/workflows/publish-package.yml`. It uses nuget.org's
+Trusted Publishing, so there is no API key to store or rotate: the job exchanges a short-lived
+GitHub token for a one-hour nuget.org key. It needs two things:
+
+* A Trusted Publishing policy on nuget.org (your username → **Trusted Publishing**) with
+  Repository Owner `mattjcowan`, Repository `static-site-hosting`, Workflow File
+  `publish-package.yml`, no environment, and a scope that allows new packages as well as new
+  versions.
+* A `NUGET_USER` repository secret holding the nuget.org profile name (not the email) that
+  the policy belongs to.
+
+The first successful push claims the package id. The workflow can also be run by hand from
+the Actions tab for a version that is already tagged, for example after a push that failed.
 
 ---
 
