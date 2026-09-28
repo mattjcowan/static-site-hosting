@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
+using StaticSiteHost.Services.Realtime;
 
 namespace StaticSiteHost.Services;
 
@@ -23,7 +24,8 @@ public sealed record DeployResult(
 /// <summary>
 /// Turns an uploaded zip into a new immutable release directory, then flips the
 /// site's current-release pointer. Nothing is served from a half-written directory,
-/// and the previous release stays on disk for rollback.
+/// and the previous release stays on disk for rollback. Once a deploy or a rollback is live, the
+/// pages open on the site are told (<see cref="SiteDeployedNotifier"/>).
 /// </summary>
 public sealed class ZipDeploymentService
 {
@@ -35,7 +37,7 @@ public sealed class ZipDeploymentService
     /// </summary>
     public const string FunctionsFolder = "_functions";
 
-    /// <summary>Cap on the archive's rule files. A rule set is a page of text at most.</summary>
+    /// <summary>Cap on the archive's rule and variable files. Each is a page of text at most.</summary>
     private const long MaxRuleFileBytes = 64 * 1024;
 
     private static readonly string[] ExcludedNames =
@@ -49,6 +51,9 @@ public sealed class ZipDeploymentService
     private readonly AuditLog _audit;
     private readonly FunctionHost _functions;
     private readonly FunctionBundleBuilder _functionBuilder;
+    private readonly SiteVariableService _variables;
+    private readonly RealtimeRegistry _realtime;
+    private readonly SiteDeployedNotifier _deployed;
     private readonly SiteHostingOptions _options;
     private readonly ILogger<ZipDeploymentService> _logger;
 
@@ -63,11 +68,17 @@ public sealed class ZipDeploymentService
         AuditLog audit,
         FunctionHost functions,
         FunctionBundleBuilder functionBuilder,
+        SiteVariableService variables,
+        RealtimeRegistry realtime,
+        SiteDeployedNotifier deployed,
         IOptions<SiteHostingOptions> options,
         ILogger<ZipDeploymentService> logger)
     {
         _functions = functions;
         _functionBuilder = functionBuilder;
+        _variables = variables;
+        _realtime = realtime;
+        _deployed = deployed;
         _paths = paths;
         _sites = sites;
         _content = content;
@@ -84,6 +95,29 @@ public sealed class ZipDeploymentService
         string source,
         bool canDeployFunctions,
         CancellationToken ct = default)
+    {
+        var result = await DeployUnderGateAsync(domainInput, archive, archiveName, actor, source, canDeployFunctions, ct);
+
+        // Outside the gate: loading functions with background work can take a moment, and the
+        // next deploy need not wait for it. A deploy that kept the functions it had finds them
+        // already loaded, and this does nothing.
+        if (result.Ok)
+        {
+            await _functions.RefreshAsync(result.Domain!);
+            _deployed.Announce(result.Domain!, SiteDeployedNotifier.FromDeploy);
+        }
+
+        return result;
+    }
+
+    private async Task<DeployResult> DeployUnderGateAsync(
+        string? domainInput,
+        Stream archive,
+        string? archiveName,
+        string actor,
+        string source,
+        bool canDeployFunctions,
+        CancellationToken ct)
     {
         var (domain, domainError) = SiteStore.NormalizeDomain(domainInput);
         if (domain is null) return DeployResult.Failed(domainError!);
@@ -232,6 +266,7 @@ public sealed class ZipDeploymentService
         FunctionBundle? bundle = null;
         IReadOnlyList<FunctionDiagnostic>? functionDiagnostics = null;
         var redirectRules = new List<RedirectRule>();
+        var variables = new List<VariableDefinition>();
 
         try
         {
@@ -245,8 +280,8 @@ public sealed class ZipDeploymentService
                 // Read above and compiled below; never part of what is served.
                 if (relative.Length >= 2 && relative[0].Equals(FunctionsFolder, StringComparison.OrdinalIgnoreCase)) continue;
 
-                // The rule files are configuration, not content: they are read here and never
-                // written into the release, so they cannot be fetched from the site.
+                // The rule and variable files are configuration, not content: they are read here and
+                // never written into the release, so they cannot be fetched from the site.
                 if (relative.Length == 1)
                 {
                     if (relative[0].Equals(HeaderRuleText.FileName, StringComparison.OrdinalIgnoreCase))
@@ -262,6 +297,14 @@ public sealed class ZipDeploymentService
                         var text = await ReadRuleFileAsync(entry, RedirectRuleText.FileName, warnings, ct);
                         if (text is not null)
                             redirectRules = ParseRules<RedirectRule>(text, RedirectRuleText.FileName, warnings, RedirectRuleText.TryParse);
+                        continue;
+                    }
+
+                    if (relative[0].Equals(VariableFileText.FileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var text = await ReadRuleFileAsync(entry, VariableFileText.FileName, warnings, ct);
+                        if (text is not null)
+                            variables = ParseRules<VariableDefinition>(text, VariableFileText.FileName, warnings, VariableFileText.TryParse);
                         continue;
                     }
                 }
@@ -305,6 +348,10 @@ public sealed class ZipDeploymentService
                 functionDiagnostics = built.Diagnostics;
             }
 
+            // Secret defaults protected, and ${env:…} defaults kept only for an administrator: the
+            // same people who may deploy _functions/, since both read the server.
+            _variables.PrepareForRelease(variables, isAdministrator: canDeployFunctions, warnings);
+
             var releaseDir = _paths.ReleaseDir(domain, releaseId);
             Directory.CreateDirectory(_paths.ReleasesDir(domain));
             Directory.Move(stagingDir, releaseDir);
@@ -320,7 +367,8 @@ public sealed class ZipDeploymentService
                 StrippedRootFolder = stripRoot,
                 HasRootIndex = hasRootIndex,
                 Headers = headerRules,
-                Redirects = redirectRules
+                Redirects = redirectRules,
+                Variables = variables
             };
 
             var site = _sites.TryGet(domain) ?? new SiteRecord { Domain = domain, CreatedBy = actor };
@@ -335,9 +383,22 @@ public sealed class ZipDeploymentService
             site.CurrentRelease = releaseId;
             site.LastDeployedBy = actor;
 
+            // A value the site saved in the clear that this release declares secret is encrypted
+            // before site.json is written again.
+            await _variables.ProtectDeclaredSecretsAsync(site);
+
             PruneReleases(site);
             await _sites.SaveAsync(site);
             _content.Evict(domain);
+            _variables.Evict(domain);
+
+            // Values set on the site carry over, so this is checked against the site as it now stands.
+            if (_variables.Resolve(site).Missing is { Count: > 0 } missing)
+            {
+                warnings.Add(missing.Count == 1
+                    ? $"The variable {missing[0]} is required but has no value. Set it under Variables on the site page."
+                    : $"The variables {string.Join(", ", missing)} are required but have no value. Set them under Variables on the site page.");
+            }
 
             await _audit.WriteAsync("site.deploy", actor, new { domain, release = releaseId, fileCount, totalBytes, source });
             _logger.LogInformation("Deployed {Files} file(s) ({Bytes}) to {Domain} as release {Release}",
@@ -419,6 +480,21 @@ public sealed class ZipDeploymentService
     public async Task<(bool Ok, string? Error)> RollbackAsync(
         string domain, string releaseId, string actor, bool keepCurrentFunctions = false)
     {
+        var result = await RollbackUnderGateAsync(domain, releaseId, actor, keepCurrentFunctions);
+
+        // The release may bring back other functions; those with background work load now, not on the next request.
+        if (result.Ok)
+        {
+            await _functions.RefreshAsync(domain);
+            _deployed.Announce(domain, SiteDeployedNotifier.FromRollback);
+        }
+
+        return result;
+    }
+
+    private async Task<(bool Ok, string? Error)> RollbackUnderGateAsync(
+        string domain, string releaseId, string actor, bool keepCurrentFunctions)
+    {
         // Same gate as a deploy: both mutate the site's release list and current pointer.
         await _deployGate.WaitAsync();
         try
@@ -436,8 +512,10 @@ public sealed class ZipDeploymentService
             }
 
             site.CurrentRelease = releaseId;
+            await _variables.ProtectDeclaredSecretsAsync(site);
             await _sites.SaveAsync(site);
             _content.Evict(domain);
+            _variables.Evict(domain);
             await _audit.WriteAsync("site.rollback", actor,
                 new { domain, release = releaseId, functions = keepCurrentFunctions ? "kept" : "restored" });
             return (true, null);
@@ -450,7 +528,8 @@ public sealed class ZipDeploymentService
 
     /// <summary>
     /// Moves a site to a new domain. The old domain stops answering straight away; nothing
-    /// redirects from it.
+    /// redirects from it, and the pages connected to its realtime hub are closed, told not to
+    /// reconnect, since the old domain no longer has a hub to reconnect to.
     /// </summary>
     public async Task<(bool Ok, string? Error, string? Domain)> RenameAsync(string domain, string? newDomainInput, string actor)
     {
@@ -460,6 +539,25 @@ public sealed class ZipDeploymentService
             return (false, $"'{to}' is reserved for the management interface.", null);
         if (to == domain) return (false, $"The site is already published at '{to}'.", null);
 
+        // The old name's functions go first, and are gone, background work, requests and all,
+        // before the directory moves: anything of theirs still running would write into a folder
+        // that is no longer there, and recreate it under the old name. They stay unloaded until the
+        // move is over, and the deploy gate is not held while waiting for them.
+        (bool Ok, string? Error, string? Domain) result;
+        await using (await _functions.EvictAsync(domain))
+        {
+            result = await RenameUnderGateAsync(domain, to, actor);
+        }
+
+        // Those with background work start again under the new name now: their ISite, data folder
+        // and variables are the new domain's. A rename that failed leaves the site where it was, so
+        // its functions start again there.
+        await _functions.RefreshAsync(result.Ok ? to : domain);
+        return result;
+    }
+
+    private async Task<(bool Ok, string? Error, string? Domain)> RenameUnderGateAsync(string domain, string to, string actor)
+    {
         // Same gate as a deploy: a release extracting into the old directory mid-move would
         // land in a folder that no longer exists.
         await _deployGate.WaitAsync();
@@ -470,9 +568,15 @@ public sealed class ZipDeploymentService
 
             _content.Evict(domain);
             _content.Evict(to);
+            _variables.Evict(domain);
+            _variables.Evict(to);
 
-            // The loaded functions resolve their dependencies from the old path, which is gone.
+            // Belt and braces: RenameAsync retired them before the move, and nothing could load them since.
             _functions.Evict(domain);
+
+            // Once the rename has been made, not before, so no connection can arrive in between and
+            // stay (see RealtimeRegistry.DisconnectSite).
+            _realtime.DisconnectSite(domain);
 
             await _audit.WriteAsync("site.rename", actor, new { from = domain, to });
             _logger.LogInformation("Moved site {From} to {To}", domain, to);
@@ -485,7 +589,12 @@ public sealed class ZipDeploymentService
         }
     }
 
-    /// <summary>Removes leftover staging directories from a deploy interrupted by a restart.</summary>
+    /// <summary>
+    /// Removes leftover staging directories from a deploy interrupted by a restart, and function
+    /// bundles no release runs any more whose deletion was waiting on a retiring set when the server
+    /// stopped (see <see cref="FunctionHost.DeleteWhenRetired"/>). Runs at startup, once the sites
+    /// are loaded and before anything is built, so no bundle can be half-made.
+    /// </summary>
     public void CleanupStaging()
     {
         if (!Directory.Exists(_paths.SitesDir)) return;
@@ -494,6 +603,19 @@ public sealed class ZipDeploymentService
         {
             var staging = Path.Combine(siteDir, ".staging");
             if (Directory.Exists(staging)) TryDeleteDirectory(staging);
+        }
+
+        foreach (var site in _sites.List())
+        {
+            var functionsDir = _paths.FunctionsDir(site.Domain);
+            if (!Directory.Exists(functionsDir)) continue;
+
+            var kept = site.FunctionBundles.Select(b => b.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var dir in Directory.EnumerateDirectories(functionsDir))
+            {
+                var name = Path.GetFileName(dir);
+                if (!name.StartsWith('.') && !kept.Contains(name)) TryDeleteDirectory(dir);
+            }
         }
 
         foreach (var file in Directory.EnumerateFiles(_paths.TempDir))
@@ -526,14 +648,18 @@ public sealed class ZipDeploymentService
         PruneFunctionBundles(site);
     }
 
-    /// <summary>Drops function bundles that no retained release runs any more.</summary>
+    /// <summary>
+    /// Drops function bundles that no retained release runs any more. A set loaded from one may
+    /// still be live, until the refresh that follows, or retiring, and could yet load an assembly
+    /// from its directory, so the host deletes it once that set is gone.
+    /// </summary>
     private void PruneFunctionBundles(SiteRecord site)
     {
         var used = site.Releases.Select(r => r.Functions).OfType<string>().ToHashSet(StringComparer.Ordinal);
 
         foreach (var bundle in site.FunctionBundles.Where(b => !used.Contains(b.Id)).ToList())
         {
-            TryDeleteDirectory(_paths.FunctionBundleDir(site.Domain, bundle.Id));
+            _functions.DeleteWhenRetired(_paths.FunctionBundleDir(site.Domain, bundle.Id));
             site.FunctionBundles.Remove(bundle);
         }
     }

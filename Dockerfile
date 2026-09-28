@@ -17,16 +17,27 @@
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Restore first so dependency layers are cached independently of source changes.
+# Restore first so dependency layers are cached independently of source changes. That takes
+# every project file restore reads: the host's, the StaticSiteHost.Abstractions project it
+# references, and the Directory.Build.props they share.
+COPY src/Directory.Build.props src/
 COPY src/StaticSiteHost/StaticSiteHost.csproj src/StaticSiteHost/
+COPY src/StaticSiteHost.Abstractions/StaticSiteHost.Abstractions.csproj src/StaticSiteHost.Abstractions/
 RUN dotnet restore src/StaticSiteHost/StaticSiteHost.csproj
 
 COPY src/ src/
+
+# The release version, such as 1.2.3 from the tag the publish workflow runs for. It is also
+# the StaticSiteHost.Abstractions version the server compiles functions against and reports.
+# Declared here rather than at the top, because a changed build argument invalidates every
+# RUN after it, and the restore above does not need it.
+ARG VERSION=0.0.0-dev
 RUN dotnet publish src/StaticSiteHost/StaticSiteHost.csproj \
         --configuration Release \
         --no-restore \
         --output /app/publish \
-        -p:UseAppHost=false
+        -p:UseAppHost=false \
+        -p:Version=$VERSION
 
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime

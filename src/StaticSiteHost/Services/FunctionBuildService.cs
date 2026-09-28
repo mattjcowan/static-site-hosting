@@ -6,6 +6,11 @@ using StaticSiteHost.Models;
 namespace StaticSiteHost.Services;
 
 /// <summary>One compiler message, with the file and line mapped back to what the author uploaded.</summary>
+/// <param name="Severity">
+/// "error" or "warning" from the build, or "info" for a note the host adds about the build
+/// (which version of StaticSiteHost.Abstractions it compiled against). An "info" note is never
+/// counted as either of the others: it neither fails a build nor adds to its warnings.
+/// </param>
 /// <param name="File">The uploaded file it is about, or empty when it is about the build itself.</param>
 public sealed record FunctionDiagnostic(
     string Severity, string Code, string Message, int Line, int Column, string File = "")
@@ -24,6 +29,10 @@ public sealed record FunctionDiagnostic(
     }
 }
 
+/// <param name="Diagnostics">
+/// What the compiler and NuGet reported: "error" and "warning" only. The host's "info" notes are
+/// added later, by <see cref="FunctionBundleBuilder"/>.
+/// </param>
 public sealed record FunctionBuildResult(
     bool Ok,
     string? Error,
@@ -35,6 +44,7 @@ public sealed record FunctionBuildResult(
         string error, IReadOnlyList<FunctionDiagnostic>? diagnostics = null, string? raw = null) =>
         new(false, error, null, diagnostics ?? [], raw);
 
+    /// <summary>What stopped the build: severity "error" only, never a warning or an "info" note.</summary>
     public IReadOnlyList<FunctionDiagnostic> Errors =>
         (Diagnostics ?? []).Where(d => d.Severity == "error").ToList();
 }
@@ -111,6 +121,14 @@ public sealed class FunctionBuildService
             // server may be hours away. One-shot builds should leave nothing behind.
             "-nodeReuse:false",
             "-p:UseSharedCompilation=false",
+
+            // The generated project stands alone. MSBuild otherwise imports whatever
+            // Directory.Build.props, Directory.Build.targets and Directory.Packages.props it
+            // finds above the data directory, and in development that directory is inside this
+            // repository, whose src/Directory.Build.props sets the host's version and authors.
+            "-p:ImportDirectoryBuildProps=false",
+            "-p:ImportDirectoryBuildTargets=false",
+            "-p:ImportDirectoryPackagesProps=false",
         };
 
         var started = Stopwatch.StartNew();

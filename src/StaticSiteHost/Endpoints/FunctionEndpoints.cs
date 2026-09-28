@@ -16,9 +16,11 @@ public static class FunctionEndpoints
     {
         // ---- per site
 
-        api.MapGet("/sites/{domain}/functions", (string domain, SiteStore sites) =>
-            WithSite(domain, sites, site => Task.FromResult(
-                Results.Ok(new { domain = site.Domain, functions = site.CurrentFunctions }))));
+        // The bundle as deployed, and where it stands now: loaded and running its jobs, failed and
+        // why, or waiting for its first request.
+        api.MapGet("/sites/{domain}/functions", (string domain, SiteStore sites, FunctionHost host) =>
+            WithSite(domain, sites, async site =>
+                Results.Ok(new { domain = site.Domain, functions = site.CurrentFunctions, status = await host.StatusAsync(site.Domain) })));
 
         api.MapGet("/sites/{domain}/functions/source", (string domain, SiteStore sites, FunctionDeploymentService functions) =>
             WithSite(domain, sites, async site => SourceResult(await functions.DownloadAsync(site.Domain))));
@@ -42,8 +44,8 @@ public static class FunctionEndpoints
 
         // ---- global
 
-        api.MapGet("/functions", async (FunctionDeploymentService functions) =>
-            Results.Ok(new { functions = (await functions.GlobalAsync()).Current }));
+        api.MapGet("/functions", async (FunctionDeploymentService functions, FunctionHost host) =>
+            Results.Ok(new { functions = (await functions.GlobalAsync()).Current, status = await host.StatusAsync(null) }));
 
         api.MapGet("/functions/source", async (FunctionDeploymentService functions) =>
             SourceResult(await functions.DownloadAsync(null)));

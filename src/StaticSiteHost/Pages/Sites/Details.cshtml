@@ -306,6 +306,435 @@
     }
 </div>
 
+<div class="card" id="variables">
+    <h2>Variables</h2>
+    <p class="hint">
+        Named values the site's pages and functions read: a title, a contact address, an API key.
+        A <span class="mono">_variables.json</span> file at the root of the zip declares them, with
+        their defaults. A value set here belongs to the site, so it survives deploys and rollbacks.
+        Public variables reach the browser through <span class="mono">/_host/site.js</span>, and
+        functions see all of them, secrets included.
+    </p>
+
+    @if (Model.MissingVariables.Count > 0)
+    {
+        <div class="alert alert-warning">
+            @(Model.MissingVariables.Count == 1 ? "A required variable is" : "Required variables are") empty:
+            <span class="mono">@string.Join(", ", Model.MissingVariables)</span>.
+            Set @(Model.MissingVariables.Count == 1 ? "it" : "them") below.
+        </div>
+    }
+
+    @if (Model.UnsetEnvironment.Count > 0)
+    {
+        <div class="alert alert-warning">
+            A value here reads @(Model.UnsetEnvironment.Count == 1 ? "an environment variable" : "environment variables")
+            the server does not have, so @(Model.UnsetEnvironment.Count == 1 ? "it reads" : "they read") as empty:
+            <span class="mono">@string.Join(", ", Model.UnsetEnvironment)</span>.
+        </div>
+    }
+
+    @if (Model.Variables.Count > 0)
+    {
+        <div class="table-wrap">
+            <table class="variables">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Value</th>
+                        <th>Visibility</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var variable in Model.Variables)
+                    {
+                        var missing = Model.MissingVariables.Contains(variable.Name);
+                        var source = variable.Source switch
+                        {
+                            SiteVariableService.SourceSite => "set here",
+                            SiteVariableService.SourceDefault => "from the release default",
+                            _ => "no value"
+                        };
+                        var confirm = !variable.IsDeclared
+                            ? $"Remove {variable.Name} from {Model.Site.Domain}?"
+                            : $"Drop the value set here for {variable.Name}? It falls back to the release's default, or to no value if the release gives none.";
+
+                        <tr>
+                            <td>
+                                <span class="mono">@variable.Name</span>
+                                @if (variable.Description.Length > 0)
+                                {
+                                    <div class="muted var-description">@variable.Description</div>
+                                }
+                            </td>
+                            <td>
+                                @if (variable.IsSecret)
+                                {
+                                    <span class="badge @(variable.HasValue ? "badge-ok" : "badge-warn")">@(variable.HasValue ? "set" : "not set")</span>
+                                }
+                                else if (variable.Value is { Length: > 0 } shown)
+                                {
+                                    <span class="mono var-value">@shown</span>
+                                }
+                                else if (variable.Value is not null)
+                                {
+                                    <span class="muted">empty</span>
+                                }
+                                <div class="muted var-source">@source</div>
+                                @foreach (var name in variable.UnsetEnvironment)
+                                {
+                                    <div class="var-note"><span class="mono">@name</span> is not set on the server</div>
+                                }
+                            </td>
+                            <td>
+                                <span class="var-badges">
+                                    @if (variable.IsPublic)
+                                    {
+                                        <span class="badge badge-ok">public</span>
+                                    }
+                                    @if (variable.IsSecret)
+                                    {
+                                        <span class="badge badge-warn">secret</span>
+                                    }
+                                    @if (variable.IsRequired)
+                                    {
+                                        <span class="badge @(missing ? "badge-off" : null)">required</span>
+                                    }
+                                    @if (!variable.IsPublic && !variable.IsSecret)
+                                    {
+                                        <span class="muted">functions only</span>
+                                    }
+                                </span>
+                            </td>
+                            <td class="actions">
+                                @if (variable.IsAdministratorsOnly && !Model.IsAdministrator)
+                                {
+                                    @* A secret, or a value that reads the server's environment: the server refuses a member's change too. *@
+                                    <span class="muted" title="A secret, or a value that reads the server's environment, is for an administrator to set, change or remove.">administrators only</span>
+                                }
+                                else
+                                {
+                                    <form method="post" asp-page-handler="SetVariable" asp-route-domain="@Model.Site.Domain" class="var-edit">
+                                        <input type="hidden" name="name" value="@variable.Name" />
+                                        @if (variable.IsSecret)
+                                        {
+                                            @* Never filled in: the value does not come back to the page, and an empty box leaves it alone. *@
+                                            <input type="password" name="value" autocomplete="new-password" placeholder="unchanged"
+                                                   aria-label="New value for @variable.Name" />
+                                        }
+                                        else
+                                        {
+                                            <input type="text" name="value" value="@variable.Value" autocomplete="off" spellcheck="false"
+                                                   aria-label="Value for @variable.Name" />
+                                        }
+                                        <button type="submit" class="btn btn-sm">Save</button>
+                                    </form>
+                                    @if (variable.Source == SiteVariableService.SourceSite)
+                                    {
+                                        <form method="post" asp-page-handler="RemoveVariable" asp-route-domain="@Model.Site.Domain"
+                                              data-confirm="@confirm">
+                                            <input type="hidden" name="name" value="@variable.Name" />
+                                            <button type="submit" class="btn-link danger">@(variable.IsDeclared ? "Use default" : "Remove")</button>
+                                        </form>
+                                    }
+                                }
+                                @if (Model.VariableError is not null && Model.VariableErrorFor == variable.Name)
+                                {
+                                    <div class="validation" role="alert">@Model.VariableError</div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p class="muted">
+            No variables yet. Declare them in a <span class="mono">_variables.json</span> file in the zip, or add one below.
+        </p>
+    }
+
+    <form method="post" asp-page-handler="SetVariable" asp-route-domain="@Model.Site.Domain" class="var-add">
+        <h3>Add a variable</h3>
+        <p class="hint">
+            For something the release does not declare. Names are case-sensitive.
+            @if (!Model.IsAdministrator)
+            {
+                <text>Secrets, and values that read the server's environment with <span class="mono">${env:…}</span>, are for an administrator to set.</text>
+            }
+        </p>
+        <div class="row">
+            <div class="field">
+                <label for="new-variable-name">Name</label>
+                <input id="new-variable-name" name="name" type="text" autocomplete="off" spellcheck="false" required
+                       maxlength="64" pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="API_BASE_URL"
+                       title="Letters, digits and underscores, starting with a letter or an underscore"
+                       value="@Model.NewVariableName" />
+            </div>
+            <div class="field">
+                <label for="new-variable-value">Value</label>
+                <input id="new-variable-value" name="value" type="text" autocomplete="off" spellcheck="false"
+                       value="@Model.NewVariableValue" />
+            </div>
+        </div>
+        <div class="var-flags">
+            @* Each checkbox is followed by a hidden "false", so an unticked box still says so. *@
+            <div class="checkline">
+                <input id="new-variable-public" name="isPublic" type="checkbox" value="true" checked="@Model.NewVariablePublic" />
+                <label for="new-variable-public">Public: sent to the browser in <span class="mono">/_host/site.js</span></label>
+            </div>
+            @if (Model.IsAdministrator)
+            {
+                <div class="checkline">
+                    <input id="new-variable-secret" name="isSecret" type="checkbox" value="true" checked="@Model.NewVariableSecret" />
+                    <label for="new-variable-secret">Secret: stored encrypted and never shown again</label>
+                </div>
+            }
+            <input type="hidden" name="isPublic" value="false" />
+            <input type="hidden" name="isSecret" value="false" />
+        </div>
+        <button type="submit" class="btn-primary">Add variable</button>
+        @if (Model.VariableError is not null && Model.VariableErrorFor is null)
+        {
+            <div class="validation" role="alert">@Model.VariableError</div>
+        }
+    </form>
+</div>
+
+<div class="card" id="ai">
+    <h2>
+        AI
+        @if (Model.AiProvider is null)
+        {
+            <span class="badge">off</span>
+        }
+        else if (Model.AiAccessHook is not null)
+        {
+            <span class="badge badge-ok">visitors decided by [AiAccess]</span>
+        }
+        else if (Model.Site.Ai?.AllowVisitors == true)
+        {
+            <span class="badge badge-warn">open to visitors</span>
+        }
+        else
+        {
+            <span class="badge badge-ok">functions only</span>
+        }
+    </h2>
+    <p class="hint">
+        Chat through one of the server's AI providers. The site's functions reach it as
+        <span class="mono">IAiChat</span>, and its pages through <span class="mono">site.ai.chat</span> in
+        <span class="mono">/_host/site.js</span>: every visitor's when they are allowed, or those the site's
+        <span class="mono">[AiAccess]</span> hook lets in when its functions have one. The key stays on the
+        server, and the model and the system prompt set here apply to every chat.
+    </p>
+
+    @if (Model.Site.Ai is { HasProvider: true } && Model.AiProvider is null)
+    {
+        <div class="alert alert-warning">
+            The provider this site used was deleted, so it has no AI. Choose another below.
+        </div>
+    }
+
+    @if (Model.IsAdministrator)
+    {
+        @if (Model.AiProviders.Count == 0)
+        {
+            <p class="muted">
+                There are no AI providers yet. <a asp-page="/Admin/Ai">Add one under AI</a>, then choose it here.
+            </p>
+        }
+        else
+        {
+            <form method="post" asp-page-handler="Ai" asp-route-domain="@Model.Site.Domain">
+                <div class="row">
+                    <div class="field">
+                        <label for="ai-provider">Provider</label>
+                        <select id="ai-provider" name="providerId">
+                            <option value="" selected="@(Model.AiProviderId is null)">None</option>
+                            @foreach (var provider in Model.AiProviders)
+                            {
+                                <option value="@provider.Id" data-model="@provider.DefaultModel"
+                                        selected="@(provider.Id == Model.AiProviderId)">@provider.Name (@provider.DefaultModel)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="ai-model">Model</label>
+                        <input id="ai-model" name="model" type="text" autocomplete="off" spellcheck="false"
+                               maxlength="@SiteAiSettings.MaxModelLength" value="@Model.AiModelName"
+                               placeholder="@(Model.AiProvider?.DefaultModel ?? "the provider's default")" />
+                    </div>
+                </div>
+                <div class="field ai-prompt">
+                    <label for="ai-system-prompt">System prompt</label>
+                    <textarea id="ai-system-prompt" name="systemPrompt" rows="4" spellcheck="true"
+                              placeholder="You answer questions about this site, briefly and kindly.">@Model.AiSystemPrompt</textarea>
+                    <p class="hint snippet-hint">
+                        Sent ahead of every conversation, up to @(Model.AiMaxSystemPromptBytes / 1024) KB. A page or a function
+                        can add instructions after it but cannot remove it.
+                    </p>
+                </div>
+                <div class="checkline">
+                    <input id="ai-allow-visitors" name="allowVisitors" type="checkbox" value="true" checked="@Model.AiAllowVisitors" />
+                    <label for="ai-allow-visitors">Let every visitor chat through <span class="mono">/_host/ai/chat</span></label>
+                </div>
+                <input type="hidden" name="allowVisitors" value="false" />
+                @if (Model.AiAccessHook is not null)
+                {
+                    <p class="hint">
+                        Not consulted: which visitors may chat is decided by the site's <span class="mono">[AiAccess]</span>
+                        hook, <span class="mono">@Model.AiAccessHook</span>, for as long as its live functions have it.
+                        This setting applies again if a deploy takes the hook away.
+                    </p>
+                }
+                <p class="hint ai-warning">
+                    Every visitor's question is billed to the provider's key, and anyone who can load the site can ask.
+                    @Model.AiVisitorLimit Leave it off to keep chat to the site's functions, which decide for themselves
+                    who may ask.
+                </p>
+                <button type="submit" class="btn-primary">Save AI settings</button>
+                @if (Model.AiError is not null)
+                {
+                    <div class="validation" role="alert">@Model.AiError</div>
+                }
+            </form>
+
+            @if (Model.Site.Ai is not null)
+            {
+                <form method="post" asp-page-handler="RemoveAi" asp-route-domain="@Model.Site.Domain" class="ai-remove"
+                      data-confirm="Remove the AI settings from @Model.Site.Domain? Its functions and pages will no longer be able to chat.">
+                    <button type="submit" class="btn-danger">Remove AI</button>
+                </form>
+            }
+        }
+    }
+    else if (Model.AiProvider is not null)
+    {
+        <p>
+            Configured with <strong>@Model.AiProvider.Name</strong>
+            (<span class="mono">@(Model.Site.Ai?.Model ?? Model.AiProvider.DefaultModel)</span>).
+            @(Model.AiAccessHook is not null
+                ? $"Which visitors' pages may chat is decided by the site's [AiAccess] hook, {Model.AiAccessHook}."
+                : Model.Site.Ai?.AllowVisitors == true
+                    ? "Visitors are allowed: pages on the site can chat."
+                    : "Visitors are not allowed: only the site's functions can chat.")
+        </p>
+        <p class="hint">Only administrators can change the AI settings, because they spend the provider's key.</p>
+    }
+    else
+    {
+        <p class="muted">This site has no AI. Only administrators can set it up, because it spends a provider's key.</p>
+    }
+
+    <div class="snippet ai-snippet">
+        <div class="snippet-head">
+            <label for="ai-snippet">Chatting from a page</label>
+            <button type="button" class="btn btn-sm" data-copy="#ai-snippet">Copy</button>
+        </div>
+        <textarea id="ai-snippet" rows="@(Model.AiSnippet.Count(c => c == '\n') + 1)" wrap="off" readonly spellcheck="false"
+                  onclick="this.select()">@Model.AiSnippet</textarea>
+        <p class="hint snippet-hint">
+            <span class="mono">site.ai.enabled</span> says whether this page may chat. The promise resolves with the whole answer,
+            the model and the tokens it cost.
+        </p>
+    </div>
+</div>
+
+<div class="card" id="realtime">
+    <h2>
+        Realtime
+        @if (Model.RealtimeConnections > 0)
+        {
+            <span class="badge badge-ok">@Model.RealtimeConnections.ToString("N0") connected</span>
+        }
+        else
+        {
+            <span class="badge">none connected</span>
+        }
+    </h2>
+    <p class="hint">
+        Events from the server to the pages open on this site. A page listens with
+        <span class="mono">site.realtime.on</span> from <span class="mono">/_host/site.js</span>, and can join groups to
+        hear only what concerns it. The site's functions publish through <span class="mono">IRealtime</span>, and a
+        CI job or a script through the API.
+    </p>
+
+    @if (Model.RealtimeConnections == 0)
+    {
+        <p class="muted">No page was connected when this page loaded.</p>
+    }
+    else
+    {
+        <p>
+            @Model.RealtimeConnections.ToString("N0") @(Model.RealtimeConnections == 1 ? "page was" : "pages were") connected
+            when this page loaded, in @Model.RealtimeGroups.Count.ToString("N0") @(Model.RealtimeGroups.Count == 1 ? "group" : "groups").
+        </p>
+    }
+
+    @if (Model.RealtimeGroups.Count > 0)
+    {
+        <div class="table-wrap rt-groups">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Group</th>
+                        <th>Members</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var (name, members) in Model.RealtimeGroups.Take(DetailsModel.RealtimeGroupsShown))
+                    {
+                        <tr>
+                            <td class="mono">@name</td>
+                            <td>@members.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (Model.RealtimeGroups.Count > DetailsModel.RealtimeGroupsShown)
+        {
+            <p class="hint">
+                …and @((Model.RealtimeGroups.Count - DetailsModel.RealtimeGroupsShown).ToString("N0")) more.
+                <span class="mono">GET /api/v1/sites/@Model.Site.Domain/realtime</span> lists every one.
+            </p>
+        }
+    }
+
+    <div class="rt-snippets">
+        <div class="snippet">
+            <div class="snippet-head">
+                <label for="realtime-snippet">Listening from a page</label>
+                <button type="button" class="btn btn-sm" data-copy="#realtime-snippet">Copy</button>
+            </div>
+            <textarea id="realtime-snippet" rows="@(Model.RealtimeSnippet.Count(c => c == '\n') + 1)" wrap="off" readonly spellcheck="false"
+                      onclick="this.select()">@Model.RealtimeSnippet</textarea>
+            <p class="hint snippet-hint">
+                The server sends <span class="mono">site.deployed</span> itself whenever a deploy, a rollback or new functions
+                go live. The first <span class="mono">on</span> connects, and a dropped connection comes back on its own. A
+                handler gets the event's payload, then <span class="mono">{ event, group }</span>.
+            </p>
+        </div>
+        <div class="snippet">
+            <div class="snippet-head">
+                <label for="realtime-publish-snippet">Telling every open page, from a script or a CI job</label>
+                <button type="button" class="btn btn-sm" data-copy="#realtime-publish-snippet">Copy</button>
+            </div>
+            <textarea id="realtime-publish-snippet" rows="@(Model.RealtimePublishSnippet.Count(c => c == '\n') + 1)" wrap="off"
+                      readonly spellcheck="false" onclick="this.select()">@Model.RealtimePublishSnippet</textarea>
+            <p class="hint snippet-hint">
+                Add <span class="mono">"payload"</span> with any JSON the pages need, and <span class="mono">"group"</span>,
+                <span class="mono">"user"</span> or <span class="mono">"connection"</span> to reach fewer of them. The answer
+                says how many connections it was sent to.
+            </p>
+        </div>
+    </div>
+</div>
+
 <div class="card" id="functions">
     <h2>Functions</h2>
     <p class="hint">
@@ -325,7 +754,8 @@
             bundle, url,
             Url.Page(null, "FunctionSource", new { domain = Model.Site.Domain })!,
             Model.IsAdministrator ? Url.Page("/Admin/FunctionEditor", new { domain = Model.Site.Domain }) : null,
-            Model.IsAdministrator ? Url.Page(null, "RemoveFunctionFile", new { domain = Model.Site.Domain }) : null);
+            Model.IsAdministrator ? Url.Page(null, "RemoveFunctionFile", new { domain = Model.Site.Domain }) : null,
+            Model.FunctionsStatus);
         <partial name="_FunctionBundle" model="view" />
     }
     else

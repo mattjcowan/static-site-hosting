@@ -77,7 +77,9 @@ public sealed class SitePasscodeGate
 
     /// <summary>
     /// Returns true when the gate answered the request and the site's content must not be
-    /// served — either the unlock form was submitted, or the visitor has yet to unlock.
+    /// served — either the unlock form was submitted, or the visitor has yet to unlock. Under
+    /// the host's reserved <c>/_host/</c> prefix a locked visitor gets a 401 with a JSON body
+    /// instead of the form: the caller there is a script, which can do nothing with a form.
     /// </summary>
     public async Task<bool> TryHandleAsync(HttpContext context, SiteRecord site)
     {
@@ -94,7 +96,9 @@ public sealed class SitePasscodeGate
 
         if (IsUnlocked(context, site)) return false;
 
-        await ChallengeAsync(context, site, StatusCodes.Status401Unauthorized, null, CurrentUrl(request));
+        if (SiteHostEndpoints.IsReserved(request.Path)) await RefuseScriptAsync(context);
+        else await ChallengeAsync(context, site, StatusCodes.Status401Unauthorized, null, CurrentUrl(request));
+
         return true;
     }
 
@@ -253,6 +257,21 @@ public sealed class SitePasscodeGate
         }
 
         return value;
+    }
+
+    /// <summary>The locked answer under <c>/_host/</c>: the form's status and caching rules, with a JSON body.</summary>
+    private static async Task RefuseScriptAsync(HttpContext context)
+    {
+        if (context.Response.HasStarted) return;
+
+        var response = context.Response;
+        response.StatusCode = StatusCodes.Status401Unauthorized;
+        response.Headers.CacheControl = "no-store";
+        response.Headers["X-Robots-Tag"] = "noindex, nofollow";
+        response.Headers["X-Content-Type-Options"] = "nosniff";
+        SiteHostEndpoints.MarkSameOrigin(response);
+
+        await response.WriteAsJsonAsync(new { error = "This site needs a passcode." }, context.RequestAborted);
     }
 
     private static async Task ChallengeAsync(

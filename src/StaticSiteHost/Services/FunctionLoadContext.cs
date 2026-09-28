@@ -13,7 +13,8 @@ namespace StaticSiteHost.Services;
 ///     and the next deploy then cannot overwrite it — an outright failure on Windows.
 ///   * Framework and ASP.NET assemblies deliberately fall through to the default context.
 ///     That is what lets an uploaded handler's <c>IResult</c> be the same type as the host's;
-///     a private copy would produce two unrelated types and every cast would fail.
+///     a private copy would produce two unrelated types and every cast would fail. The same
+///     goes for StaticSiteHost.Abstractions, whose types the host and its functions share.
 ///
 /// Unload is a request, not an action: the context disappears only once nothing reachable
 /// refers to anything inside it. See <see cref="FunctionSet"/> for what that costs in practice.
@@ -28,6 +29,13 @@ public sealed class FunctionLoadContext : AssemblyLoadContext
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
+        // Belt and braces. The build references the host's copy without deploying it (see
+        // FunctionProjectGenerator), so the resolver would find nothing anyway; but should a
+        // copy reach the bin regardless, say through a package that depends on it, loading it
+        // here would make a second ISite that the host's could never be cast to.
+        if (string.Equals(assemblyName.Name, FunctionProjectGenerator.AbstractionsName, StringComparison.OrdinalIgnoreCase))
+            return null;
+
         // Null for anything the publish output does not carry, which is every framework
         // assembly — the runtime then resolves it from the default context.
         var path = _resolver.ResolveAssemblyToPath(assemblyName);

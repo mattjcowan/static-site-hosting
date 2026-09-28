@@ -113,6 +113,7 @@ main { flex: 1; }
 .meta { font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; align-items: center; }
 .tag { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.55rem; border-radius: 999px; border: 1px solid rgb(127 212 208 / 35%); color: var(--teal); background: rgb(127 212 208 / 8%); text-decoration: none; }
 .tag.draft { border-color: rgb(242 154 166 / 40%); color: var(--rose); background: rgb(242 154 166 / 8%); }
+.tag.live::before { content: ""; display: inline-block; width: 0.45rem; height: 0.45rem; margin-right: 0.35rem; border-radius: 50%; background: currentColor; vertical-align: 0.05rem; }
 button.tag { cursor: pointer; font: inherit; font-size: 0.8rem; }
 button.tag[aria-pressed="true"] { background: var(--teal); color: var(--ink); }
 
@@ -141,6 +142,10 @@ input:focus, textarea:focus, select:focus, button:focus-visible { outline: 2px s
 textarea { font-family: var(--mono); font-size: 0.92rem; line-height: 1.55; resize: vertical; }
 .check { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; }
 .check input { width: auto; }
+/* A field with a button beside it: the summary and its Suggest button. */
+.field-row { display: flex; gap: 0.6rem; align-items: center; }
+.field-row input { flex: 1; }
+.field-row .btn { flex: none; }
 
 .btn {
   display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.6rem 1.1rem; border-radius: 999px; border: 1px solid var(--line);
@@ -158,6 +163,11 @@ textarea { font-family: var(--mono); font-size: 0.92rem; line-height: 1.55; resi
 .notice.ok { background: rgb(143 224 168 / 10%); border: 1px solid rgb(143 224 168 / 35%); color: #c9f2d5; }
 .secret { font-family: var(--mono); font-size: 1.1rem; letter-spacing: 0.05em; color: var(--star); user-select: all; }
 
+/* A quiet note in the corner, for news that arrives while the page is open. */
+.toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 20; max-width: min(24rem, calc(100vw - 2rem)); display: flex; gap: 0.8rem; align-items: flex-start; padding: 0.75rem 0.9rem 0.75rem 1rem; border-radius: 10px; background: var(--night); border: 1px solid var(--line); box-shadow: 0 10px 30px rgb(0 0 0 / 45%); font-size: 0.92rem; }
+.toast a { color: var(--star); }
+.toast button { flex: none; background: none; border: 0; color: var(--muted); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0; }
+
 .auth-card { max-width: 26rem; margin: 3rem auto 4rem; }
 
 /* ---- studio ---------------------------------------------------------------- */
@@ -173,6 +183,8 @@ textarea { font-family: var(--mono); font-size: 0.92rem; line-height: 1.55; resi
 .editor-grid textarea { min-height: 26rem; }
 .preview { min-height: 26rem; max-height: 40rem; overflow: auto; padding: 0.2rem 1rem; border: 1px solid var(--line); border-radius: 10px; background: rgb(5 9 22 / 45%); }
 @media (max-width: 800px) { .editor-grid { grid-template-columns: 1fr; } }
+.answer { min-height: 3rem; white-space: pre-wrap; line-height: 1.6; margin-top: 1rem; }
+.answer:empty { display: none; }
 table.users { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 table.users th, table.users td { text-align: left; padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
 table.users th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }

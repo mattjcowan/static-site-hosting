@@ -1,0 +1,16 @@
+{
+  "SITE_TITLE": {
+    "default": "Sample site",
+    "description": "Shown in the banner at the bottom of the home page. Change it under Variables on the site page.",
+    "public": true
+  },
+  "SUPPORT_EMAIL": {
+    "description": "Where visitors can write for help. Public, so a page can show it.",
+    "public": true,
+    "required": false
+  },
+  "ANALYTICS_KEY": {
+    "description": "Read by functions only. Never sent to the browser, and never shown again once set.",
+    "secret": true
+  }
+}

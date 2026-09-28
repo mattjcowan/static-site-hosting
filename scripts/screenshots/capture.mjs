@@ -121,15 +121,15 @@ await visitor.close();
 const passwordFile = join(dataRoot, 'sites/nightsky.localhost/data/initial-admin-password.txt');
 const initial = readFileSync(passwordFile, 'utf8').match(/password: (\S+)/)[1];
 
-await page.goto(`${blog}/login.html`);
+await page.goto(`${blog}/login`);
 await page.fill('#username', 'admin');
 await page.fill('#password', initial);
 await page.click('#login-form button');
 await page.waitForSelector('#change-password:not([hidden])');
 await page.fill('#next', 'screenshots-only-password');
 await page.fill('#confirm', 'screenshots-only-password');
-await Promise.all([page.waitForURL('**/studio.html'), page.click('#password-form button')]);
-await page.goto(`${blog}/studio.html#edit=reading-the-terminator`);
+await Promise.all([page.waitForURL('**/studio'), page.click('#password-form button')]);
+await page.goto(`${blog}/studio#edit=reading-the-terminator`);
 await page.waitForFunction(() => document.getElementById('post-preview').innerHTML.length > 0);
 await shot('blog-studio');
 

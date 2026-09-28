@@ -1,0 +1,14 @@
+{
+  // Public, so every page reads them from /_host/site.js (js/sky.js puts them in place). Set
+  // them under Sites → the domain → Variables to rename the journal without redeploying it.
+  "SITE_NAME": {
+    "default": "Night Sky Field Notes",
+    "description": "The journal's name, shown in the header, the footer and every page's title.",
+    "public": true
+  },
+  "SITE_TAGLINE": {
+    "default": "A dark-sky observing journal",
+    "description": "The line above the home page's headline.",
+    "public": true
+  }
+}

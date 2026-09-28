@@ -1,17 +1,17 @@
 #:sdk Microsoft.NET.Sdk.Web
 #:package Microsoft.Data.Sqlite@10.0.12
 #:package Dapper@2.1.89
+#:package StaticSiteHost.Abstractions@*
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Night Sky Field Notes: shared plumbing for the other function files.
 //
 //  Everything the blog stores lives in one SQLite database in the site's data
-//  folder, which the host hands to any handler that asks for a DirectoryInfo.
-//  That folder sits beside the site's releases: deploys and rollbacks never touch
-//  it, and it is never served.
+//  folder, which the BlogDatabase service (Database.cs) opens and sets up. That
+//  folder sits beside the site's releases: deploys and rollbacks never touch it,
+//  and it is never served.
 // ─────────────────────────────────────────────────────────────────────────────
 
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -21,6 +21,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using StaticSiteHost.Functions;
 
 public sealed class BlogUser
 {
@@ -53,6 +54,12 @@ public static class Blog
     public static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(7);
 
     /// <summary>
+    /// Where the session middleware (Session.cs) leaves the signed-in user, or null, for the rest of the request.
+    /// Items last for one request, so this never outlives it.
+    /// </summary>
+    public const string UserItem = "NightSky.User";
+
+    /// <summary>
     /// Every request that changes something must carry this header. A browser will not add a
     /// custom header to a cross-origin request without a CORS preflight, which nothing here
     /// grants, so another site cannot make a signed-in visitor's browser post to this one.
@@ -60,100 +67,15 @@ public static class Blog
     /// </summary>
     public const string CsrfHeader = "X-Night-Sky";
 
-    private static readonly ConcurrentDictionary<string, bool> Initialised = new();
-    private static readonly SemaphoreSlim InitGate = new(1, 1);
-
-    static Blog() => DefaultTypeMap.MatchNamesWithUnderscores = true;
-
     // ── database ───────────────────────────────────────────────────────────────
 
-    public static async Task<SqliteConnection> OpenAsync(HttpContext context, DirectoryInfo data)
-    {
-        var path = Path.Combine(data.FullName, "blog.db");
-        var db = new SqliteConnection($"Data Source={path};Foreign Keys=True");
-        await db.OpenAsync();
-
-        if (!Initialised.ContainsKey(path)) await InitialiseAsync(context, db, data, path);
-        return db;
-    }
-
-    private static async Task InitialiseAsync(HttpContext context, SqliteConnection db, DirectoryInfo data, string path)
-    {
-        await InitGate.WaitAsync();
-        try
-        {
-            if (Initialised.ContainsKey(path)) return;
-
-            // WAL lets readers carry on while someone saves a post.
-            await db.ExecuteAsync("PRAGMA journal_mode = WAL;");
-            await db.ExecuteAsync("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id                   INTEGER PRIMARY KEY,
-                    username             TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                    display_name         TEXT NOT NULL,
-                    role                 TEXT NOT NULL CHECK (role IN ('admin', 'editor')),
-                    password_hash        TEXT NOT NULL,
-                    must_change_password INTEGER NOT NULL DEFAULT 1,
-                    security_stamp       TEXT NOT NULL,
-                    created_utc          TEXT NOT NULL,
-                    last_login_utc       TEXT
-                );
-                CREATE TABLE IF NOT EXISTS posts (
-                    slug        TEXT PRIMARY KEY,
-                    title       TEXT NOT NULL,
-                    summary     TEXT NOT NULL DEFAULT '',
-                    body        TEXT NOT NULL,
-                    tags        TEXT NOT NULL DEFAULT '',
-                    published   INTEGER NOT NULL DEFAULT 1,
-                    author      TEXT NOT NULL,
-                    created_utc TEXT NOT NULL,
-                    updated_utc TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                """);
-
-            await SeedAdministratorAsync(context, db, data);
-            await StarterPosts.SeedAsync(db);
-
-            Initialised[path] = true;
-        }
-        finally
-        {
-            InitGate.Release();
-        }
-    }
-
     /// <summary>
-    /// The first account, created the first time the blog is used. Its password is generated,
-    /// written to the server log and to initial-admin-password.txt in the data folder, and must
-    /// be changed at first sign-in. The same approach the host takes for its own administrator.
+    /// A connection to the journal's database, for code that has only the request: the helpers here, the session
+    /// middleware and the hooks. It comes from the BlogDatabase service (Database.cs), which a handler can take as a
+    /// parameter instead.
     /// </summary>
-    private static async Task SeedAdministratorAsync(HttpContext context, SqliteConnection db, DirectoryInfo data)
-    {
-        if (await db.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM users") > 0) return;
-
-        var password = GeneratePassword();
-        await db.ExecuteAsync("""
-            INSERT INTO users (username, display_name, role, password_hash, must_change_password, security_stamp, created_utc)
-            VALUES ('admin', 'Observatory Admin', 'admin', @hash, 1, @stamp, @now)
-            """, new { hash = HashPassword(password), stamp = NewStamp(), now = Now() });
-
-        var file = Path.Combine(data.FullName, "initial-admin-password.txt");
-        await File.WriteAllTextAsync(file, $"username: admin{Environment.NewLine}password: {password}{Environment.NewLine}");
-
-        Logger(context).LogWarning(
-            """
-
-            ==========================================================================
-             Night Sky Field Notes ({Host}): the first account was created.
-
-                 username: admin
-                 password: {Password}
-
-             It must be changed at first sign-in. Also saved to {File}.
-            ==========================================================================
-            """, context.Request.Host.Host, password, file);
-    }
+    public static Task<SqliteConnection> OpenAsync(HttpContext context) =>
+        context.Site().Services.GetRequiredService<BlogDatabase>().OpenAsync();
 
     // ── passwords ──────────────────────────────────────────────────────────────
 
@@ -227,9 +149,15 @@ public static class Blog
     public static void SignOut(HttpContext context) =>
         context.Response.Cookies.Delete(SessionCookie, new CookieOptions { Path = "/", SameSite = SameSiteMode.Strict });
 
-    /// <summary>The signed-in user, or null. A deleted user or a changed password ends the session.</summary>
+    /// <summary>
+    /// The signed-in user, or null. A deleted user or a changed password ends the session.
+    ///
+    /// On a request the session middleware has seen, it has already asked, and its answer comes from the Items. The
+    /// hooks run without middleware, so for them this reads the cookie and asks the database.
+    /// </summary>
     public static async Task<BlogUser?> CurrentUserAsync(HttpContext context, SqliteConnection db)
     {
+        if (context.Items.TryGetValue(UserItem, out var known)) return known as BlogUser;
         if (context.Request.Cookies[SessionCookie] is not { Length: > 0 } token) return null;
 
         string payload;

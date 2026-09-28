@@ -69,6 +69,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The tag without its v, as the server's version and that of the StaticSiteHost.Abstractions
+      # it compiles functions against. Not the metadata step's version output, which carries the
+      # variant's suffix (1.2.3-slim) and would make the two images report different versions.
+      - name: Read the version from the tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Work out tags and labels
         id: meta
         uses: docker/metadata-action@v6
@@ -91,6 +98,7 @@ jobs:
         with:
           context: .
           target: ${{ matrix.target }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

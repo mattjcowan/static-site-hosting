@@ -25,10 +25,22 @@ public static class FunctionHooks
     private const BindingFlags AnyStatic = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     private const BindingFlags AnyInstance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-    /// <summary>Detaches every event handler and timer that belongs to <paramref name="context"/>. Returns what was released.</summary>
+    /// <summary>
+    /// Closes every pooled database connection the context's code opened, detaches every event
+    /// handler and timer that belongs to it, and returns what was released.
+    /// </summary>
     public static IReadOnlyList<string> Release(AssemblyLoadContext context)
     {
         var released = new List<string>();
+
+        // Pools first: a pooled connection is an open file, and the timer that would have pruned
+        // it is about to be closed below, so without this the old build's connections stay open
+        // until the whole build is collected. With SQLite that is worse than a leak: each build
+        // carries its own copy of the native library, and two copies in one process do not share
+        // the in-process lock table that SQLite uses to work around POSIX locking, so a close in
+        // one silently drops the locks of the other, and the new build's queries start failing
+        // with "disk I/O error". Measured on a redeploy of the blog sample.
+        ClearConnectionPools(context, released);
 
         // AppDomain's events (ProcessExit, DomainUnload, ...) live on the instance; AppContext's
         // and AssemblyLoadContext's on the types; the default context's own events on it.
@@ -128,6 +140,44 @@ public static class FunctionHooks
         catch
         {
             // Internals moved; see the class remarks.
+        }
+    }
+
+    /// <summary>
+    /// Calls the static <c>ClearAllPools</c> (or <c>ClearAllPoolsAsync</c>) that every ADO.NET
+    /// provider with a pool exposes on its connection type: Microsoft.Data.Sqlite, SqlClient,
+    /// Npgsql, MySqlConnector. Found by shape rather than by name, so a provider added later is
+    /// covered too, and only in the context's own assemblies, so the host's are never touched.
+    /// </summary>
+    private static void ClearConnectionPools(AssemblyLoadContext context, List<string> released)
+    {
+        foreach (var assembly in context.Assemblies.ToArray())
+        {
+            Type[] types;
+            try { types = assembly.GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { types = ex.Types.OfType<Type>().ToArray(); }
+            catch { continue; }
+
+            foreach (var type in types)
+            {
+                if (!type.IsClass || !typeof(System.Data.Common.DbConnection).IsAssignableFrom(type)) continue;
+
+                var clear = type.GetMethod("ClearAllPools", AnyStatic, Type.EmptyTypes)
+                            ?? type.GetMethod("ClearAllPoolsAsync", AnyStatic, Type.EmptyTypes);
+                if (clear is null) continue;
+
+                try
+                {
+                    // An async variant is waited for briefly: closing a handful of connections is quick,
+                    // and a provider that hangs must not hold up the retire.
+                    if (clear.Invoke(null, null) is Task task && !task.Wait(TimeSpan.FromSeconds(5))) continue;
+                    released.Add($"connection pools of {type.Name}");
+                }
+                catch
+                {
+                    // Best effort: the provider's own Clear threw. The build is unloaded regardless.
+                }
+            }
         }
     }
 

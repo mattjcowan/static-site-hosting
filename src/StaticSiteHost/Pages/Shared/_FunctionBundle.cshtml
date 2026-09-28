@@ -1,7 +1,41 @@
 @model StaticSiteHost.Pages.Shared.FunctionBundleView
+@using StaticSiteHost.Pages.Shared
+@using StaticSiteHost.Services
 @{
     var bundle = Model.Bundle;
+    var status = Model.Status;
     var canRemoveFiles = Model.RemoveFileAction is not null && bundle.Files.Count > 1;
+    var hasMiddleware = bundle.Middleware.Count > 0;
+    var hasOthers = hasMiddleware || bundle.Services.Count > 0 || bundle.BackgroundServices.Count > 0 || bundle.Jobs.Count > 0 ||
+                    bundle.Hooks.Count > 0;
+    var closed = Model.IsGlobal ? "every site answers" : "the site answers";
+    var work = (bundle.BackgroundServices.Count > 0, bundle.Jobs.Count > 0) switch
+    {
+        (true, true) => "background services and jobs",
+        (true, false) => "background services",
+        (false, true) => "jobs",
+        _ => null,
+    };
+
+    // Where a handler or middleware method is written: a link into the editor when it may be edited.
+    void SourceCell(string key)
+    {
+        bundle.RouteSources.TryGetValue(key, out var source);
+        <td class="mono nowrap">
+            @if (source is null)
+            {
+                <span class="muted">—</span>
+            }
+            else if (Model.EditorLink(source.File, source.Line) is { } sourceLink)
+            {
+                <a href="@sourceLink" title="Open in the editor at line @source.Line">@source.File:@source.Line</a>
+            }
+            else
+            {
+                @($"{source.File}:{source.Line}")
+            }
+        </td>
+    }
 }
 <ul class="fn-files" aria-label="Live files">
     @foreach (var file in bundle.Files)
@@ -31,54 +65,296 @@
 </ul>
 <p class="muted fn-meta">
     Uploaded @bundle.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") by @(bundle.UploadedBy ?? "unknown")
+    @if (bundle.AbstractionsVersion is { } abstractions)
+    {
+        <span>· Compiled against <span class="mono">StaticSiteHost.Abstractions</span> @abstractions</span>
+    }
     @if (bundle.Warnings > 0)
     {
         <span>· @bundle.Warnings compiler warning(s)</span>
     }
     · <a href="@Model.SourceUrl">Download source</a>
 </p>
-<div class="table-wrap">
-    <table>
-        <thead>
-            <tr><th>Method</th><th>Path</th><th>File</th></tr>
-        </thead>
-        <tbody>
-            @foreach (var route in bundle.Routes)
-            {
-                var space = route.IndexOf(' ');
-                var verb = space > 0 ? route[..space] : route;
-                var template = space > 0 ? route[(space + 1)..] : "";
-                // Only a GET with nothing to fill in is worth a link: anything else needs a body or a value.
-                var linkable = Model.SiteUrl is not null && verb is "GET" or "ANY" && !template.Contains('{');
-                bundle.RouteSources.TryGetValue(route, out var source);
+@if (status is not null && !Model.NeedsNewerServer)
+{
+    @* Where the live set stands. A failure has its own alert; with middleware, FunctionHost fails
+       closed, so say what visitors are getting meanwhile. *@
+    switch (status.State)
+    {
+        case FunctionLoadState.Loaded:
+            <p class="muted fn-status">
+                Loaded @(status.LoadedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))@(work is null ? "." : $"; its {work} are running.")
+            </p>
+            break;
+        case FunctionLoadState.Loading:
+            <p class="muted fn-status">Loading…</p>
+            break;
+        case FunctionLoadState.NotLoaded:
+            <p class="muted fn-status">
+                Not loaded yet: it loads on the first request@(work is null ? "" : $", or as soon as the server has started, for the sake of its {work}").
+            </p>
+            break;
+        case FunctionLoadState.Failed:
+            <div class="alert alert-error">
+                These functions could not be loaded, so they answer nothing: @status.Message
+                @if (hasMiddleware)
+                {
+                    <text>Because they include middleware, @closed <span class="mono">503</span> until they are fixed and deployed again, rather than letting requests past a gate that is not there.</text>
+                }
+                else
+                {
+                    <text>Fix them and deploy them again.</text>
+                }
+                The details are in the server log.
+            </div>
+            break;
+    }
+}
+@if (Model.NeedsNewerServer)
+{
+    @* A server rolled back past the version the functions were built on. They could call members
+       this server's copy lacks, so FunctionHost does not load them at all. *@
+    <div class="alert alert-warning">
+        These functions were compiled against <span class="mono">StaticSiteHost.Abstractions</span> @bundle.AbstractionsVersion,
+        newer than the @Model.HostAbstractionsVersion this server runs, so they are not loaded and answer nothing.
+        Redeploy them (open the editor and deploy, or upload the source again) to compile them against this server's copy.
+        @if (hasMiddleware)
+        {
+            <text>Because they include middleware, @closed <span class="mono">503</span> until then.</text>
+        }
+    </div>
+}
+@if (hasMiddleware)
+{
+    <h3 class="fn-subhead">Middleware</h3>
+    <p class="hint fn-subhint">Runs in this order on every request, files included, before any route answers.</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Order</th><th>Method</th><th>File</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var middleware in bundle.Middleware)
+                {
+                    var space = middleware.IndexOf(' ');
+                    <tr>
+                        <td class="mono nowrap">@(space > 0 ? middleware[..space] : "")</td>
+                        <td class="mono">@(space > 0 ? middleware[(space + 1)..] : middleware)</td>
+                        @{ SourceCell(middleware); }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+@if (bundle.Routes.Count > 0)
+{
+    if (hasOthers)
+    {
+        <h3 class="fn-subhead">Routes</h3>
+    }
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Method</th><th>Path</th><th>File</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var route in bundle.Routes)
+                {
+                    var space = route.IndexOf(' ');
+                    var verb = space > 0 ? route[..space] : route;
+                    var template = space > 0 ? route[(space + 1)..] : "";
+                    // Only a GET with nothing to fill in is worth a link: anything else needs a body or a value.
+                    var linkable = Model.SiteUrl is not null && verb is "GET" or "ANY" && !template.Contains('{');
+                    <tr>
+                        <td class="mono nowrap">@verb</td>
+                        <td class="mono">
+                            @if (linkable)
+                            {
+                                <a href="@(Model.SiteUrl!.TrimEnd('/') + "/" + template.TrimStart('/'))" target="_blank" rel="noopener">@template</a>
+                            }
+                            else
+                            {
+                                @template
+                            }
+                        </td>
+                        @{ SourceCell(route); }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+@if (bundle.Services.Count > 0)
+{
+    <h3 class="fn-subhead">Services</h3>
+    <p class="hint fn-subhint">Run once, in this order, as the functions load, to register what handlers, jobs and background services take.</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Method</th><th>File</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var method in bundle.Services)
+                {
+                    <tr>
+                        <td class="mono">@method</td>
+                        @{ SourceCell(method); }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+@if (bundle.BackgroundServices.Count > 0)
+{
+    <h3 class="fn-subhead">Background services</h3>
+    <p class="hint fn-subhint">Run for as long as the functions are live, and start again after a pause if they throw.</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
                 <tr>
-                    <td class="mono nowrap">@verb</td>
-                    <td class="mono">
-                        @if (linkable)
-                        {
-                            <a href="@(Model.SiteUrl!.TrimEnd('/') + "/" + template.TrimStart('/'))" target="_blank" rel="noopener">@template</a>
-                        }
-                        else
-                        {
-                            @template
-                        }
-                    </td>
-                    <td class="mono nowrap">
-                        @if (source is null)
-                        {
-                            <span class="muted">—</span>
-                        }
-                        else if (Model.EditorLink(source.File, source.Line) is { } sourceLink)
-                        {
-                            <a href="@sourceLink" title="Open in the editor at line @source.Line">@source.File:@source.Line</a>
-                        }
-                        else
-                        {
-                            @($"{source.File}:{source.Line}")
-                        }
-                    </td>
+                    <th>Method</th>
+                    @if (status is not null)
+                    {
+                        <th>State</th><th>Restarts</th><th>Last error</th>
+                    }
+                    <th>File</th>
                 </tr>
-            }
-        </tbody>
-    </table>
-</div>
+            </thead>
+            <tbody>
+                @foreach (var method in bundle.BackgroundServices)
+                {
+                    var service = Model.BackgroundStatus(method);
+                    <tr>
+                        <td class="mono">@method</td>
+                        @if (status is not null)
+                        {
+                            <td class="nowrap">
+                                @if (service is null)
+                                {
+                                    <span class="muted">—</span>
+                                }
+                                else
+                                {
+                                    <span class="badge @(service.State switch { FunctionBackgroundState.Running => "badge-ok", FunctionBackgroundState.Restarting => "badge-warn", _ => "" })"
+                                          title="@(service.StartedUtc is { } started ? $"Last started {FunctionBundleView.When(started)} UTC" : "")">@service.State.ToString().ToLowerInvariant()</span>
+                                }
+                            </td>
+                            <td class="nowrap">@(service?.Restarts.ToString() ?? "—")</td>
+                            <td class="fn-error">@(service?.LastError ?? "")</td>
+                        }
+                        @{ SourceCell(method); }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+@if (bundle.Jobs.Count > 0)
+{
+    <h3 class="fn-subhead">Jobs</h3>
+    <p class="hint fn-subhint">
+        Schedules and times are UTC. A run that comes due while the last one is still going is skipped, and runs missed
+        while the server was down are not made up.
+    </p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Schedule</th><th>Method</th><th>File</th>
+                    @if (status is not null)
+                    {
+                        <th>Last run</th><th>Next run</th><th>Runs / failures</th><th>Last error</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var display in bundle.Jobs)
+                {
+                    var (schedule, method, onStart) = FunctionBundleView.SplitJob(display);
+                    var job = Model.JobStatus(display);
+                    <tr>
+                        <td class="mono nowrap">
+                            @schedule
+                            @if (onStart)
+                            {
+                                <span class="muted" title="Also runs as the functions load">+ on start</span>
+                            }
+                        </td>
+                        <td class="mono">@method</td>
+                        @{ SourceCell(display); }
+                        @if (status is not null)
+                        {
+                            <td class="nowrap">
+                                @if (job is { IsRunning: true })
+                                {
+                                    <span class="badge badge-ok">running</span> <span class="muted">since @FunctionBundleView.When(job.LastStartedUtc)</span>
+                                }
+                                else if (job?.LastStartedUtc is { } started)
+                                {
+                                    @FunctionBundleView.When(started) <span class="muted">· @FunctionBundleView.Took(job.LastDuration)</span>
+                                }
+                                else
+                                {
+                                    <span class="muted">not yet</span>
+                                }
+                            </td>
+                            <td class="nowrap">@FunctionBundleView.When(job?.NextRunUtc)</td>
+                            <td class="nowrap">
+                                @(job?.Runs.ToString() ?? "—") / @(job?.Failures.ToString() ?? "—")
+                                @if (job is { Skipped: > 0 })
+                                {
+                                    <span class="muted" title="Came due while the last run was still going">· @job.Skipped skipped</span>
+                                }
+                            </td>
+                            <td class="fn-error" title="@(job?.LastErrorUtc is { } failed ? $"At {FunctionBundleView.When(failed)} UTC" : "")">@(job?.LastError ?? "")</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+@if (bundle.Hooks.Count > 0)
+{
+    <h3 class="fn-subhead">Hooks</h3>
+    <p class="hint fn-subhint">
+        @if (Model.IsGlobal)
+        {
+            <text>Global functions' hooks are never asked: only a site's own functions decide who may use its realtime hub or AI.</text>
+        }
+        else
+        {
+            <text>Decide who may use the site's realtime hub and AI. A hook that throws, or functions that cannot be loaded, refuse.</text>
+        }
+    </p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Hook</th><th>Method</th><th>Decides</th><th>File</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var hook in bundle.Hooks)
+                {
+                    var space = hook.IndexOf(' ');
+                    var kind = space > 0 ? hook[..space] : hook;
+                    <tr>
+                        <td class="mono nowrap">[@kind]</td>
+                        <td class="mono">@(space > 0 ? hook[(space + 1)..] : "")</td>
+                        <td>
+                            @(kind switch
+                            {
+                                "RealtimeConnect" => "who may connect to the realtime hub, and who they are",
+                                "RealtimeJoin" => "which realtime groups a page may join",
+                                "AiAccess" => "who may chat at /_host/ai/chat",
+                                _ => "",
+                            })
+                        </td>
+                        @{ SourceCell(hook); }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}

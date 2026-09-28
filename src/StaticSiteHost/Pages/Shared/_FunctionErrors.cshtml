@@ -1,5 +1,6 @@
 @model StaticSiteHost.Pages.Shared.FunctionErrorsView
 @{
+    // Errors only: warnings and the host's "info" notes would bury the line that stopped the deploy.
     var errors = Model.Diagnostics.Where(d => d.Severity == "error").ToList();
 }
 @if (Model.Error is not null)

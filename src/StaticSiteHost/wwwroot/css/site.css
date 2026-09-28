@@ -425,3 +425,66 @@ textarea.rules {
 .dropzone.invalid { border-color: var(--danger); }
 .dropzone.invalid span { color: var(--danger); }
 span.label { display: block; font-weight: 550; font-size: 0.875rem; margin-bottom: 0.35rem; }
+
+/* ---- diagnostics ---- */
+
+/* A note from the server about the build rather than something to fix, so it reads quieter
+   than a warning and has nowhere to jump to. */
+.fe-problem-list li.fe-problem-info { color: var(--muted); cursor: default; }
+.fe-problem-list li.fe-problem-info:hover { background: none; }
+
+/* ---- variables ---- */
+
+.variables td { vertical-align: top; }
+.var-description { font-size: 0.825rem; margin-top: 0.15rem; max-width: 22rem; }
+.var-value { display: inline-block; max-width: 20rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.var-source, .var-note { font-size: 0.8rem; }
+.var-note { color: var(--warning); }
+.var-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; }
+td.actions form.var-edit { display: inline-flex; align-items: center; gap: 0.4rem; }
+.var-edit input { width: 13rem; padding: 0.3rem 0.5rem; font-size: 0.875rem; }
+td.actions .validation { white-space: normal; text-align: left; max-width: 24rem; margin-left: auto; }
+.var-add { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.var-add h3 { font-size: 0.95rem; margin: 0 0 0.25rem; }
+.var-flags { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin: 0.75rem 0 1rem; }
+
+/* ---- middleware ---- */
+
+/* Headings on the Functions card: over the Middleware table, and over Routes when both show. */
+.fn-subhead { font-size: 0.95rem; margin: 1rem 0 0.25rem; }
+.fn-subhint { margin: 0 0 0.35rem; }
+
+/* ---- ai ---- */
+
+.ai-add-second { margin-top: 0.75rem; }
+.ai-add .validation { margin-top: 0.75rem; }
+.ai-url { overflow-wrap: anywhere; max-width: 18rem; }
+
+/* Each provider's edit form sits in a row of its own, tucked under the provider's row. */
+.ai-providers tr:has(+ .ai-edit-row) td { border-bottom: none; }
+.ai-edit-row td { padding-top: 0; }
+.ai-edit-row summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; width: fit-content; user-select: none; }
+.ai-edit-row summary:hover { color: var(--text); }
+.row.ai-edit { margin-top: 0.75rem; }
+.row.ai-edit > .field { flex: 1 1 170px; }
+
+.ai-prompt { margin-top: 1rem; }
+.ai-prompt textarea { resize: vertical; }
+.ai-warning { color: var(--warning); margin: 0.5rem 0 1rem; }
+.ai-remove { margin-top: 0.75rem; }
+.ai-snippet { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+
+/* ---- jobs ---- */
+
+/* The Functions card's line saying whether the live functions are loaded. */
+.fn-status { margin: 0 0 0.5rem; font-size: 0.875rem; }
+
+/* A job's or background service's last error: a message, so let it wrap. */
+.fn-error { color: var(--danger); font-size: 0.875rem; overflow-wrap: anywhere; min-width: 10rem; max-width: 24rem; }
+
+/* ---- realtime ---- */
+
+/* The site page's Realtime card: a short table of groups, then the two snippets under a rule. */
+.rt-groups { max-width: 32rem; margin-bottom: 0.5rem; }
+.rt-groups td.mono { overflow-wrap: anywhere; }
+.rt-snippets { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }

@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Shared by everything under src/: the host and the StaticSiteHost.Abstractions package.
+
+    One version for both, so the package a function is written against and the server that
+    compiles it carry the same number. A release passes its tag as -p:Version=1.2.3 (the
+    Dockerfile's VERSION argument, and the package workflow); any other build is 0.0.0-dev,
+    which no published package will ever be.
+  -->
+  <PropertyGroup>
+    <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+    <Authors>mattjcowan</Authors>
+    <RepositoryUrl>https://github.com/mattjcowan/static-site-hosting</RepositoryUrl>
+  </PropertyGroup>
+
+</Project>

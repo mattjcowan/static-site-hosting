@@ -8,10 +8,13 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.ResponseCompression;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Endpoints;
+using StaticSiteHost.Hubs;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
+using StaticSiteHost.Services.Ai;
+using StaticSiteHost.Services.Realtime;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -59,6 +62,8 @@ builder.Services.AddSingleton<SitePathResolver>();
 builder.Services.AddSingleton<SiteContentServer>();
 builder.Services.AddSingleton<SitePasscodeGate>();
 builder.Services.AddSingleton<SiteRuleService>();
+builder.Services.AddSingleton<SiteVariableService>();
+builder.Services.AddSingleton<SiteHostEndpoints>();
 builder.Services.AddSingleton<ZipDeploymentService>();
 builder.Services.AddSingleton<FunctionSourceReader>();
 builder.Services.AddSingleton<FunctionProjectGenerator>();
@@ -67,8 +72,51 @@ builder.Services.AddSingleton<FunctionHost>();
 builder.Services.AddSingleton<FunctionBundleBuilder>();
 builder.Services.AddSingleton<FunctionTestRunner>();
 builder.Services.AddSingleton<FunctionDeploymentService>();
+// Loads the bundles that run background services or jobs once the server is listening, and stops them on shutdown.
+builder.Services.AddHostedService<FunctionWarmUp>();
 builder.Services.AddSingleton<BootstrapAdministrator>();
 builder.Services.AddSingleton<LoginThrottle>();
+
+// ---------------------------------------------------------------- AI providers
+
+// IHttpClientFactory, with one named client for every call to an AI provider.
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(AiChatService.HttpClientName, client =>
+    {
+        // The whole of an answer that is not streamed. A streamed one is timed between its events
+        // by AiChatService, since HttpClient's timeout stops once the headers arrive.
+        client.Timeout = AiChatService.TimeoutFor(hostingOptions);
+        client.MaxResponseContentBufferSize = 16 * 1024 * 1024;
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("StaticSiteHost");
+    })
+    // A redirect would turn the POST into a GET, or carry it somewhere the base URL does not say.
+    // Refused instead, with a message that points at the base URL.
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+    });
+builder.Services.AddSingleton<AiProviderStore>();
+builder.Services.AddSingleton<AiChatService>();
+builder.Services.AddSingleton<SiteAiChatFactory>();
+builder.Services.AddSingleton<SiteAiSettingsService>();
+builder.Services.AddSingleton<AiVisitorLimiter>();
+builder.Services.AddSingleton<AiChatEndpoint>();
+
+// ---------------------------------------------------------------- realtime
+
+// SignalR is in the shared framework. One hub serves every site, at /_host/realtime on the site's
+// own domain; SiteHostingMiddleware lets its requests through once the passcode gate has.
+builder.Services.AddSignalR(options =>
+{
+    // A page sends nothing but Join and Leave, each with a name of 64 characters at most.
+    options.MaximumReceiveMessageSize = 32 * 1024;
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+});
+builder.Services.AddSingleton<RealtimeRegistry>();
+builder.Services.AddSingleton<RealtimeNegotiationLimiter>();
+builder.Services.AddSingleton<SiteRealtimeFactory>();
+builder.Services.AddSingleton<SiteDeployedNotifier>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -141,6 +189,7 @@ var app = builder.Build();
 // ---------------------------------------------------------------- startup work
 
 app.Services.GetRequiredService<SiteStore>().Load();
+await app.Services.GetRequiredService<AiProviderStore>().LoadAsync();
 app.Services.GetRequiredService<ZipDeploymentService>().CleanupStaging();
 await app.Services.GetRequiredService<BootstrapAdministrator>().EnsureAsync();
 
@@ -174,6 +223,7 @@ app.UseForcedPasswordChange();
 
 app.MapRazorPages();
 app.MapApi();
+app.MapHub<SiteHub>(SiteHub.Path);
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
 app.Run();

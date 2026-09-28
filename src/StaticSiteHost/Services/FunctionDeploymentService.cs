@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using StaticSiteHost.Models;
+using StaticSiteHost.Services.Realtime;
 
 namespace StaticSiteHost.Services;
 
@@ -10,7 +11,9 @@ public sealed record FunctionSourceDownload(string FileName, string ContentType,
 /// Makes built bundles live, for one site or for every site, and keeps the editor's drafts.
 ///
 /// A scope is a domain, or null for the global functions. Everything that fails leaves the
-/// functions already live untouched.
+/// functions already live untouched. Everything that succeeds tells <see cref="FunctionHost"/>,
+/// which loads functions with background work straight away and retires the set they replace,
+/// and, for a site, the pages open on it (<see cref="SiteDeployedNotifier"/>).
 /// </summary>
 public sealed class FunctionDeploymentService
 {
@@ -22,6 +25,7 @@ public sealed class FunctionDeploymentService
     private readonly ZipDeploymentService _deployer;
     private readonly FunctionHost _host;
     private readonly FunctionBundleBuilder _builder;
+    private readonly SiteDeployedNotifier _deployed;
     private readonly AuditLog _audit;
     private readonly ILogger<FunctionDeploymentService> _logger;
 
@@ -31,6 +35,7 @@ public sealed class FunctionDeploymentService
         ZipDeploymentService deployer,
         FunctionHost host,
         FunctionBundleBuilder builder,
+        SiteDeployedNotifier deployed,
         AuditLog audit,
         ILogger<FunctionDeploymentService> logger)
     {
@@ -39,6 +44,7 @@ public sealed class FunctionDeploymentService
         _deployer = deployer;
         _host = host;
         _builder = builder;
+        _deployed = deployed;
         _audit = audit;
         _logger = logger;
     }
@@ -91,8 +97,13 @@ public sealed class FunctionDeploymentService
             return FunctionDeployResult.Failed(error!);
         }
 
-        await _audit.WriteAsync("site.functions.deploy", actor,
-            new { domain, bundle = bundle.Id, files = bundle.Files, routes = bundle.Routes.Count });
+        await _host.RefreshAsync(domain);
+        _deployed.Announce(domain, SiteDeployedNotifier.FromFunctions);
+        await _audit.WriteAsync("site.functions.deploy", actor, new
+        {
+            domain, bundle = bundle.Id, files = bundle.Files, routes = bundle.Routes.Count, middleware = bundle.Middleware.Count,
+            backgroundServices = bundle.BackgroundServices.Count, jobs = bundle.Jobs.Count,
+        });
         return built;
     }
 
@@ -127,8 +138,12 @@ public sealed class FunctionDeploymentService
         }
 
         var (ok, error) = await _deployer.SetFunctionsAsync(domain, null);
-        if (ok) await _audit.WriteAsync("site.functions.remove", actor, new { domain });
-        return (ok, error);
+        if (!ok) return (false, error);
+
+        await _host.RefreshAsync(domain);
+        _deployed.Announce(domain, SiteDeployedNotifier.FromFunctions);
+        await _audit.WriteAsync("site.functions.remove", actor, new { domain });
+        return (true, null);
     }
 
     /// <summary>The data directory handlers in this scope receive.</summary>
@@ -150,8 +165,11 @@ public sealed class FunctionDeploymentService
         var bundle = built.Bundle!;
         await ReplaceGlobalAsync(bundle);
 
-        await _audit.WriteAsync("functions.deploy", actor,
-            new { bundle = bundle.Id, files = bundle.Files, routes = bundle.Routes.Count });
+        await _audit.WriteAsync("functions.deploy", actor, new
+        {
+            bundle = bundle.Id, files = bundle.Files, routes = bundle.Routes.Count, middleware = bundle.Middleware.Count,
+            backgroundServices = bundle.BackgroundServices.Count, jobs = bundle.Jobs.Count,
+        });
         return built;
     }
 
@@ -164,16 +182,17 @@ public sealed class FunctionDeploymentService
             return (new[] { record.Current?.Id, record.PreviousId }, true);
         });
 
-        _host.EvictGlobal();
+        await _host.RefreshAsync(null);
 
         // Everything but the live bundle and the one before it: requests that started on the
-        // previous bundle may still need to load assemblies out of its directory. Drafts live
-        // in a dot-directory and are left to their own expiry.
+        // previous bundle may still need to load assemblies out of its directory. An older one
+        // whose set is still retiring is deleted once it is gone. Drafts live in a dot-directory
+        // and are left to their own expiry.
         if (!Directory.Exists(_paths.GlobalFunctionsDir)) return;
         foreach (var dir in Directory.EnumerateDirectories(_paths.GlobalFunctionsDir))
         {
             var name = Path.GetFileName(dir);
-            if (!name.StartsWith('.') && !keep.Contains(name)) TryDeleteDirectory(dir);
+            if (!name.StartsWith('.') && !keep.Contains(name)) _host.DeleteWhenRetired(dir);
         }
     }
 

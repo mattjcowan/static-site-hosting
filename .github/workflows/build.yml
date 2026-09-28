@@ -1,0 +1,44 @@
+# Builds the host and runs the unit tests on every push and pull request, so a change that
+# breaks the build or a test is caught before it is tagged. Publishing is separate: see
+# publish-image.yml and publish-package.yml, which run on version tags only.
+
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore src/StaticSiteHost/StaticSiteHost.csproj && dotnet restore tests/StaticSiteHost.Tests/StaticSiteHost.Tests.csproj
+
+      - name: Build
+        run: dotnet build src/StaticSiteHost/StaticSiteHost.csproj --configuration Release --no-restore -warnaserror
+
+      - name: Test
+        run: dotnet test tests/StaticSiteHost.Tests/StaticSiteHost.Tests.csproj --configuration Release --no-restore --logger "trx" --results-directory out/tests
+
+      # The package must pack on every change, not only on a tag, or a broken csproj would be
+      # found by the release itself.
+      - name: Pack (check only)
+        run: dotnet pack src/StaticSiteHost.Abstractions --configuration Release --no-build -p:Version=0.0.0-ci -o out/pack

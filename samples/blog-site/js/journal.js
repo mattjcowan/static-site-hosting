@@ -38,4 +38,34 @@
     all = result.data.posts || [];
     render();
   });
+
+  // ---- news while the page is open ------------------------------------------------
+  // The journal's group hears about posts going up, changing and coming down (Posts.cs sends
+  // them), and a note in the corner offers the fresh list. Nothing is fetched until the reader asks.
+  if (!window.site) return;
+
+  var said = { created: 'A new post is up', published: 'A new post is up', updated: 'A post was updated', unpublished: 'A post was taken down', deleted: 'A post was taken down' };
+
+  site.realtime.join('journal').catch(function (error) { console.warn('Could not follow the journal:', error.message); });
+
+  // How many pages are reading the journal: Realtime.cs counts the group every 30 seconds and sends
+  // readers.online when the number changes. This page counts too.
+  site.realtime.on('readers.online', function (online) {
+    var badge = document.getElementById('readers-online');
+    badge.textContent = online.count + ' reading now';
+    badge.hidden = !(online.count > 0);
+  });
+
+  site.realtime.on('post.changed', function (post) {
+    var old = document.querySelector('.toast');
+    if (old) old.remove();
+
+    var toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.setAttribute('role', 'status');
+    toast.innerHTML = '<span>' + (said[post.action] || 'A post changed') + ': <strong>' + Sky.escape(post.title) + '</strong>. ' +
+      '<a href="">Refresh</a> to see it.</span><button type="button" aria-label="Dismiss">×</button>';
+    toast.querySelector('button').addEventListener('click', function () { toast.remove(); });
+    document.body.appendChild(toast);
+  });
 })();

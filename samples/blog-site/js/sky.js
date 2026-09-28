@@ -4,6 +4,19 @@
 
   var Sky = (window.Sky = {});
 
+  // ---- the journal's name -----------------------------------------------------
+  // SITE_NAME and SITE_TAGLINE are site variables (_variables.json), which /_host/site.js hands
+  // every page, so the journal can be renamed on the host without a redeploy. The markup carries
+  // the defaults, which stay put if site.js did not load.
+  var DEFAULT_NAME = 'Night Sky Field Notes';
+  Sky.name = window.site ? window.site.get('SITE_NAME', DEFAULT_NAME) : DEFAULT_NAME;
+
+  document.title = document.title.replace(DEFAULT_NAME, Sky.name);
+  document.querySelectorAll('[data-site-name]').forEach(function (el) { el.textContent = Sky.name; });
+
+  var tagline = window.site ? window.site.get('SITE_TAGLINE', '') : '';
+  if (tagline) document.querySelectorAll('[data-site-tagline]').forEach(function (el) { el.textContent = tagline; });
+
   // ---- API ----------------------------------------------------------------
   // Every change carries X-Night-Sky: a header a cross-site page cannot add without a
   // CORS preflight, which is what keeps another site from posting here as you.
@@ -40,10 +53,10 @@
     var slot = document.getElementById('nav-auth');
     if (!slot) return;
     if (!user) {
-      slot.innerHTML = '<a href="/login.html">Sign in</a>';
+      slot.innerHTML = '<a href="/login">Sign in</a>';
       return;
     }
-    slot.innerHTML = '<a href="/studio.html">Studio</a><button type="button" id="sign-out">Sign out</button>';
+    slot.innerHTML = '<a href="/studio">Studio</a><button type="button" id="sign-out">Sign out</button>';
     document.getElementById('sign-out').addEventListener('click', function () {
       Sky.api('/api/auth/logout', { method: 'POST' }).then(function () { window.location.href = '/'; });
     });
@@ -60,10 +73,10 @@
     try { localStorage.setItem('red-light', on ? '1' : '0'); } catch (e) { /* private mode */ }
   });
 
-  // Mark the current page in the nav.
+  // Mark the current page in the nav. Its links leave .html off, since the host answers /journal with journal.html.
   document.querySelectorAll('.nav a[href]').forEach(function (a) {
-    var here = window.location.pathname.replace(/\/index\.html$/, '/');
-    if (a.getAttribute('href') === here || (here.indexOf('/journal') === 0 && a.getAttribute('href') === '/journal.html')) {
+    var here = window.location.pathname.replace(/\/index\.html$/, '/').replace(/\.html$/, '');
+    if (a.getAttribute('href') === here || (here.indexOf('/journal') === 0 && a.getAttribute('href') === '/journal')) {
       a.setAttribute('aria-current', 'page');
     }
   });

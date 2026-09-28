@@ -1,0 +1,52 @@
+# Publishes the StaticSiteHost.Abstractions package to nuget.org when a version tag is pushed:
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# The same tags as publish-image.yml, so the package carries the same version as the images:
+# the 1.2.3 server compiles functions against its own copy of StaticSiteHost.Abstractions
+# 1.2.3, and this is that copy for authors' editors and LINQPad.
+#
+# Only plain vMAJOR.MINOR.PATCH tags publish. Needs NUGET_API_KEY as a repository secret: an
+# API key created on nuget.org with permission to push StaticSiteHost.Abstractions. Create the
+# key, and reserve the package id (or push its first version by hand), before the first tag.
+# --skip-duplicate makes re-running the workflow for a tag already published a no-op.
+
+name: Publish package
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+# Not the image workflow's group: sharing one would queue or cancel one workflow behind the other.
+concurrency:
+  group: publish-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish StaticSiteHost.Abstractions
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack
+        run: dotnet pack src/StaticSiteHost.Abstractions -c Release -p:Version=${GITHUB_REF_NAME#v} -o out
+
+      # The key goes through the environment rather than into the command line as written.
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: >-
+          dotnet nuget push out/*.nupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key "$NUGET_API_KEY"
+          --skip-duplicate

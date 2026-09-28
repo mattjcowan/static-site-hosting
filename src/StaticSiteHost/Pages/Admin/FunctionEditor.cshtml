@@ -42,6 +42,8 @@
     <p class="hint">
         Runs one request in memory against a build: no DNS, passcode or browser in the way. It runs your real code
         against the site's real data folder, so anything a handler writes or sends, a test writes or sends too.
+        The request goes through the build's own middleware first, as a live one would; if a gate turns it away,
+        put what the gate asks for, such as a cookie or a token, in <strong>Headers</strong>.
     </p>
 
     <div class="row">

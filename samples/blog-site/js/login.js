@@ -8,7 +8,20 @@
     document.getElementById(id).innerHTML = text ? '<div class="notice ' + kind + '">' + Sky.escape(text) + '</div>' : '';
   }
 
-  function goOn() { window.location.href = '/studio.html'; }
+  // Where to go once signed in: the page in ?return= (the studio's gate sends people here with
+  // one), or the studio. Only ever a page on this site, since anyone can put a return address
+  // in a link. A redirect carries the fragment along, so #edit=<slug> survives the round trip.
+  function destination() {
+    var here = window.location.origin;
+    var target;
+    try { target = new URL(new URLSearchParams(window.location.search).get('return') || '/studio', here); }
+    catch (e) { target = null; }
+    if (!target || target.origin !== here) target = new URL('/studio', here);
+    if (!target.hash) target.hash = window.location.hash;
+    return target.pathname + target.search + target.hash;
+  }
+
+  function goOn() { window.location.href = destination(); }
 
   // Already signed in with nothing owed: straight to the studio.
   Sky.me.then(function (user) { if (user && !user.mustChangePassword) goOn(); });

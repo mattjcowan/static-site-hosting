@@ -10,4 +10,22 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Beside the host at run time; function builds compile against this copy. See FunctionProjectGenerator. -->
+    <ProjectReference Include="../StaticSiteHost.Abstractions/StaticSiteHost.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Each set of functions gets its own dependency injection container (FunctionSet.BuildServices).
+      Once a service has been resolved a couple of times, the container otherwise compiles a
+      resolver for it: dynamic code, emitted into the default load context, that names the
+      function's types. Code in the default context is never collected, so it would keep every
+      old build of the functions in memory for the life of the process. With this switch the
+      container resolves by reflection alone, for the host's own services as well; the host's
+      resolve once per request at most, so the difference does not show.
+    -->
+    <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
+  </ItemGroup>
+
 </Project>

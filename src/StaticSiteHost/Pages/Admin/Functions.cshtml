@@ -17,7 +17,7 @@
     @if (Model.Current is { } bundle)
     {
         var view = new StaticSiteHost.Pages.Shared.FunctionBundleView(
-            bundle, null, Url.Page(null, "Source")!, Url.Page("/Admin/FunctionEditor")!, Url.Page(null, "RemoveFile"));
+            bundle, null, Url.Page(null, "Source")!, Url.Page("/Admin/FunctionEditor")!, Url.Page(null, "RemoveFile"), Model.Status);
         <partial name="_FunctionBundle" model="view" />
     }
     else

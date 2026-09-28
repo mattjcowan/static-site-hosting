@@ -1,13 +1,20 @@
+#:package StaticSiteHost.Abstractions@*
+
 // Managing accounts. Administrators only.
 //
 // A new account and a reset both end with "must change password": whoever set it, the
 // person it belongs to picks their own at first sign-in. Leave the password empty and one
 // is generated and returned once, for the administrator to pass on.
+//
+// A change to someone's role, a password reset and a deleted account are also sent to that person's
+// open pages, as account.changed, so the studio can tell them at once (see Notify below).
 
 using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using StaticSiteHost.Functions;
 
 public sealed record UserRequest(string? Username, string? DisplayName, string? Role, string? Password);
 public sealed record ResetRequest(string? Password);
@@ -18,9 +25,9 @@ public static partial class UserHandlers
     private static partial Regex UsernamePattern();
 
     [HttpGet("/api/users")]
-    public static async Task<IResult> List(HttpContext context, DirectoryInfo data)
+    public static async Task<IResult> List(HttpContext context)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var (_, denied) = await Blog.RequireAsync(context, db, admin: true);
         if (denied is not null) return denied;
 
@@ -29,9 +36,9 @@ public static partial class UserHandlers
     }
 
     [HttpPost("/api/users")]
-    public static async Task<IResult> Create(HttpContext context, DirectoryInfo data)
+    public static async Task<IResult> Create(HttpContext context)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var (_, denied) = await Blog.RequireAsync(context, db, admin: true);
         if (denied is not null) return denied;
 
@@ -72,9 +79,9 @@ public static partial class UserHandlers
     }
 
     [HttpPut("/api/users/{id}")]
-    public static async Task<IResult> Update(HttpContext context, DirectoryInfo data, long id)
+    public static async Task<IResult> Update(HttpContext context, IRealtime realtime, long id)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var (me, denied) = await Blog.RequireAsync(context, db, admin: true);
         if (denied is not null) return denied;
 
@@ -95,14 +102,17 @@ public static partial class UserHandlers
         });
 
         var updated = await db.QuerySingleAsync<BlogUser>("SELECT * FROM users WHERE id = @id", new { id });
+        if (updated.Role != user.Role)
+            await Notify(context, realtime, updated.Username, "role", $"An administrator made you {(updated.IsAdmin ? "an administrator" : "an editor")}.");
+
         return Blog.Ok(new { user = updated.ToPublic(), self = me!.Id == id });
     }
 
     /// <summary>Sets a new password (given or generated) and signs the account out everywhere.</summary>
     [HttpPost("/api/users/{id}/reset-password")]
-    public static async Task<IResult> ResetPassword(HttpContext context, DirectoryInfo data, long id)
+    public static async Task<IResult> ResetPassword(HttpContext context, IRealtime realtime, long id)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var (me, denied) = await Blog.RequireAsync(context, db, admin: true);
         if (denied is not null) return denied;
         if (me!.Id == id) return Blog.Error(400, "Change your own password from the Account panel instead.");
@@ -111,19 +121,21 @@ public static partial class UserHandlers
         var (password, generated, problem) = ChoosePassword(body?.Password);
         if (problem is not null) return Blog.Error(400, problem);
 
-        var changed = await db.ExecuteAsync("""
+        var user = await db.QuerySingleOrDefaultAsync<BlogUser>("SELECT * FROM users WHERE id = @id", new { id });
+        if (user is null) return Blog.Error(404, "No such account.");
+
+        await db.ExecuteAsync("""
             UPDATE users SET password_hash = @hash, security_stamp = @stamp, must_change_password = 1 WHERE id = @id
             """, new { id, hash = Blog.HashPassword(password), stamp = Blog.NewStamp() });
 
-        return changed == 0
-            ? Blog.Error(404, "No such account.")
-            : Blog.Ok(new { password = generated ? password : null });
+        await Notify(context, realtime, user.Username, "password", "An administrator reset your password. Sign in again with the one they give you.");
+        return Blog.Ok(new { password = generated ? password : null });
     }
 
     [HttpDelete("/api/users/{id}")]
-    public static async Task<IResult> Delete(HttpContext context, DirectoryInfo data, long id)
+    public static async Task<IResult> Delete(HttpContext context, IRealtime realtime, long id)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var (me, denied) = await Blog.RequireAsync(context, db, admin: true);
         if (denied is not null) return denied;
         if (me!.Id == id) return Blog.Error(400, "You cannot delete your own account.");
@@ -133,7 +145,25 @@ public static partial class UserHandlers
         if (user.IsAdmin && await AdminCountAsync(db) == 1) return Blog.Error(400, "The last administrator cannot be deleted.");
 
         await db.ExecuteAsync("DELETE FROM users WHERE id = @id", new { id });
+        await Notify(context, realtime, user.Username, "deleted", "An administrator removed your account.");
         return Blog.Ok(new { ok = true });
+    }
+
+    /// <summary>
+    /// Tells every page the person has open (every tab, on any page that connected) what an administrator just did,
+    /// as account.changed with { change, message }. Realtime.cs names each connection after its signed-in writer, so
+    /// PublishToUserAsync finds them by username. The change is saved whatever happens here.
+    /// </summary>
+    private static async Task Notify(HttpContext context, IRealtime realtime, string username, string change, string message)
+    {
+        try
+        {
+            await realtime.PublishToUserAsync(username, "account.changed", new { change, message }, Blog.Json);
+        }
+        catch (Exception ex)
+        {
+            Blog.Logger(context).LogWarning(ex, "Could not tell {Username} that their account changed ({Change})", username, change);
+        }
     }
 
     private static Task<long> AdminCountAsync(Microsoft.Data.Sqlite.SqliteConnection db) =>

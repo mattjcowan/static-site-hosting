@@ -1,4 +1,4 @@
-/* The studio: write posts, manage accounts, change your password. */
+/* The studio: write posts, manage accounts, see who is online, change your password. */
 (function () {
   'use strict';
 
@@ -14,7 +14,7 @@
   }
 
   function failed(result) {
-    if (result.status === 401) { window.location.href = '/login.html'; return true; }
+    if (result.status === 401) { window.location.href = '/login'; return true; }
     if (!result.ok) { flash('error', Sky.escape(result.data.error || 'Something went wrong.')); return true; }
     return false;
   }
@@ -94,6 +94,20 @@
   });
   $('post-slug').addEventListener('input', function () { slugTouched = true; });
 
+  // Suggest: the site's AI writes a summary of the Markdown in the editor (Suggest in _functions/Posts.cs).
+  // Without an AI provider chosen for the site, the function answers 503, and its message says so.
+  $('suggest-summary').addEventListener('click', function () {
+    var button = this;
+    var slug = $('post-slug').value.trim();
+    var body = $('post-body').value;
+    if (!slug || !body.trim()) { flash('error', 'Give the post a title and some text first.'); return; }
+
+    button.disabled = true;
+    Sky.api('/api/posts/' + encodeURIComponent(slug) + '/summary', { method: 'POST', body: { body: body } }).then(function (result) {
+      if (!failed(result)) $('post-summary').value = result.data.summary;
+    }).then(function () { button.disabled = false; });
+  });
+
   // Live preview, rendered by the same server code as the published page.
   var previewTimer = null;
   $('post-body').addEventListener('input', function () {
@@ -136,6 +150,7 @@
 
   // ---- users (administrators) ---------------------------------------------------------
   function loadUsers() {
+    loadOnline();
     Sky.api('/api/users').then(function (result) {
       if (failed(result)) return;
       $('user-rows').innerHTML = result.data.users.map(function (u) {
@@ -149,6 +164,20 @@
           '<td>' + (self ? '' : '<div class="actions" style="margin:0"><button type="button" class="btn" data-reset="' + u.id + '">Reset password</button>' +
             '<button type="button" class="btn danger" data-delete="' + u.id + '" data-name="' + Sky.escape(u.username) + '">Delete</button></div>') + '</td></tr>';
       }).join('');
+    });
+  }
+
+  // Every page open on the site now: each realtime connection with its user and groups (/api/online, in
+  // _functions/Realtime.cs). This tab is one of them.
+  function loadOnline() {
+    Sky.api('/api/online').then(function (result) {
+      if (!result.ok) return;
+      var connections = result.data.connections || [];
+      $('online-list').innerHTML = connections.length ? connections.map(function (c) {
+        return '<li><div class="grow"><strong>' + Sky.escape(c.user || 'anonymous') + '</strong>' +
+          '<div class="meta"><span>' + (c.groups.length ? Sky.escape(c.groups.join(', ')) : 'no groups') + '</span>' +
+          '<span>since ' + new Date(c.connectedUtc).toLocaleTimeString() + '</span></div></div></li>';
+      }).join('') : '<li class="muted">Nobody has the site open.</li>';
     });
   }
 
@@ -214,21 +243,80 @@
       });
   });
 
+  // ---- ask the sky -------------------------------------------------------------------------
+  // A question for the site's AI, its answer written into the panel as it streams in. The host
+  // says whether the site has AI for its pages (site.ai.enabled); _functions/Ai.cs decides that
+  // only signed-in writers get an answer.
+  function setUpAsk() {
+    if (!window.site || !site.ai.enabled) return;
+    $('ask-panel').hidden = false;
+
+    $('ask-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+      var question = $('ask-question').value.trim();
+      if (!question || $('ask-send').disabled) return;
+
+      $('ask-send').disabled = true;
+      $('ask-error').innerHTML = '';
+      $('ask-answer').textContent = '';
+
+      site.ai.chat(question, {
+        system: 'You help an astronomy blogger write field notes. Be brief.',
+        onText: function (text) { $('ask-answer').textContent += text; }
+      }).catch(function (error) {
+        var message = error.status === 429 ? 'That is a lot of questions. Try again in a minute.' : error.message;
+        $('ask-error').innerHTML = '<div class="notice error">' + Sky.escape(message) + '</div>';
+      }).then(function () { $('ask-send').disabled = false; });
+    });
+  }
+
+  // ---- news from the other writers ----------------------------------------------------------
+  // The studio's group hears about every post saved or deleted, drafts included (Posts.cs sends
+  // them; _functions/Realtime.cs keeps the group for signed-in writers), so the list stays current.
+  function followStudio() {
+    if (!window.site) return;
+    site.realtime.join('studio').catch(function (error) { console.warn('Could not follow the studio:', error.message); });
+    site.realtime.on('post.changed', function () { if (!$('post-list-panel').hidden) loadPosts(); });
+  }
+
+  // ---- news about your own account ------------------------------------------------------------
+  // When an administrator changes your role, resets your password or removes your account, Users.cs
+  // sends account.changed to every page you have open. A reset has already ended this session.
+  function followAccount() {
+    if (!window.site) return;
+    site.realtime.on('account.changed', function (change) {
+      var old = document.querySelector('.toast');
+      if (old) old.remove();
+
+      var next = change.change === 'role' ? ' <a href="">Reload</a> to see what changed.'
+        : change.change === 'password' ? ' <a href="/login">Go to sign-in</a>.' : '';
+      var toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.setAttribute('role', 'status');
+      toast.innerHTML = '<span>' + Sky.escape(change.message) + next + '</span><button type="button" aria-label="Dismiss">×</button>';
+      toast.querySelector('button').addEventListener('click', function () { toast.remove(); });
+      document.body.appendChild(toast);
+    });
+  }
+
   // ---- start ----------------------------------------------------------------------------------
   Sky.me.then(function (user) {
-    if (!user) { window.location.href = '/login.html'; return; }
-    if (user.mustChangePassword) { window.location.href = '/login.html'; return; }
+    if (!user) { window.location.href = '/login'; return; }
+    if (user.mustChangePassword) { window.location.href = '/login'; return; }
 
     me = user;
     $('studio-greeting').textContent = 'Clear skies, ' + user.displayName;
     $('users-tab').hidden = user.role !== 'admin';
     loadPosts();
+    setUpAsk();
+    followStudio();
+    followAccount();
 
     openFromHash();
     window.addEventListener('hashchange', openFromHash);
   });
 
-  // /studio.html#edit=<slug> opens that post, whether arriving from a post page or changing the hash here.
+  // /studio#edit=<slug> opens that post, whether arriving from a post page or changing the hash here.
   function openFromHash() {
     var edit = window.location.hash.match(/^#edit=(.+)$/);
     if (!edit) return;

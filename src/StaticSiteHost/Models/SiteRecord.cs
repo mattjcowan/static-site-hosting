@@ -38,6 +38,20 @@ public sealed class SiteRecord
     /// </summary>
     public List<RedirectRule> Redirects { get; set; } = [];
 
+    /// <summary>
+    /// Values the site sets for its variables. They override the defaults the release declares,
+    /// and they survive deploys and rollbacks. Replaced as a whole on every change rather than
+    /// edited in place, so a request reading the list never sees it half-changed.
+    /// </summary>
+    public List<SiteVariable> Variables { get; set; } = [];
+
+    /// <summary>
+    /// Which AI provider the site's functions and browsers chat through, and how. Null when the
+    /// site has none. Replaced as a whole on every change, never edited in place, so a request
+    /// reading it never sees half of one change.
+    /// </summary>
+    public SiteAiSettings? Ai { get; set; }
+
     /// <summary>Every function bundle some retained release still runs.</summary>
     public List<FunctionBundle> FunctionBundles { get; set; } = [];
 
@@ -78,6 +92,9 @@ public sealed class ReleaseRecord
 
     /// <summary>Redirects read from the archive's <c>_redirects</c> file, if it had one.</summary>
     public List<RedirectRule> Redirects { get; set; } = [];
+
+    /// <summary>Variables declared by the archive's <c>_variables.json</c> file, if it had one.</summary>
+    public List<VariableDefinition> Variables { get; set; } = [];
 
     /// <summary>
     /// Id of the <see cref="FunctionBundle"/> this release runs, or null for none. A deploy

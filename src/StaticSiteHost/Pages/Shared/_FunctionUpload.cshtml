@@ -21,7 +21,10 @@
             </div>
             <input id="function-file" name="files" type="file" accept=".cs,.linq,.zip" multiple />
         </div>
-        <p class="hint" style="margin-top: 0.4rem">Several at once is fine. The .zip from <em>Download source</em> goes straight back in.</p>
+        <p class="hint" style="margin-top: 0.4rem">
+            Several at once is fine. The .zip from <em>Download source</em> goes straight back in. Files that use
+            <span class="mono">StaticSiteHost.Abstractions</span> compile against this server's copy, version @Model.HostAbstractionsVersion.
+        </p>
     </div>
 
     @if (Model.Live is not null)

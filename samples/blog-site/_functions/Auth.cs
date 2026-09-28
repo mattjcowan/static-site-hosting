@@ -16,7 +16,7 @@ public static class AuthHandlers
     private static readonly ConcurrentDictionary<string, (int Failures, DateTime Until)> Attempts = new();
 
     [HttpPost("/api/auth/login")]
-    public static async Task<IResult> Login(HttpContext context, DirectoryInfo data)
+    public static async Task<IResult> Login(HttpContext context)
     {
         if (!context.Request.Headers.ContainsKey(Blog.CsrfHeader))
             return Blog.Error(400, $"Send the {Blog.CsrfHeader} header.");
@@ -28,7 +28,7 @@ public static class AuthHandlers
         if (Attempts.TryGetValue(key, out var attempt) && attempt.Until > DateTime.UtcNow)
             return Blog.Error(429, "Too many attempts. Try again in a few minutes.");
 
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var user = await db.QuerySingleOrDefaultAsync<BlogUser>(
             "SELECT * FROM users WHERE username = @username", new { username });
 
@@ -58,9 +58,9 @@ public static class AuthHandlers
 
     /// <summary>Always 200, so a signed-out visitor's page load does not log an error in the console.</summary>
     [HttpGet("/api/auth/me")]
-    public static async Task<IResult> Me(HttpContext context, DirectoryInfo data)
+    public static async Task<IResult> Me(HttpContext context)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var user = await Blog.CurrentUserAsync(context, db);
         return Blog.Ok(new { user = user?.ToPublic() });
     }
@@ -68,7 +68,7 @@ public static class AuthHandlers
     [HttpPost("/api/auth/password")]
     public static async Task<IResult> ChangePassword(HttpContext context, DirectoryInfo data)
     {
-        await using var db = await Blog.OpenAsync(context, data);
+        await using var db = await Blog.OpenAsync(context);
         var (user, denied) = await Blog.RequireAsync(context, db, allowPendingPasswordChange: true);
         if (denied is not null) return denied;
 

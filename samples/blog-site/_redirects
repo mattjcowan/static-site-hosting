@@ -4,6 +4,13 @@
 # from          to            status
 /journal/*      /post.html    200
 
+# The pages link to each other without .html (/journal, /studio): the host answers /journal with
+# journal.html by itself. These send the old .html addresses on to the clean ones. The ! applies a
+# rule even though the file exists, which is the point here; a rule only ever sees the address
+# asked for, so /journal, answered by journal.html, is never sent round again.
+/index.html     /             301!
+/*.html         /:1           301!
+
 # Everything else that is not a real page gets the "Lost in space" page and an honest 404,
 # instead of the home page the host would fall back to for a single-page app.
 /**             /404.html     404

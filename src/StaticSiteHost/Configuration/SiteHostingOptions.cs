@@ -64,6 +64,57 @@ public sealed class SiteHostingOptions
     /// </summary>
     public bool TrustForwardedHeaders { get; set; }
 
+    /// <summary>
+    /// How long a call to an AI provider may take: the whole answer when it is not streamed, and
+    /// the longest silence between two pieces of one that is.
+    /// </summary>
+    public int AiTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// How many chat requests one address may make to one site's <c>/_host/ai/chat</c> in any
+    /// minute. Every one of them is billed to the provider's key. 0 turns the limit off.
+    /// </summary>
+    public int AiVisitorRequestsPerMinute { get; set; } = 20;
+
+    /// <summary>Largest body <c>/_host/ai/chat</c> accepts, in bytes: the conversation a browser sends.</summary>
+    public int AiMaxRequestBytes { get; set; } = 64 * 1024;
+
+    /// <summary>
+    /// The longest answer, in tokens, that a browser's chat at <c>/_host/ai/chat</c> may get, so a
+    /// visitor cannot run up the bill with one question. 0 leaves it to the provider: Anthropic's
+    /// 1024, or the model's own limit for an OpenAI-compatible one. Functions calling
+    /// <c>ISite.Ai</c> set their own.
+    /// </summary>
+    public int AiVisitorMaxTokens { get; set; } = 1024;
+
+    /// <summary>
+    /// How many pages may be connected to one site's realtime hub at once. The next is refused until
+    /// one leaves. 0 refuses every connection, which turns realtime off.
+    /// </summary>
+    public int RealtimeMaxConnectionsPerSite { get; set; } = 1000;
+
+    /// <summary>
+    /// How many pages one client address may have connected to one site's realtime hub at once, so
+    /// that one client cannot take every place a site has. An IPv6 client is counted by its /64.
+    /// 0 sets no limit.
+    /// </summary>
+    public int RealtimeMaxConnectionsPerAddress { get; set; } = 20;
+
+    /// <summary>
+    /// How many new connections one client address may start to one site's realtime hub in any
+    /// minute. Each runs the site's <c>[RealtimeConnect]</c> hook, if it has one. 0 turns the limit off.
+    /// </summary>
+    public int RealtimeNegotiationsPerMinute { get; set; } = 60;
+
+    /// <summary>
+    /// How many groups one site may have at once. A group exists while it has a member, so the
+    /// limit is on groups in use, not on names ever used.
+    /// </summary>
+    public int RealtimeMaxGroupsPerSite { get; set; } = 1000;
+
+    /// <summary>How many groups one connection, which is one open page, may be in at once.</summary>
+    public int RealtimeMaxGroupsPerConnection { get; set; } = 100;
+
     private HashSet<string>? _managementHostSet;
 
     public bool IsManagementHost(string host)

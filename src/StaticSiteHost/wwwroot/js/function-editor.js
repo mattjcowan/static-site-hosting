@@ -300,7 +300,11 @@
   }
 
   function showProblems(result) {
-    var diagnostics = (result.diagnostics || []).filter(function (d) { return d.severity === 'error' || d.severity === 'warning'; });
+    // 'info' is a note from the server about the build, such as which StaticSiteHost.Abstractions
+    // it compiled against: listed, muted, and never treated as a warning.
+    var diagnostics = (result.diagnostics || []).filter(function (d) {
+      return d.severity === 'error' || d.severity === 'warning' || d.severity === 'info';
+    });
 
     if (monaco) {
       files.forEach(function (file) {
@@ -311,7 +315,9 @@
               startLineNumber: d.line, endLineNumber: d.line,
               startColumn: Math.max(1, d.column), endColumn: Math.max(1, d.column) + 1,
               message: (d.code ? d.code + ': ' : '') + d.message,
-              severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning
+              severity: d.severity === 'error' ? monaco.MarkerSeverity.Error
+                : d.severity === 'warning' ? monaco.MarkerSeverity.Warning
+                : monaco.MarkerSeverity.Info
             };
           });
         monaco.editor.setModelMarkers(file.model, 'build', markers);
@@ -364,7 +370,7 @@
         el.target.options[0].textContent = 'Checked build (' + new Date().toLocaleTimeString() + ')';
         el.target.value = '';
         fillRoutes();
-        status('Compiled. ' + result.routes.length + ' route(s) ready to test — nothing is live yet.', 'ok');
+        status('Compiled. ' + contents(result) + ' ready to test — nothing is live yet.', 'ok');
       })
       .catch(function () { status('The check could not reach the server.', 'error'); })
       .finally(function () { setBusy(false); });
@@ -385,10 +391,27 @@
         liveRoutes = result.routes;
         el.target.value = 'live';
         fillRoutes();
-        status('Live: ' + result.label + ' with ' + result.routes.length + ' route(s).', 'ok');
+        status('Live: ' + result.label + ' with ' + contents(result) + '.', 'ok');
       })
       .catch(function () { status('The deploy could not reach the server.', 'error'); })
       .finally(function () { setBusy(false); });
+  }
+
+  // "3 route(s), 1 middleware, 2 job(s) and 1 hook(s)": the routes always, the rest when the build
+  // has any. Each list is counted only when the response carries it.
+  function contents(result) {
+    var parts = [(result.routes || []).length + ' route(s)'];
+    var middleware = (result.middleware || []).length;
+    var background = (result.backgroundServices || []).length;
+    var jobs = (result.jobs || []).length;
+    var hooks = (result.hooks || []).length;
+
+    if (middleware) parts.push(middleware + ' middleware');
+    if (background) parts.push(background + ' background service(s)');
+    if (jobs) parts.push(jobs + ' job(s)');
+    if (hooks) parts.push(hooks + ' hook(s)');
+
+    return parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
   }
 
   // ------------------------------------------------------------------ test form

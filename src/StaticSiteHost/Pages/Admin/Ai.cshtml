@@ -1,0 +1,196 @@
+@page
+@model StaticSiteHost.Pages.Admin.AiModel
+@using StaticSiteHost.Services.Ai
+@{
+    ViewData["Title"] = "AI";
+}
+
+<div class="page-head">
+    <h1>AI providers</h1>
+    <p>The AI services sites can chat through. Each site chooses one on its own page; the keys stay here.</p>
+</div>
+
+<div class="card">
+    <h2>Add a provider</h2>
+    <p class="hint">
+        <strong>OpenAI-compatible</strong> covers OpenAI and anything that copies its chat completions API:
+        a LiteLLM proxy, Ollama, OpenRouter. The key is encrypted on this server and never shown again; leave it
+        empty for a provider that needs none, such as a local Ollama. Every chat is billed to the key's owner.
+    </p>
+
+    <form method="post" asp-page-handler="Create" class="ai-add">
+        <div class="row">
+            <div class="field">
+                <label for="ai-name">Name</label>
+                <input type="text" id="ai-name" name="name" required autocomplete="off" maxlength="@AiProviderStore.MaxNameLength"
+                       placeholder="Team LiteLLM" value="@Model.NewName" />
+            </div>
+            <div class="field" style="flex:0 1 300px">
+                <label for="ai-kind">Kind</label>
+                <select id="ai-kind" name="kind">
+                    <option value="@AiProviderRecord.KindOpenAi" selected="@(Model.NewKind == AiProviderRecord.KindOpenAi)"
+                            data-base-url="https://api.openai.com/v1" data-model="gpt-4o-mini">
+                        OpenAI-compatible (OpenAI, LiteLLM, Ollama, OpenRouter)
+                    </option>
+                    <option value="@AiProviderRecord.KindAnthropic" selected="@(Model.NewKind == AiProviderRecord.KindAnthropic)"
+                            data-base-url="https://api.anthropic.com" data-model="claude-sonnet-5">
+                        Anthropic
+                    </option>
+                </select>
+            </div>
+            <div class="field">
+                <label for="ai-base-url">Base URL</label>
+                <input type="text" id="ai-base-url" name="baseUrl" required autocomplete="off" spellcheck="false"
+                       maxlength="@AiProviderStore.MaxBaseUrlLength" placeholder="https://api.openai.com/v1" value="@Model.NewBaseUrl" />
+            </div>
+        </div>
+        <div class="row ai-add-second">
+            <div class="field">
+                <label for="ai-key">API key</label>
+                <input type="password" id="ai-key" name="apiKey" autocomplete="new-password" spellcheck="false"
+                       placeholder="none" />
+            </div>
+            <div class="field">
+                <label for="ai-model">Default model</label>
+                <input type="text" id="ai-model" name="defaultModel" required autocomplete="off" spellcheck="false"
+                       maxlength="@AiProviderStore.MaxModelLength" placeholder="gpt-4o-mini" value="@Model.NewModel" />
+            </div>
+            <button type="submit" class="btn-primary">Add provider</button>
+        </div>
+        @if (Model.AddError is not null)
+        {
+            <div class="validation" role="alert">@Model.AddError</div>
+        }
+    </form>
+</div>
+
+<div class="card">
+    <h2>Providers</h2>
+    @if (Model.Providers.Count == 0)
+    {
+        <p class="muted">No providers yet. Add one above, then choose it for a site on the site's page, under AI.</p>
+    }
+    else
+    {
+        <p class="hint">
+            <strong>Test</strong> sends &ldquo;@AiModel.TestPrompt&rdquo; and shows the answer, the model, the tokens it cost
+            and how long it took.
+        </p>
+        <div class="table-wrap">
+            <table class="ai-providers">
+                <thead>
+                    <tr>
+                        <th>Provider</th>
+                        <th>Base URL</th>
+                        <th>Default model</th>
+                        <th>Key</th>
+                        <th>Sites</th>
+                        <th>Added</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var provider in Model.Providers)
+                    {
+                        var sites = Model.Sites(provider);
+                        var confirm = sites switch
+                        {
+                            0 => $"Delete {provider.Name} and its key?",
+                            1 => $"Delete {provider.Name} and its key? The site that uses it will have no AI until it is given another provider.",
+                            _ => $"Delete {provider.Name} and its key? The {sites} sites that use it will have no AI until they are given another provider."
+                        };
+
+                        <tr>
+                            <td>
+                                <strong>@provider.Name</strong>
+                                <br />
+                                <span class="badge">@(provider.Kind == AiProviderRecord.KindAnthropic ? "anthropic" : "openai-compatible")</span>
+                            </td>
+                            <td class="mono ai-url">@provider.BaseUrl</td>
+                            <td class="mono">@provider.DefaultModel</td>
+                            <td>
+                                @if (provider.HasApiKey)
+                                {
+                                    <span class="badge badge-ok">set</span>
+                                }
+                                else
+                                {
+                                    <span class="badge">none</span>
+                                }
+                            </td>
+                            <td>@sites</td>
+                            <td class="nowrap muted">
+                                @provider.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                                <br />
+                                by @(provider.CreatedBy ?? "unknown")
+                            </td>
+                            <td class="actions">
+                                <form method="post" asp-page-handler="Test" data-busy="Testing…">
+                                    <input type="hidden" name="id" value="@provider.Id" />
+                                    <button type="submit" class="btn btn-sm">Test</button>
+                                </form>
+                                <form method="post" asp-page-handler="Delete" data-confirm="@confirm">
+                                    <input type="hidden" name="id" value="@provider.Id" />
+                                    <button type="submit" class="btn-link danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        <tr class="ai-edit-row">
+                            <td colspan="7">
+                                <details>
+                                    <summary>Edit @provider.Name</summary>
+                                    <form method="post" asp-page-handler="Update" class="row ai-edit">
+                                        <input type="hidden" name="id" value="@provider.Id" />
+                                        <div class="field">
+                                            <label for="name-@provider.Id">Name</label>
+                                            <input type="text" id="name-@provider.Id" name="name" required autocomplete="off"
+                                                   maxlength="@AiProviderStore.MaxNameLength" value="@provider.Name" />
+                                        </div>
+                                        <div class="field">
+                                            <label for="url-@provider.Id">Base URL</label>
+                                            <input type="text" id="url-@provider.Id" name="baseUrl" required autocomplete="off" spellcheck="false"
+                                                   maxlength="@AiProviderStore.MaxBaseUrlLength" value="@provider.BaseUrl" />
+                                        </div>
+                                        <div class="field">
+                                            <label for="model-@provider.Id">Default model</label>
+                                            <input type="text" id="model-@provider.Id" name="defaultModel" required autocomplete="off" spellcheck="false"
+                                                   maxlength="@AiProviderStore.MaxModelLength" value="@provider.DefaultModel" />
+                                        </div>
+                                        <div class="field">
+                                            <label for="key-@provider.Id">New API key</label>
+                                            @* Never filled in: the key does not come back to the page, and an empty box leaves it alone. *@
+                                            <input type="password" id="key-@provider.Id" name="apiKey" autocomplete="new-password"
+                                                   spellcheck="false" placeholder="unchanged" />
+                                        </div>
+                                        <button type="submit" class="btn-primary">Save</button>
+                                    </form>
+                                </details>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@section Scripts {
+    <script>
+        // The base URL and model placeholders follow the kind, so the example is always the right shape.
+        (function () {
+            var kind = document.getElementById('ai-kind');
+            var baseUrl = document.getElementById('ai-base-url');
+            var model = document.getElementById('ai-model');
+            if (!kind || !baseUrl || !model) return;
+
+            function update() {
+                var option = kind.options[kind.selectedIndex];
+                baseUrl.placeholder = option.getAttribute('data-base-url');
+                model.placeholder = option.getAttribute('data-model');
+            }
+
+            kind.addEventListener('change', update);
+            update();
+        })();
+    </script>
+}

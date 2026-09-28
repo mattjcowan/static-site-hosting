@@ -26,6 +26,9 @@ public sealed class DataPaths
     public string BootstrapPasswordFile => Path.Combine(ConfigDir, "bootstrap-password.txt");
     public string DataProtectionDir => Path.Combine(ConfigDir, "keys");
 
+    /// <summary>The AI providers administrators have added. Their keys are stored protected.</summary>
+    public string AiProvidersFile => Path.Combine(ConfigDir, "ai-providers.json");
+
     public string SiteDir(string domain) => Path.Combine(SitesDir, domain);
     public string SiteMetaFile(string domain) => Path.Combine(SiteDir(domain), "site.json");
     public string ReleasesDir(string domain) => Path.Combine(SiteDir(domain), "releases");

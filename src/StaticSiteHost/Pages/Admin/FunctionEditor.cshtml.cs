@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
@@ -22,10 +23,12 @@ public class FunctionEditorModel : PageModel
     /// <summary>What a new file starts as, and what a site with no functions opens with.</summary>
     public const string StarterCode = """
         #:sdk Microsoft.NET.Sdk.Web
+        #:package StaticSiteHost.Abstractions@*
 
         using System.Text.Json;
         using Microsoft.AspNetCore.Http;
         using Microsoft.AspNetCore.Mvc;
+        using StaticSiteHost.Functions;
 
         // Handlers are public static methods on any public class, marked with the route they
         // answer. Split them across files as you like; give each class its own name.
@@ -35,23 +38,30 @@ public class FunctionEditorModel : PageModel
             private static readonly JsonSerializerOptions Json = new();
 
             [HttpGet("/hello/{name?}")]
-            public static IResult Hello(string? name) =>
-                Results.Json(new { message = $"Hello {name ?? "world"}", at = DateTimeOffset.UtcNow }, Json);
+            public static IResult Hello(ISite site, string? name) =>
+                Results.Json(new { message = $"Hello {name ?? "world"}", site = site.Domain }, Json);
         }
 
         """;
+
+    /// <summary>What a test sees when the host it names has no site: no variables at all.</summary>
+    private static readonly ResolvedVariables NoVariables = new(
+        FrozenDictionary<string, string>.Empty, FrozenDictionary<string, string>.Empty, [], []);
 
     private static readonly JsonSerializerOptions PageJson = new(JsonSerializerDefaults.Web);
 
     private readonly SiteStore _sites;
     private readonly FunctionDeploymentService _functions;
     private readonly FunctionTestRunner _tests;
+    private readonly SiteVariableService _variables;
 
-    public FunctionEditorModel(SiteStore sites, FunctionDeploymentService functions, FunctionTestRunner tests)
+    public FunctionEditorModel(
+        SiteStore sites, FunctionDeploymentService functions, FunctionTestRunner tests, SiteVariableService variables)
     {
         _sites = sites;
         _functions = functions;
         _tests = tests;
+        _variables = variables;
     }
 
     /// <summary>The site being edited; null for the global functions.</summary>
@@ -125,7 +135,15 @@ public class FunctionEditorModel : PageModel
         else
         {
             var host = scope ?? (string.IsNullOrWhiteSpace(request.Host) ? "localhost" : request.Host.Trim());
-            result = await _tests.RunAsync(binDir, host, _functions.DataDirectory(scope), request, HttpContext.RequestServices, ct);
+
+            // The variables a live request to that host would carry: global functions answer for
+            // whichever site the host names, and for a host with no site there are none.
+            var variables = _sites.TryGet(SiteStore.NormalizeDomain(host).Domain) is { } site
+                ? _variables.Resolve(site)
+                : NoVariables;
+
+            result = await _tests.RunAsync(binDir, host, _functions.DataDirectory(scope), variables, request,
+                HttpContext.RequestServices, ct);
         }
 
         var meta = JsonSerializer.Serialize(new
@@ -154,6 +172,10 @@ public class FunctionEditorModel : PageModel
         draft,
         label = result.Bundle?.Label,
         routes = result.Bundle?.Routes ?? [],
+        middleware = result.Bundle?.Middleware ?? [],
+        backgroundServices = result.Bundle?.BackgroundServices ?? [],
+        jobs = result.Bundle?.Jobs ?? [],
+        hooks = result.Bundle?.Hooks ?? [],
         diagnostics = result.Diagnostics ?? [],
     }, PageJson);
 

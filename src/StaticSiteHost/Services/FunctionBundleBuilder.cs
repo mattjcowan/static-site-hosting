@@ -1,8 +1,14 @@
+using System.Reflection;
 using System.Text;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
 
+/// <param name="Diagnostics">
+/// What the compiler reported, then any "info" note the host adds about the build (see
+/// <see cref="FunctionDiagnostic"/>). Present on a failed build too, when it got as far as
+/// compiling.
+/// </param>
 /// <param name="Kept">Files already live that a merge upload carried over unchanged.</param>
 public sealed record FunctionDeployResult(
     bool Ok,
@@ -17,9 +23,9 @@ public sealed record FunctionDeployResult(
 
 /// <summary>
 /// Turns uploaded function files into a bundle on disk: read each file, generate one project,
-/// publish it, and load the result once to find its routes. The one pipeline behind every way
-/// functions arrive — an upload, a zip's _functions/ folder, the editor's Check and Deploy — so
-/// they all accept and refuse exactly the same things.
+/// publish it, and load the result once to find its routes, middleware, services, jobs and hooks.
+/// The one pipeline behind every way functions arrive — an upload, a zip's _functions/ folder, the
+/// editor's Check and Deploy — so they all accept and refuse exactly the same things.
 ///
 /// It only builds. Making a bundle live is the caller's business; a failed build leaves
 /// nothing behind.
@@ -100,17 +106,19 @@ public sealed class FunctionBundleBuilder
             // The generated project and its obj tree are only needed to produce bin.
             TryDeleteDirectory(DataPaths.FunctionBuildDir(bundleDir));
 
+            var diagnostics = WithAbstractionsNote(result.Diagnostics, project);
+
             if (!result.Ok)
             {
                 TryDeleteDirectory(bundleDir);
-                return FunctionDeployResult.Failed(result.Error!, result.Diagnostics);
+                return FunctionDeployResult.Failed(result.Error!, diagnostics);
             }
 
-            var (routes, routeSources, routeError) = DiscoverRoutes(DataPaths.FunctionBinDir(bundleDir), project.SourceMap, named);
-            if (routes is null)
+            var (found, discoverError) = Discover(DataPaths.FunctionBinDir(bundleDir), project.SourceMap, named);
+            if (found is null)
             {
                 TryDeleteDirectory(bundleDir);
-                return FunctionDeployResult.Failed(routeError!, result.Diagnostics);
+                return FunctionDeployResult.Failed(discoverError!, diagnostics);
             }
 
             var bundle = new FunctionBundle
@@ -119,14 +127,23 @@ public sealed class FunctionBundleBuilder
                 Files = named.Select(f => f.Name).ToList(),
                 UploadedBy = actor,
                 Source = source,
-                Routes = routes,
-                RouteSources = routeSources!,
-                Warnings = result.Diagnostics?.Count(d => d.Severity == "warning") ?? 0,
+                Routes = found.Routes,
+                Middleware = found.Middleware,
+                Services = found.Services,
+                BackgroundServices = found.BackgroundServices,
+                Jobs = found.Jobs,
+                Hooks = found.Hooks,
+                RouteSources = found.Sources,
+                Warnings = diagnostics.Count(d => d.Severity == "warning"),
+                AbstractionsVersion = project.AbstractionsVersion,
             };
 
-            _logger.LogInformation("Built function bundle {Id} from {Files} file(s) with {Routes} route(s)",
-                id, named.Count, routes.Count);
-            return new FunctionDeployResult(true, null, bundle, result.Diagnostics);
+            _logger.LogInformation(
+                "Built function bundle {Id} from {Files} file(s) with {Routes} route(s), {Middleware} middleware, " +
+                "{Background} background service(s), {Jobs} job(s) and {Hooks} hook(s)",
+                id, named.Count, found.Routes.Count, found.Middleware.Count, found.BackgroundServices.Count, found.Jobs.Count,
+                found.Hooks.Count);
+            return new FunctionDeployResult(true, null, bundle, diagnostics);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -138,6 +155,25 @@ public sealed class FunctionBundleBuilder
         {
             _buildGate.Release();
         }
+    }
+
+    /// <summary>
+    /// The build's diagnostics, plus a note naming the StaticSiteHost.Abstractions version when
+    /// the files use the package. The version an author wrote is quietly not the one compiled
+    /// against, which is worth saying, and most of all when the build failed on a member their
+    /// newer package has and this server does not. On a failed build too, for that reason.
+    /// </summary>
+    private static IReadOnlyList<FunctionDiagnostic> WithAbstractionsNote(
+        IReadOnlyList<FunctionDiagnostic>? diagnostics, GeneratedFunctionProject project)
+    {
+        if (project.AbstractionsVersion is not { } version) return diagnostics ?? [];
+
+        var note = new FunctionDiagnostic("info", "",
+            $"Compiled against {FunctionProjectGenerator.AbstractionsName} {version}, the copy this server runs; " +
+            "the version named in your file is not used.",
+            Line: 0, Column: 0);
+
+        return [.. diagnostics ?? [], note];
     }
 
     /// <summary>
@@ -172,12 +208,28 @@ public sealed class FunctionBundleBuilder
         return (named, null);
     }
 
+    /// <summary>What the probe load found, as a bundle records it for display.</summary>
+    private sealed record Discovered(
+        List<string> Routes,
+        List<string> Middleware,
+        List<string> Services,
+        List<string> BackgroundServices,
+        List<string> Jobs,
+        List<string> Hooks,
+        Dictionary<string, FunctionRouteSource> Sources);
+
     /// <summary>
-    /// Loads the build once, in its own context, to read the routes back out, then unloads it.
-    /// This is also the check that the output loads at all, and that no two handlers claim the
-    /// same route, before anything depends on it.
+    /// Loads the build once, in its own context, to read its routes, middleware, services, jobs
+    /// and hooks back out, then unloads it. Nothing of it runs: [ConfigureServices] methods
+    /// included, which is why one that throws is only found when the functions go live. This is
+    /// also the check that the output loads at all, that every [Middleware], [ConfigureServices],
+    /// [BackgroundService], [Schedule], [Every], [RealtimeConnect], [RealtimeJoin] and [AiAccess]
+    /// method can run (its signature, its parameters, its schedule), that there is at most one of
+    /// each hook, and that no two handlers claim the same route, before anything depends on it. A
+    /// build of middleware alone is fine: it gates or decorates a site whose answers come from its
+    /// files. So is one of jobs alone, or of hooks alone.
     /// </summary>
-    private (List<string>? Routes, Dictionary<string, FunctionRouteSource>? Sources, string? Error) DiscoverRoutes(
+    private (Discovered? Found, string? Error) Discover(
         string binDir, IReadOnlyDictionary<string, FunctionSourceMapEntry> sourceMap, IReadOnlyList<FunctionFile> files)
     {
         var lines = files.ToDictionary(f => f.Name, f => f.Text.Replace("\r\n", "\n").Split('\n'), StringComparer.OrdinalIgnoreCase);
@@ -186,40 +238,85 @@ public sealed class FunctionBundleBuilder
         try
         {
             set = FunctionSet.Load(binDir, "functions:probe");
+            var router = set.Router;
+            var jobs = set.Jobs;
+            var hooks = set.Hooks;
 
-            if (set.Router.Routes.Count == 0)
+            if (router.MiddlewareProblems.Count > 0 || jobs.Problems.Count > 0 || hooks.Problems.Count > 0)
+                return (null, string.Join(" ", [.. router.MiddlewareProblems, .. jobs.Problems, .. hooks.Problems]));
+
+            if (router.Routes.Count == 0 && router.Middleware.Count == 0 && jobs.IsEmpty && hooks.IsEmpty)
             {
-                return (null, null,
+                return (null,
                     "It compiled, but no handlers were found. Mark public static methods with an attribute such as " +
-                    "[HttpGet(\"/hello\")] or [HttpPost(\"/items/{id}\")].");
+                    "[HttpGet(\"/hello\")] or [HttpPost(\"/items/{id}\")], with [Middleware] for one that runs " +
+                    "before every request, with [Every(\"5m\")], [Schedule(\"0 * * * *\")] or [BackgroundService] " +
+                    "for one that runs on its own, or with [RealtimeConnect], [RealtimeJoin] or [AiAccess] for one " +
+                    "that decides who may use the site's realtime hub or AI.");
             }
 
-            var conflicts = set.Router.FindConflicts();
-            if (conflicts.Count > 0) return (null, null, "Two handlers claim the same route: " + string.Join(" ", conflicts));
+            var conflicts = router.FindConflicts();
+            if (conflicts.Count > 0) return (null, "Two handlers claim the same route: " + string.Join(" ", conflicts));
 
-            var routes = new List<string>();
-            var sources = new Dictionary<string, FunctionRouteSource>();
+            var found = new Discovered([], [], [], [], [], [], []);
             using var pdb = FunctionSourceLocator.OpenPdb(binDir);
 
-            foreach (var route in set.Router.Routes)
+            // Everything shares the one map of sources. "GET /x", "0 Gate.Run", "every 5m Feed.Refresh",
+            // "*/5 * * * * Feed.Refresh" and "AiAccess Gate.SignedIn" cannot collide, and a method has only
+            // one of the roles named "Class.Method" (FunctionJobs refuses a second), so neither can those.
+            void Locate(string text, MethodInfo method)
             {
-                var text = $"{(route.Verb == "*" ? "ANY" : route.Verb)} {route.Template}";
-                routes.Add(text);
+                if (pdb is null || FunctionSourceLocator.Locate(pdb.GetMetadataReader(), method, sourceMap) is not { } source) return;
 
-                if (pdb is not null && FunctionSourceLocator.Locate(pdb.GetMetadataReader(), route.Method, sourceMap) is { } source)
-                {
-                    if (lines.TryGetValue(source.File, out var fileLines))
-                        source.Line = SnapToSignature(fileLines, source.Line, route.Method.Name);
-                    sources[text] = source;
-                }
+                if (lines.TryGetValue(source.File, out var fileLines))
+                    source.Line = SnapToSignature(fileLines, source.Line, method.Name);
+                found.Sources[text] = source;
             }
 
-            return (routes, sources, null);
+            foreach (var route in router.Routes)
+            {
+                var text = $"{(route.Verb == "*" ? "ANY" : route.Verb)} {route.Template}";
+                found.Routes.Add(text);
+                Locate(text, route.Method);
+            }
+
+            foreach (var middleware in router.Middleware)
+            {
+                var text = $"{middleware.Order} {middleware.Method.DeclaringType?.Name}.{middleware.Method.Name}";
+                found.Middleware.Add(text);
+                Locate(text, middleware.Method);
+            }
+
+            foreach (var method in jobs.Configure)
+            {
+                found.Services.Add(FunctionJobs.NameOf(method));
+                Locate(FunctionJobs.NameOf(method), method);
+            }
+
+            foreach (var method in jobs.BackgroundServices)
+            {
+                found.BackgroundServices.Add(FunctionJobs.NameOf(method));
+                Locate(FunctionJobs.NameOf(method), method);
+            }
+
+            foreach (var job in jobs.Scheduled)
+            {
+                found.Jobs.Add(job.Display);
+                Locate(job.Display, job.Method);
+            }
+
+            foreach (var (display, method) in hooks.All)
+            {
+                found.Hooks.Add(display);
+                Locate(display, method);
+            }
+
+            return (found, null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "A function build in {Dir} compiled but did not load", binDir);
-            return (null, null, $"It compiled, but could not be loaded: {ex.GetBaseException().Message}");
+            return (null, $"It compiled, but could not be loaded: {ex.GetBaseException().Message}");
         }
         finally
         {

@@ -10,16 +10,28 @@ namespace StaticSiteHost.Pages.Admin;
 public class FunctionsModel : PageModel
 {
     private readonly FunctionDeploymentService _functions;
+    private readonly FunctionHost _host;
 
-    public FunctionsModel(FunctionDeploymentService functions) => _functions = functions;
+    public FunctionsModel(FunctionDeploymentService functions, FunctionHost host)
+    {
+        _functions = functions;
+        _host = host;
+    }
 
     public FunctionBundle? Current { get; private set; }
+
+    /// <summary>Whether the live global functions are loaded, and how their background work is doing.</summary>
+    public FunctionScopeStatus? Status { get; private set; }
 
     public string? FunctionError { get; private set; }
 
     public IReadOnlyList<FunctionDiagnostic> FunctionDiagnostics { get; private set; } = [];
 
-    public async Task OnGetAsync() => Current = (await _functions.GlobalAsync()).Current;
+    public async Task OnGetAsync()
+    {
+        Current = (await _functions.GlobalAsync()).Current;
+        Status = Current is null ? null : await _host.StatusAsync(null);
+    }
 
     public async Task<IActionResult> OnPostAsync(List<IFormFile> files, string? mode, CancellationToken ct)
     {

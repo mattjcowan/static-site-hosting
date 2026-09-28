@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What uploaded functions compile against: ISite, ISiteVariables, IRealtime, IAiChat,
+    context.Site(), the attributes and the test fakes. It is published to nuget.org for authors'
+    editors and LINQPad, but the server never restores it: FunctionProjectGenerator swaps the
+    package reference for a reference to the host's own copy of this assembly, which is loaded
+    once, in the default context.
+
+    No PackageReference, now or ever. A function is compiled against this one file, so
+    anything it depended on would be missing from that compile; the host, which takes no
+    NuGet dependencies, would gain it too; and a function's own packages would then have to
+    agree with whatever version the host shipped. The shared framework is the only
+    dependency it may have.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StaticSiteHost.Functions</RootNamespace>
+    <AssemblyName>StaticSiteHost.Abstractions</AssemblyName>
+
+    <!--
+      Fixed for good. The runtime will not bind a reference to a higher assembly version than
+      the one it has, so otherwise a bundle compiled on one release would fail to load, with
+      nothing but a FileLoadException, once the server is rolled back. The surface only ever
+      grows; what a bundle actually compiled against is the package version, which it records
+      (FunctionBundle.AbstractionsVersion) so the host can say so in words.
+    -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+
+    <!--
+      The file and package versions follow $(Version) (see ../Directory.Build.props). The SDK
+      would copy AssemblyVersion into FileVersion, and a file version must be numeric, so it
+      takes the leading numbers: 1.2.3 for 1.2.3, 0.0.0 for 0.0.0-dev.
+    -->
+    <FileVersion>$([System.Text.RegularExpressions.Regex]::Match('$(Version)', '^\d+(\.\d+){0,3}').Value)</FileVersion>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <IsPackable>true</IsPackable>
+    <PackageId>StaticSiteHost.Abstractions</PackageId>
+    <Description>The types C# functions on Static Site Host are written against: the site a request is for, with its data folder, variables, services, realtime connections and AI; the attributes for middleware, services, jobs and the realtime and AI hooks; and fakes for running a handler outside the server.</Description>
+    <PackageTags>static-site-hosting;functions;aspnetcore;linqpad</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/mattjcowan/static-site-hosting</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>

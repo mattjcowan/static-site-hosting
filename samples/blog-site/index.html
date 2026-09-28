@@ -13,13 +13,13 @@
     <div class="wrap">
       <a class="brand" href="/">
         <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#121b36" stroke="#f6d98b" stroke-opacity=".4"/><path d="M19 7a9 9 0 1 0 6 15.5A10 10 0 0 1 19 7z" fill="#f6d98b"/><circle cx="9" cy="10" r="1.2" fill="#fff"/><circle cx="24" cy="8" r=".8" fill="#fff"/></svg>
-        Night Sky Field Notes
+        <span data-site-name>Night Sky Field Notes</span>
       </a>
       <nav class="nav" aria-label="Main">
         <a href="/">Tonight</a>
-        <a href="/journal.html">Journal</a>
-        <a href="/guide.html">Stargazing 101</a>
-        <a href="/about.html">About</a>
+        <a href="/journal">Journal</a>
+        <a href="/guide">Stargazing 101</a>
+        <a href="/about">About</a>
         <span id="nav-auth"></span>
         <button type="button" class="red-toggle" data-red-toggle title="Red-light mode keeps your night vision at the eyepiece"><span class="dot"></span>Red light</button>
       </nav>
@@ -30,12 +30,12 @@
     <section class="hero">
       <canvas data-starfield aria-hidden="true"></canvas>
       <div class="wrap">
-        <span class="eyebrow">A dark-sky observing journal</span>
+        <span class="eyebrow" data-site-tagline>A dark-sky observing journal</span>
         <h1>What's up tonight?</h1>
         <p class="lead">Notes from a backyard under a high-desert sky: what is worth looking at tonight, how to find it, and what it looked like through the eyepiece.</p>
         <div class="actions">
-          <a class="btn primary" href="/journal.html">Read the journal</a>
-          <a class="btn" href="/guide.html">New to this? Start here</a>
+          <a class="btn primary" href="/journal">Read the journal</a>
+          <a class="btn" href="/guide">New to this? Start here</a>
         </div>
       </div>
       <svg class="hills" viewBox="0 0 1440 110" preserveAspectRatio="none" aria-hidden="true">
@@ -65,7 +65,7 @@
           <span class="eyebrow">Good for tonight</span>
           <div class="stat" id="advice-title">…</div>
           <p class="muted" id="advice-text"></p>
-          <a href="/guide.html#dark-adaptation" class="small">Let your eyes adapt first →</a>
+          <a href="/guide#dark-adaptation" class="small">Let your eyes adapt first →</a>
         </div>
 
         <div class="panel constellation">
@@ -87,11 +87,12 @@
 
   <footer class="site-foot">
     <div class="wrap">
-      <span>Night Sky Field Notes: a static site with C# functions and a SQLite database, on Static Site Host.</span>
+      <span><span data-site-name>Night Sky Field Notes</span>: a static site with C# functions and a SQLite database, on Static Site Host.</span>
       <span>Clear skies.</span>
     </div>
   </footer>
 
+  <script src="/_host/site.js"></script>
   <script src="/js/sky.js"></script>
   <script src="/js/home.js"></script>
 </body>

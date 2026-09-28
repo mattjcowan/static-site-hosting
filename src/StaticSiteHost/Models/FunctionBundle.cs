@@ -33,15 +33,61 @@ public sealed class FunctionBundle
     public List<string> Routes { get; set; } = [];
 
     /// <summary>
-    /// Where each route's handler was written, keyed by the same text as <see cref="Routes"/>.
-    /// A route is missing when the build carried no debug information for it.
+    /// The [Middleware] methods, in the order they run, e.g. "10 Gate.RequireToken": the order,
+    /// then the class and method. For display.
+    /// </summary>
+    public List<string> Middleware { get; set; } = [];
+
+    /// <summary>The [ConfigureServices] methods, in the order they run, e.g. "Setup.Configure". For display.</summary>
+    public List<string> Services { get; set; } = [];
+
+    /// <summary>The [BackgroundService] methods, e.g. "Worker.Run". For display.</summary>
+    public List<string> BackgroundServices { get; set; } = [];
+
+    /// <summary>
+    /// The [Schedule] and [Every] methods with when they run, e.g. "*/5 * * * * Reports.Send" or
+    /// "every 5m Cache.Refresh on start": the schedule, then the class and method, then "on start"
+    /// when it also runs as the functions load. For display, and the key the Functions card finds
+    /// a job's runs by.
+    /// </summary>
+    public List<string> Jobs { get; set; } = [];
+
+    /// <summary>
+    /// The [RealtimeConnect], [RealtimeJoin] and [AiAccess] methods, e.g. "RealtimeConnect Realtime.Who":
+    /// the hook, then the class and method. For display, and what decides whether the site's hub
+    /// and AI ask the functions at all (see <c>FunctionAccessHooks.Declares</c>), so the Functions
+    /// card and the gate never disagree.
+    /// </summary>
+    public List<string> Hooks { get; set; } = [];
+
+    /// <summary>
+    /// True when the functions have work of their own to do, background services or jobs, so the
+    /// server loads them at startup and straight after anything changes them rather than on the
+    /// first request. Worked out from the lists above; written to site.json and the API for
+    /// reading only.
+    /// </summary>
+    public bool NeedsEagerLoad => BackgroundServices.Count > 0 || Jobs.Count > 0;
+
+    /// <summary>
+    /// Where each handler, middleware, [ConfigureServices], [BackgroundService], job and hook method
+    /// was written, keyed by the same text as its entry in <see cref="Routes"/>, <see cref="Middleware"/>,
+    /// <see cref="Services"/>, <see cref="BackgroundServices"/>, <see cref="Jobs"/> or <see cref="Hooks"/>.
+    /// One is missing when the build carried no debug information for it.
     /// </summary>
     public Dictionary<string, FunctionRouteSource> RouteSources { get; set; } = [];
 
+    /// <summary>Compiler warnings only; the host's "info" notes are not counted.</summary>
     public int Warnings { get; set; }
+
+    /// <summary>
+    /// The version of StaticSiteHost.Abstractions the bundle was compiled against, which is the
+    /// version of the server that built it, whatever the files asked for. Null when no file uses
+    /// the package.
+    /// </summary>
+    public string? AbstractionsVersion { get; set; }
 }
 
-/// <summary>The uploaded file a handler is in, and the line its body starts on.</summary>
+/// <summary>The uploaded file a handler, middleware, job or hook method is in, and the line it is declared on.</summary>
 public sealed class FunctionRouteSource
 {
     public string File { get; set; } = "";
