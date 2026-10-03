@@ -137,44 +137,16 @@ public sealed class AiChatService
         yield return new AiChatChunk(null, answer.Result());
     }
 
+    /// <summary>The most tools one request may offer. See <see cref="AiChatRules.MaxTools"/>.</summary>
+    public const int MaxTools = AiChatRules.MaxTools;
+
     /// <summary>
-    /// Checks that a request can be sent at all: at least one message, every message with a known
-    /// role and some content, at least one of them from the user or the assistant, and sensible
-    /// numbers.
+    /// Checks that a request can be sent at all. The rules live in the Abstractions package
+    /// (<see cref="AiChatRules"/>), so <see cref="Functions.Testing.FakeAiChat"/> applies the same
+    /// ones and a function's tests fail where the server would.
     /// </summary>
     /// <exception cref="ArgumentException">The request is not a chat that can be sent; the message says why.</exception>
-    public static void Validate(AiChatRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        if (request.Messages is not { Count: > 0 } messages)
-            throw new ArgumentException("A chat needs at least one message.", nameof(request));
-
-        for (var i = 0; i < messages.Count; i++)
-        {
-            if (messages[i] is not { } message)
-                throw new ArgumentException($"Message {i + 1} is null.", nameof(request));
-
-            if (message.Role is not (AiMessage.UserRole or AiMessage.AssistantRole or AiMessage.SystemRole))
-            {
-                throw new ArgumentException(
-                    $"Message {i + 1} has the role \"{message.Role}\". Use \"user\", \"assistant\" or \"system\", or " +
-                    "AiMessage.User, AiMessage.Assistant and AiMessage.System.", nameof(request));
-            }
-
-            if (message.Content is null)
-                throw new ArgumentException($"Message {i + 1} has no content.", nameof(request));
-        }
-
-        if (messages.All(message => message.Role == AiMessage.SystemRole))
-            throw new ArgumentException("A chat needs a user message: system messages alone give the model nothing to answer.", nameof(request));
-
-        if (request.MaxTokens is < 1)
-            throw new ArgumentException("MaxTokens must be at least 1, or null to leave it to the provider.", nameof(request));
-
-        if (request.Temperature is { } temperature && (double.IsNaN(temperature) || temperature is < 0 or > 2))
-            throw new ArgumentException("Temperature must be between 0 and 2, or null to leave it to the provider.", nameof(request));
-    }
+    public static void Validate(AiChatRequest request) => AiChatRules.Validate(request);
 
     // ---- sending ------------------------------------------------------------
 

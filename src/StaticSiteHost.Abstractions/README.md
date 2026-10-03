@@ -12,6 +12,7 @@ The package contains:
 | `SiteHttpContextExtensions` | `context.Site()`, to reach the `ISite` from any code that has the `HttpContext` |
 | `IRealtime`, `RealtimeConnection`, `RealtimeExtensions` | send events to the pages open on the site |
 | `IAiChat`, `AiChatRequest`, `AiMessage`, `AiChatResponse`, `AiChatChunk`, `AiChatException` | chat with the site's AI provider |
+| `AiTool`, `AiToolChoice`, `AiToolCall` | offer the model tools, and read the calls it makes |
 | `[Middleware]`, `[ConfigureServices]`, `[BackgroundService]`, `[Schedule]`, `[Every]` | attributes for middleware, services, background services and jobs |
 | `[RealtimeConnect]`, `[RealtimeJoin]`, `[AiAccess]` | attributes for the hooks that decide who may use realtime and AI |
 | `FakeSite`, `FakeSiteVariables`, `FakeRealtime`, `FakeAiChat` | fakes, in `StaticSiteHost.Functions.Testing`, to run a handler outside the server |
@@ -361,15 +362,30 @@ public static async Task<IResult> Summary(IAiChat ai, HttpContext context)
 | `Model` | `string?` | the model, in the provider's naming; `null` means `IAiChat.Model` |
 | `MaxTokens` | `int?` | the longest answer; `null` leaves it to the provider, except Anthropic, which gets 1024 |
 | `Temperature` | `double?` | `null` leaves it to the provider; some models refuse a request that sets it |
+| `Tools` | `IReadOnlyList<AiTool>?` | tools the model may call; functions only, at most 128 |
+| `ToolChoice` | `AiToolChoice?` | `AiToolChoice.Auto` (the default), `None`, `Required` or `Tool("name")` |
 
 **`AiMessage(string Role, string Content)`** is a record. Its constants are `UserRole` (`"user"`),
-`AssistantRole` (`"assistant"`) and `SystemRole` (`"system"`). Its factory methods are
-`AiMessage.User(content)`, `AiMessage.Assistant(content)` and `AiMessage.System(content)`.
+`AssistantRole` (`"assistant"`), `SystemRole` (`"system"`) and `ToolRole` (`"tool"`). Its factory
+methods are `AiMessage.User(content)`, `AiMessage.Assistant(content)`, `AiMessage.System(content)`,
+`AiMessage.AssistantToolCalls(text, calls)` and `AiMessage.ToolResult(toolCallId, content, isError)`.
+The tool fields are `ToolCalls`, `ToolCallId` and `IsError`.
 
 **`AiChatResponse(string Text, string Model, int InputTokens, int OutputTokens, string? StopReason)`**
 is a record. Token counts are 0 when the provider did not say. `StopReason` is in the provider's
 words: `stop` or `length` from OpenAI-compatible providers, `end_turn` or `max_tokens` from
-Anthropic.
+Anthropic; a turn that ends in tool calls is `tool_calls` from both. `ToolCalls` holds the calls,
+empty for a text answer, and empty too when the model ran out of tokens part way through them.
+
+**Tool calling.** `AiTool(Name, Description, InputSchema)` describes a tool, with the JSON Schema of
+its input as a `JsonElement` object. `AiToolCall(Id, Name, Arguments)` is a call the model made;
+`Arguments` is the parsed input, or a JSON string of the raw text when the model wrote input that
+is not JSON. Loop until `ToolCalls` is empty: append `AiMessage.AssistantToolCalls(answer.Text,
+answer.ToolCalls)`, then one `AiMessage.ToolResult` per call, and ask again. Every call needs its
+result straight after the turn that made it, and a conversation with calls in it keeps sending
+its tools (`AiToolChoice.None` makes the model answer in text). `StreamAsync` gives the calls
+whole in the last chunk's `Final`. `FakeAiChat.ReplyToolCall(name, arguments)` and
+`ReplyToolCalls(...)` script calls for tests.
 
 **`AiChatChunk(string? Text, AiChatResponse? Final)`** is a record. `Text` is `null` on the last
 chunk, and `Final` is set only on the last chunk.
@@ -381,7 +397,8 @@ chunk, and `Final` is set only on the last chunk.
   status (such as 401 or 429), or `null` when there was no answer. Its message never contains the
   provider's key or address.
 * `ArgumentException` is thrown when the request has no messages, or a message has an unknown
-  role.
+  role, or its tools or tool calls break the rules above (a bad tool name or schema, a call
+  without its result), before anything is sent.
 * A failure part way through `StreamAsync` ends the loop with an `AiChatException`.
 
 Every call is billed to the owner of the provider's key. So a handler that anyone can reach

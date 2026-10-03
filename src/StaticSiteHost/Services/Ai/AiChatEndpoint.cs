@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
@@ -16,7 +17,9 @@ namespace StaticSiteHost.Services.Ai;
 ///
 /// The body is <c>{ "messages": [ { "role": "user", "content": "…" } ], "stream": true, "system": "…" }</c>.
 /// Only user and assistant turns are taken, since the system prompt is the site's to pin, and a
-/// page's own <c>system</c> is appended after the site's. The answer's length is the server's to
+/// page's own <c>system</c> is appended after the site's. Tool calling is for the site's functions
+/// only, so a body with <c>tools</c> or <c>tool_choice</c> is refused: a visitor cannot shape the
+/// requests the site pays for beyond the conversation itself. The answer's length is the server's to
 /// choose too: <see cref="SiteHostingOptions.AiVisitorMaxTokens"/>. The checks run in this order,
 /// each with its own status: 405 for another method, 404 when the site has no provider, 415 for a
 /// body that is not JSON, 413 for one over <see cref="SiteHostingOptions.AiMaxRequestBytes"/>, 400 for
@@ -68,7 +71,12 @@ public sealed class AiChatEndpoint
         _logger = logger;
     }
 
-    private sealed record ChatBody(List<ChatBodyMessage?>? Messages, bool? Stream, string? System);
+    private sealed record ChatBody(
+        List<ChatBodyMessage?>? Messages,
+        bool? Stream,
+        string? System,
+        [property: JsonPropertyName("tools")] JsonElement? Tools,
+        [property: JsonPropertyName("tool_choice")] JsonElement? ToolChoice);
 
     private sealed record ChatBodyMessage(string? Role, string? Content);
 
@@ -185,7 +193,7 @@ public sealed class AiChatEndpoint
 
     /// <summary>The request to send, and whether to stream the answer; or why the body is not a conversation.</summary>
     /// <param name="maxTokens">The longest answer a browser gets, or null to leave it to the provider.</param>
-    private static (AiChatRequest? Request, bool Stream, string? Error) Parse(byte[] bytes, int? maxTokens)
+    internal static (AiChatRequest? Request, bool Stream, string? Error) Parse(byte[] bytes, int? maxTokens)
     {
         const string shape = "Send { \"messages\": [ { \"role\": \"user\", \"content\": \"…\" } ] }.";
 
@@ -198,6 +206,13 @@ public sealed class AiChatEndpoint
         {
             var where = string.IsNullOrEmpty(ex.Path) || ex.Path == "$" ? "" : $" at {ex.Path}";
             return (null, false, $"The body is not the JSON this endpoint takes{where}. {shape}");
+        }
+
+        if (body?.Tools is { ValueKind: not JsonValueKind.Null } || body?.ToolChoice is { ValueKind: not JsonValueKind.Null })
+        {
+            return (null, false,
+                "Tool calling is for the site's functions, not browsers: remove \"tools\" and \"tool_choice\". " +
+                "A function can offer tools through ISite.Ai.");
         }
 
         if (body?.Messages is not { Count: > 0 } items) return (null, false, $"There are no messages. {shape}");

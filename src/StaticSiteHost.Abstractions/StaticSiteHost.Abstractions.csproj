@@ -53,6 +53,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The server checks requests with the same rules as FakeAiChat (AiChatRules). -->
+    <InternalsVisibleTo Include="StaticSiteHost" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 

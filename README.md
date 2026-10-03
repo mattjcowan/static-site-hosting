@@ -1768,7 +1768,7 @@ data: {"done":true,"model":"claude-sonnet-5","inputTokens":24,"outputTokens":9,"
 | `404`  | the site has no provider, or the one it chose was deleted |
 | `415`  | the body is not `application/json` |
 | `413`  | the body is over `SiteHosting:AiMaxRequestBytes` (64 KB) |
-| `400`  | the body is not a conversation: no messages, more than 64, a message with no text, or a role other than `user` or `assistant` |
+| `400`  | the body is not a conversation: no messages, more than 64, a message with no text, or a role other than `user` or `assistant`; or it has `tools` or `tool_choice`, which only [functions](#tool-calling-functions) may send |
 | `429`  | this address has sent `SiteHosting:AiVisitorRequestsPerMinute` requests (20) to this site in the last minute; `Retry-After` says how long to wait |
 | `403`  | this browser may not chat: the site's [`[AiAccess]` hook](#who-may-chat) said no, or the site has no hook and does not let visitors chat |
 | `502`  | the provider failed; `error` says why, and never includes the key or the provider's address |
@@ -1822,8 +1822,8 @@ public static async Task<IResult> Summary(IAiChat ai, HttpContext context)
 | `CompleteAsync(request, ct)` | sends the conversation and returns the whole answer (`AiChatResponse`) |
 | `StreamAsync(request, ct)` | returns the answer as it is written, as `AiChatChunk`s; the last chunk's `Final` holds the whole response |
 
-`AiChatRequest` has `Messages` (required), `System`, `Model`, `MaxTokens` and `Temperature`. Only
-`Messages` is needed. `MaxTokens` left `null` leaves the length to the provider; Anthropic
+`AiChatRequest` has `Messages` (required), `System`, `Model`, `MaxTokens`, `Temperature`, and
+`Tools` and `ToolChoice` for [tool calling](#tool-calling-functions). Only `Messages` is needed. `MaxTokens` left `null` leaves the length to the provider; Anthropic
 requires a limit and gets 1024.
 
 **Which site.** In a request, `IAiChat` is the AI of the site the request is for. This is also
@@ -1832,7 +1832,94 @@ The global functions have no site outside a request, so they cannot use it there
 
 **Errors.** Without a provider, both methods throw an `AiChatException`. So does a provider that
 fails, with the provider's HTTP status in `StatusCode` when it gave one. A request with no
-messages, or with an unknown role, throws an `ArgumentException`.
+messages, or with an unknown role, throws an `ArgumentException`. So does one that breaks the
+[tool calling rules](#tool-calling-functions), before anything is sent.
+
+### Tool calling (functions)
+
+**What it is.** A function can offer the model tools: things it may ask the function to do, such
+as look something up. The model answers with the calls it wants. The function runs them, sends
+the results back, and asks again, until the model answers in text. The provider's key stays on
+the server throughout. It works the same with every provider kind: OpenAI-compatible ones
+(OpenAI, LiteLLM, Ollama for the models that support tools, and the rest) and Anthropic.
+
+**When to use it.** Use it for an assistant that reads or changes the site's own data, where the
+model decides what to look at.
+
+**How to use it.** Describe each tool with an `AiTool`: a name, a description the model reads, and
+the JSON Schema of its input. Then loop:
+
+```csharp
+var tools = new List<AiTool>
+{
+    new("look_up_star", "Finds a star by name and returns its magnitude.",
+        JsonSerializer.SerializeToElement(new
+        {
+            type = "object",
+            properties = new { name = new { type = "string" } },
+            required = new[] { "name" }
+        }))
+};
+
+var messages = new List<AiMessage> { AiMessage.User("How bright is Vega?") };
+
+for (var turn = 0; turn < 10; turn++)
+{
+    var answer = await ai.CompleteAsync(new AiChatRequest { Messages = messages, Tools = tools, MaxTokens = 1000 }, ct);
+    if (answer.ToolCalls.Count == 0) return answer.Text;
+
+    messages.Add(AiMessage.AssistantToolCalls(answer.Text, answer.ToolCalls));
+    foreach (var call in answer.ToolCalls)
+    {
+        try
+        {
+            messages.Add(AiMessage.ToolResult(call.Id, await RunAsync(call.Name, call.Arguments)));
+        }
+        catch (Exception ex)
+        {
+            messages.Add(AiMessage.ToolResult(call.Id, ex.Message, isError: true));
+        }
+    }
+}
+```
+
+| Name | What it is |
+| ------ | ------------ |
+| `AiChatRequest.Tools` | the tools the model may call; at most 128 |
+| `AiChatRequest.ToolChoice` | `AiToolChoice.Auto` (the default), `None`, `Required` or `Tool("name")` |
+| `AiChatResponse.ToolCalls` | the calls the model asked for, each an `AiToolCall` with `Id`, `Name` and `Arguments`; empty for a text answer |
+| `AiChatResponse.StopReason` | `tool_calls` for a turn that ends in calls, from every provider |
+| `AiMessage.AssistantToolCalls(text, calls)` | the model's turn of calls, to send back before the results |
+| `AiMessage.ToolResult(id, content, isError)` | a call's result, or why it failed |
+
+* `StreamAsync` streams the text as before. The calls arrive whole in the last chunk's
+  `Final.ToolCalls`.
+* `Arguments` is the parsed input, normally a JSON object. If a model writes input that is not
+  JSON, it is a JSON string holding the raw text. Answer that call with an error result, and the
+  model can try again.
+* A model that runs out of tokens part way through its calls returns none of them, with a
+  `StopReason` of `length` or `max_tokens`. Raise `MaxTokens` and ask again.
+* To make the model answer in text, keep sending the tools with `ToolChoice = AiToolChoice.None`.
+  A conversation that has called tools must keep sending them.
+* `FakeAiChat` scripts calls for tests: `.ReplyToolCall("look_up_star", new { name = "Vega" })`,
+  then `.Reply("…")` for the answer.
+
+**Rules and limits.**
+
+* Only functions can offer tools. `/_host/ai/chat` answers `400` to a body with `tools` or
+  `tool_choice`, so visitors cannot shape the requests the site pays for.
+* Tool names are 1 to 64 letters, digits, `_` or `-`, unique in the request. Each input schema is a
+  JSON object.
+* Every call gets exactly one result, straight after the turn that made it, before any other
+  message, a system message included. A result answers a call that was made.
+* Functions have no request size limit of their own: `SiteHosting:AiMaxRequestBytes` and the
+  64-message cap apply to browsers only. `SiteHosting:AiTimeoutSeconds` applies to each call.
+* Nothing limits the number of turns. Every turn is billed and resends the whole conversation, so
+  cap the loop, as the example does.
+
+**Errors.** A request that breaks these rules throws an `ArgumentException` that says which rule.
+A provider or model that does not support tools fails as any provider error does, with an
+`AiChatException`.
 
 ### Who may chat
 

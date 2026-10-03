@@ -36,7 +36,11 @@ public interface IAiChat
     /// The site has no provider, the provider could not be reached or did not answer in time,
     /// or it refused the request; <see cref="AiChatException.StatusCode"/> carries its status.
     /// </exception>
-    /// <exception cref="ArgumentException">The request has no messages, or a message has an unknown role.</exception>
+    /// <exception cref="ArgumentException">
+    /// The request has no messages, a message has an unknown role, or its tools or tool calls break
+    /// the rules on <see cref="AiChatRequest.Tools"/> and <see cref="AiMessage.ToolRole"/>. Checked
+    /// before anything is sent.
+    /// </exception>
     Task<AiChatResponse> CompleteAsync(AiChatRequest request, CancellationToken ct = default);
 
     /// <summary>

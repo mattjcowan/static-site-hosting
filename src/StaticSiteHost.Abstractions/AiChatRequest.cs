@@ -43,4 +43,15 @@ public sealed class AiChatRequest
     /// that sets it.
     /// </summary>
     public double? Temperature { get; init; }
+
+    /// <summary>
+    /// Tools the model may ask to call; null or empty for none. Only functions may send tools:
+    /// <c>/_host/ai/chat</c> refuses them from browsers. A conversation that has called tools must
+    /// keep sending them, so pass <see cref="AiToolChoice.None"/> rather than dropping them to make
+    /// the model answer in text.
+    /// </summary>
+    public IReadOnlyList<AiTool>? Tools { get; init; }
+
+    /// <summary>How the model may use <see cref="Tools"/>. Null leaves it to the provider, which is <see cref="AiToolChoice.Auto"/>.</summary>
+    public AiToolChoice? ToolChoice { get; init; }
 }

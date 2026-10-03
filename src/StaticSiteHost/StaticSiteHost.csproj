@@ -11,6 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The AI wire formats and other internals are tested directly. -->
+    <InternalsVisibleTo Include="StaticSiteHost.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Beside the host at run time; function builds compile against this copy. See FunctionProjectGenerator. -->
     <ProjectReference Include="../StaticSiteHost.Abstractions/StaticSiteHost.Abstractions.csproj" />
   </ItemGroup>

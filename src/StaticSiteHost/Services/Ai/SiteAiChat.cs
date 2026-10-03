@@ -134,9 +134,10 @@ public sealed class SiteAiChat : IAiChat
     /// <summary>
     /// The request as it goes to the provider: the site's pinned prompt first and the caller's
     /// after it, so a caller can add instructions but never take the site's away, and the site's
-    /// model unless the caller names one.
+    /// model unless the caller names one. Everything else, the tools included, passes through as
+    /// the caller sent it.
     /// </summary>
-    private static AiChatRequest Apply(SiteAiSettings settings, AiChatRequest request)
+    internal static AiChatRequest Apply(SiteAiSettings settings, AiChatRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -149,7 +150,9 @@ public sealed class SiteAiChat : IAiChat
             System = system.Length > 0 ? system : null,
             Model = string.IsNullOrWhiteSpace(request.Model) ? settings.Model : request.Model,
             MaxTokens = request.MaxTokens,
-            Temperature = request.Temperature
+            Temperature = request.Temperature,
+            Tools = request.Tools,
+            ToolChoice = request.ToolChoice
         };
     }
 }

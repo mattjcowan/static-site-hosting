@@ -122,3 +122,58 @@ internal static class AiJson
             ? value[0]
             : null;
 }
+
+/// <summary>What the wire formats share about tool calls.</summary>
+internal static class AiToolWire
+{
+    /// <summary>
+    /// True when a request goes in the tool-calling shape: it offers tools, or its conversation
+    /// has calls or results in it. Otherwise it goes exactly as it did before tools existed.
+    /// </summary>
+    public static bool UsesTools(AiChatRequest request) =>
+        request.Tools is { Count: > 0 } ||
+        request.Messages.Any(message => message.ToolCalls is { Count: > 0 } || message.Role == AiMessage.ToolRole);
+
+    /// <summary>
+    /// A call's input from the text a model wrote. Empty text is an empty object, which is what a
+    /// model means by it for a tool that takes nothing. Text that is not JSON comes back as a JSON
+    /// string holding the raw text (see <see cref="AiToolCall.Arguments"/>), so the caller can answer
+    /// it with an error rather than the chat failing.
+    /// </summary>
+    public static JsonElement ParseArguments(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return EmptyObject();
+
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.SerializeToElement(text);
+        }
+    }
+
+    public static JsonElement EmptyObject()
+    {
+        using var document = JsonDocument.Parse("{}");
+        return document.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// The answer with its calls, settled the same way for every provider. Calls that ran into the
+    /// token limit are all dropped, since some of them are cut off, and the stop reason stays the
+    /// provider's own (<c>length</c> or <c>max_tokens</c>) to say why. Otherwise a turn with calls
+    /// stops for <see cref="AiChatResponse.ToolCallsStopReason"/>, whatever the provider called it:
+    /// Anthropic's <c>tool_use</c>, and the <c>stop</c> some OpenAI-compatible servers send. A
+    /// request that offered no tools gets its answer exactly as before tools existed, whatever the
+    /// provider sent: there is nothing it could call.
+    /// </summary>
+    public static AiChatResponse Settle(AiChatResponse answer, IReadOnlyList<AiToolCall> calls, AiChatRequest request)
+    {
+        if (request.Tools is not { Count: > 0 }) return answer;
+        if (calls.Count == 0 || answer.StopReason is "length" or "max_tokens") return answer;
+        return answer with { StopReason = AiChatResponse.ToolCallsStopReason, ToolCalls = calls };
+    }
+}
