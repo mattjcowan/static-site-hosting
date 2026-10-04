@@ -280,8 +280,11 @@ internal sealed class AnthropicChat : IAiWireFormat
                     return null;
 
                 case "error":
-                    throw new AiChatException(
-                        $"The AI provider failed part way through its answer: {Instance.ReadError(item) ?? "it gave no reason"}");
+                    var reason = Instance.ReadError(item);
+                    throw new AiChatException($"The AI provider failed part way through its answer: {reason ?? "it gave no reason"}")
+                    {
+                        Reason = AiFailures.ClassifyStreamed(item.ObjectOf("error")?.StringOf("type"), reason, request.Tools is { Count: > 0 })
+                    };
 
                 default:
                     return null;

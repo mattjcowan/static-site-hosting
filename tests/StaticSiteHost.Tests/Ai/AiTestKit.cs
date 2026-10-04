@@ -1,5 +1,11 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using StaticSiteHost.Configuration;
+using StaticSiteHost.Services;
 using StaticSiteHost.Functions;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services.Ai;
@@ -84,5 +90,43 @@ internal static class AiTestKit
     {
         using var document = JsonDocument.Parse(json);
         return document.RootElement.Clone();
+    }
+
+    /// <summary>The providers kept under <paramref name="root"/>, a folder of the test's own.</summary>
+    public static AiProviderStore Providers(string root, out IOptions<SiteHostingOptions> options)
+    {
+        options = Options.Create(new SiteHostingOptions { DataRoot = root });
+        var paths = new DataPaths(options);
+        return new AiProviderStore(paths, new EphemeralDataProtectionProvider(),
+            new AuditLog(paths, NullLogger<AuditLog>.Instance), NullLogger<AiProviderStore>.Instance);
+    }
+
+    /// <summary>The chat service, calling providers through <paramref name="http"/>.</summary>
+    public static (AiChatService Service, Recorder Http) Service(string root, Recorder http)
+    {
+        var providers = Providers(root, out var options);
+        return (new AiChatService(http, providers, options, NullLogger<AiChatService>.Instance), http);
+    }
+}
+
+/// <summary>
+/// An HTTP client factory whose one client records what it sent and answers with a recording, or
+/// fails to connect when the status is 0.
+/// </summary>
+internal sealed class Recorder(string contentType, string body, int status = 200) : HttpMessageHandler, IHttpClientFactory
+{
+    public string? Sent { get; private set; }
+
+    public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        Sent = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
+        if (status == 0) throw new HttpRequestException("Connection refused (llm.example.com:443)");
+
+        return new HttpResponseMessage((HttpStatusCode)status)
+        {
+            Content = new StringContent(body, Encoding.UTF8, contentType)
+        };
     }
 }

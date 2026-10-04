@@ -118,7 +118,7 @@ public sealed class AiChatService
             }
             catch (AiChatException ex)
             {
-                var failure = new AiChatException(Scrub(ex.Message, call), ex.StatusCode);
+                var failure = new AiChatException(Scrub(ex.Message, call), ex.StatusCode) { Reason = ex.Reason };
                 _logger.LogWarning("AI provider {Name} ({Id}) failed while streaming: {Message}",
                     provider.Name, provider.Id, failure.Message);
                 throw failure;
@@ -131,7 +131,7 @@ public sealed class AiChatService
         if (!answer.IsComplete)
         {
             _logger.LogWarning("AI provider {Name} ({Id}) closed the stream before its answer was complete", provider.Name, provider.Id);
-            throw new AiChatException("The AI provider stopped part way through its answer. Try again.");
+            throw new AiChatException("The AI provider stopped part way through its answer. Try again.") { Reason = AiChatException.Unavailable };
         }
 
         yield return new AiChatChunk(null, answer.Result());
@@ -185,7 +185,7 @@ public sealed class AiChatService
         {
             // The exception names the host, and it stays in the log: see the class remarks.
             _logger.LogWarning(ex, "Could not reach AI provider {Name} ({Id})", call.Provider.Name, call.Provider.Id);
-            throw new AiChatException("The AI provider could not be reached. The server log says why.");
+            throw new AiChatException("The AI provider could not be reached. The server log says why.") { Reason = AiChatException.Unavailable };
         }
 
         if (response.IsSuccessStatusCode) return response;
@@ -206,7 +206,10 @@ public sealed class AiChatService
                 detail is null
                     ? $"The AI provider answered {status} {response.ReasonPhrase}.{redirectHint}"
                     : $"The AI provider answered {status}: {detail}{redirectHint}",
-                status);
+                status)
+            {
+                Reason = AiFailures.Classify(status, detail, call.Request.Tools is { Count: > 0 })
+            };
         }
     }
 
@@ -235,7 +238,7 @@ public sealed class AiChatService
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
             _logger.LogWarning(ex, "The answer from AI provider {Name} ({Id}) could not be read", call.Provider.Name, call.Provider.Id);
-            throw new AiChatException("The connection to the AI provider was lost before its answer arrived.");
+            throw new AiChatException("The connection to the AI provider was lost before its answer arrived.") { Reason = AiChatException.Unavailable };
         }
     }
 
@@ -260,12 +263,15 @@ public sealed class AiChatService
             _logger.LogWarning("AI provider {Name} ({Id}) went quiet for {Seconds} seconds part way through its answer",
                 call.Provider.Name, call.Provider.Id, Timeout.TotalSeconds);
             throw new AiChatException(
-                $"The AI provider went quiet for {Timeout.TotalSeconds:0} seconds part way through its answer. Try again.");
+                $"The AI provider went quiet for {Timeout.TotalSeconds:0} seconds part way through its answer. Try again.")
+            {
+                Reason = AiChatException.Unavailable
+            };
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
             _logger.LogWarning(ex, "The stream from AI provider {Name} ({Id}) broke off", call.Provider.Name, call.Provider.Id);
-            throw new AiChatException("The connection to the AI provider was lost part way through its answer.");
+            throw new AiChatException("The connection to the AI provider was lost part way through its answer.") { Reason = AiChatException.Unavailable };
         }
     }
 
@@ -294,7 +300,7 @@ public sealed class AiChatService
     }
 
     private AiChatException TimedOut() =>
-        new($"The AI provider did not answer within {Timeout.TotalSeconds:0} seconds.");
+        new($"The AI provider did not answer within {Timeout.TotalSeconds:0} seconds.") { Reason = AiChatException.Unavailable };
 
     /// <summary>One line of a provider's explanation, short enough to show, with nothing secret in it.</summary>
     private static string? Clean(string detail, AiCall call)

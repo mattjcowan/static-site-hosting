@@ -28,7 +28,7 @@ namespace StaticSiteHost.Functions.Testing;
 public sealed class FakeAiChat : IAiChat
 {
     private readonly object _gate = new();
-    private readonly Queue<(string Text, AiToolCall[] Calls)> _replies = new();
+    private readonly Queue<(string Text, AiToolCall[] Calls, AiChatException? Failure)> _replies = new();
     private readonly List<AiChatRequest> _requests = [];
     private int _callIds;
 
@@ -39,6 +39,16 @@ public sealed class FakeAiChat : IAiChat
     /// <inheritdoc />
     /// <remarks>Defaults to <c>fake-model</c>, and answers name it unless a request names another.</remarks>
     public string? Model { get; set; } = "fake-model";
+
+    /// <inheritdoc />
+    /// <remarks>Defaults to <c>openai</c>. Reads as null while <see cref="IsConfigured"/> is false, as the server's does.</remarks>
+    public string? ProviderKind
+    {
+        get => IsConfigured ? _providerKind : null;
+        set => _providerKind = value;
+    }
+
+    private string? _providerKind = "openai";
 
     /// <summary>Every request sent so far, in order, including ones that failed for want of a reply.</summary>
     public IReadOnlyList<AiChatRequest> Requests
@@ -55,7 +65,7 @@ public sealed class FakeAiChat : IAiChat
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        lock (_gate) _replies.Enqueue((text, []));
+        lock (_gate) _replies.Enqueue((text, [], null));
         return this;
     }
 
@@ -72,9 +82,26 @@ public sealed class FakeAiChat : IAiChat
         {
             var id = $"call_{++_callIds}";
             var input = arguments is null ? JsonSerializer.SerializeToElement(new { }) : JsonSerializer.SerializeToElement(arguments);
-            _replies.Enqueue(("", [new AiToolCall(id, name, input)]));
+            _replies.Enqueue(("", [new AiToolCall(id, name, input)], null));
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// Queues a failure: the next call throws <paramref name="exception"/>, as the server's does when
+    /// the provider refuses. Set its <see cref="AiChatException.Reason"/> to test how a handler
+    /// answers each kind of failure:
+    /// <code>
+    /// ai.Fail(new AiChatException("The model does not support tools.", 400) { Reason = AiChatException.ToolsUnsupported });
+    /// </code>
+    /// </summary>
+    /// <returns>This instance, so replies can be chained.</returns>
+    public FakeAiChat Fail(AiChatException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        lock (_gate) _replies.Enqueue(("", [], exception));
         return this;
     }
 
@@ -90,7 +117,7 @@ public sealed class FakeAiChat : IAiChat
         ArgumentNullException.ThrowIfNull(calls);
         if (calls.Length == 0) throw new ArgumentException("Queue at least one call, or use Reply for a text answer.", nameof(calls));
 
-        lock (_gate) _replies.Enqueue((text, [.. calls]));
+        lock (_gate) _replies.Enqueue((text, [.. calls], null));
         return this;
     }
 
@@ -149,7 +176,8 @@ public sealed class FakeAiChat : IAiChat
                     "for every call the handler makes.");
             }
 
-            (text, calls) = queued;
+            if (queued.Failure is { } failure) throw failure;
+            (text, calls, _) = queued;
         }
 
         var input = Words(request.System) + (request.Messages ?? []).Sum(message => Words(message?.Content));

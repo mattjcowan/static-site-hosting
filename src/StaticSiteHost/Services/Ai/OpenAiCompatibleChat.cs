@@ -237,8 +237,11 @@ internal sealed class OpenAiCompatibleChat : IAiWireFormat
             if (chunk.ValueKind == JsonValueKind.Object &&
                 chunk.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
             {
-                throw new AiChatException(
-                    $"The AI provider failed part way through its answer: {Instance.ReadError(chunk) ?? "it gave no reason"}");
+                var reason = Instance.ReadError(chunk);
+                throw new AiChatException($"The AI provider failed part way through its answer: {reason ?? "it gave no reason"}")
+                {
+                    Reason = AiFailures.ClassifyStreamed(error.StringOf("type"), reason, request.Tools is { Count: > 0 })
+                };
             }
 
             _model = chunk.StringOf("model") ?? _model;

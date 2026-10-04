@@ -334,6 +334,7 @@ site, with its model and system prompt. It works whether or not the site lets it
 | ------ | ------------ |
 | `bool IsConfigured { get; }` | `true` when the site has a provider; when `false`, both methods throw `AiChatException` |
 | `string? Model { get; }` | the model a request uses when it names none: the site's choice, or the provider's default; `null` without a provider |
+| `string? ProviderKind { get; }` | `openai` (OpenAI and every server that copies its API: LiteLLM, Ollama and the rest) or `anthropic`; `null` without a provider. Never the provider's name, address or key |
 | `Task<AiChatResponse> CompleteAsync(AiChatRequest request, CancellationToken ct = default)` | sends the conversation and waits for the whole answer |
 | `IAsyncEnumerable<AiChatChunk> StreamAsync(AiChatRequest request, CancellationToken ct = default)` | yields a chunk per piece of text, then a last chunk whose `Final` holds the whole response. Nothing is sent until you start the loop. Stopping early, or cancelling, closes the connection to the provider |
 
@@ -395,7 +396,12 @@ chunk, and `Final` is set only on the last chunk.
 * `AiChatException` is thrown when the site has no provider, the provider cannot be reached or
   does not answer in time, or it refuses the request. Its `int? StatusCode` is the provider's HTTP
   status (such as 401 or 429), or `null` when there was no answer. Its message never contains the
-  provider's key or address.
+  provider's key or address. Its `string? Reason` says why when the server can tell, as one of its
+  constants: `ToolsUnsupported` (`"tools-unsupported"`: the model cannot use tools; choose another),
+  `ContextTooLong` (`"context-too-long"`), `RateLimited` (`"rate-limited"`, a 429), `Auth` (`"auth"`,
+  a 401 or 403) or `Unavailable` (`"unavailable"`: unreachable, timed out, 5xx, or broken off).
+  Otherwise `null`. `ToolsUnsupported` is set only when the request offered tools and the provider
+  said plainly that the model cannot take them, so a malformed tool schema is not mistaken for it.
 * `ArgumentException` is thrown when the request has no messages, or a message has an unknown
   role, or its tools or tool calls break the rules above (a bad tool name or schema, a call
   without its result), before anything is sent.
@@ -522,11 +528,15 @@ not any connection would receive it. It has none of the server's group limits.
 | Name | What it does |
 | ------ | ------------ |
 | `FakeAiChat Reply(string text)` | queues the text of the next answer; returns the same object, so calls can be chained |
+| `FakeAiChat ReplyToolCall(string name, object? arguments = null)`, `ReplyToolCalls(...)` | queues a turn of tool calls |
+| `FakeAiChat Fail(AiChatException exception)` | queues a failure: the next call throws it. Set its `Reason` to test each kind of failure |
 | `IReadOnlyList<AiChatRequest> Requests` | every request sent so far, in order |
 | `bool IsConfigured { get; set; }` | `true` by default; `false` makes both methods throw `AiChatException`, as the server does |
 | `string? Model { get; set; }` | `fake-model` by default |
+| `string? ProviderKind { get; set; }` | `openai` by default; `null` while `IsConfigured` is `false` |
 
-Each call takes the next queued reply. A call with no reply queued throws
+Every request is checked as the server checks it, so one the server would refuse throws the same
+`ArgumentException` without taking a reply. Each call takes the next queued reply. A call with no reply queued throws
 `InvalidOperationException`. `StreamAsync` yields the reply in about three pieces, split between
 words, then the whole response. Token counts are word counts, and `StopReason` is `stop`.
 

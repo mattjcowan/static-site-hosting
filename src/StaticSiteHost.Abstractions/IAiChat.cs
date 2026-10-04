@@ -31,6 +31,13 @@ public interface IAiChat
     /// </summary>
     string? Model { get; }
 
+    /// <summary>
+    /// The kind of the site's provider: <c>openai</c> for the OpenAI-compatible API (OpenAI itself,
+    /// LiteLLM, Ollama and the rest), or <c>anthropic</c>. Null when <see cref="IsConfigured"/> is
+    /// false. The provider's name, address and key are the server's own and never shown.
+    /// </summary>
+    string? ProviderKind { get; }
+
     /// <summary>Sends the conversation and waits for the whole answer.</summary>
     /// <exception cref="AiChatException">
     /// The site has no provider, the provider could not be reached or did not answer in time,

@@ -29,16 +29,8 @@ public sealed class AiChatServiceToolTests : IDisposable
 
     private static readonly AiTool Clock = new("time_now", "The time.", Json("""{"type":"object","properties":{}}"""));
 
-    private (AiChatService Service, Recorder Http) Service(string contentType, string body)
-    {
-        var options = Options.Create(new SiteHostingOptions { DataRoot = _root });
-        var paths = new DataPaths(options);
-        var providers = new AiProviderStore(paths, new EphemeralDataProtectionProvider(),
-            new AuditLog(paths, NullLogger<AuditLog>.Instance), NullLogger<AiProviderStore>.Instance);
-
-        var http = new Recorder(contentType, body);
-        return (new AiChatService(http, providers, options, NullLogger<AiChatService>.Instance), http);
-    }
+    private (AiChatService Service, Recorder Http) Service(string contentType, string body) =>
+        AiTestKit.Service(_root, new Recorder(contentType, body));
 
     [Fact]
     public async Task Anthropic_streamed_calls_arrive_whole_in_the_final_chunk()
@@ -110,21 +102,4 @@ public sealed class AiChatServiceToolTests : IDisposable
     }
 
     private static string Event(string type, string data) => $"event: {type}\ndata: {data}\n\n";
-
-    /// <summary>An HTTP client factory whose one client records what it sent and answers with a recording.</summary>
-    private sealed class Recorder(string contentType, string body) : HttpMessageHandler, IHttpClientFactory
-    {
-        public string? Sent { get; private set; }
-
-        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-        {
-            Sent = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(body, Encoding.UTF8, contentType)
-            };
-        }
-    }
 }

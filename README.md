@@ -1819,6 +1819,7 @@ public static async Task<IResult> Summary(IAiChat ai, HttpContext context)
 | ------ | ------------ |
 | `IsConfigured` | `true` when the site has a provider |
 | `Model` | the model a request uses when it names none, or `null` without a provider |
+| `ProviderKind` | `openai` (OpenAI-compatible) or `anthropic`, or `null` without a provider; never the provider's name, address or key |
 | `CompleteAsync(request, ct)` | sends the conversation and returns the whole answer (`AiChatResponse`) |
 | `StreamAsync(request, ct)` | returns the answer as it is written, as `AiChatChunk`s; the last chunk's `Final` holds the whole response |
 
@@ -1831,8 +1832,11 @@ true for global functions. In a job or a background service, it is the functions
 The global functions have no site outside a request, so they cannot use it there.
 
 **Errors.** Without a provider, both methods throw an `AiChatException`. So does a provider that
-fails, with the provider's HTTP status in `StatusCode` when it gave one. A request with no
-messages, or with an unknown role, throws an `ArgumentException`. So does one that breaks the
+fails, with the provider's HTTP status in `StatusCode` when it gave one, and why in `Reason` when
+the server can tell: `AiChatException.RateLimited` (a 429), `Auth` (401 or 403), `Unavailable`
+(unreachable, timed out, 5xx, or broken off part way), `ContextTooLong`, or `ToolsUnsupported`.
+Otherwise `Reason` is `null`. A request with no messages, or with an unknown role, throws an
+`ArgumentException`. So does one that breaks the
 [tool calling rules](#tool-calling-functions), before anything is sent.
 
 ### Tool calling (functions)
@@ -1918,8 +1922,10 @@ for (var turn = 0; turn < 10; turn++)
   cap the loop, as the example does.
 
 **Errors.** A request that breaks these rules throws an `ArgumentException` that says which rule.
-A provider or model that does not support tools fails as any provider error does, with an
-`AiChatException`.
+A model that cannot use tools fails with an `AiChatException` whose `Reason` is
+`AiChatException.ToolsUnsupported`. Tell the user to choose another model; the same request
+without tools still works. It is set only when the provider says so plainly. A tool schema the
+provider finds malformed is a mistake in the function, and gets no such reason.
 
 ### Who may chat
 

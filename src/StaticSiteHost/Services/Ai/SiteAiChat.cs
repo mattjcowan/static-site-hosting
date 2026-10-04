@@ -93,6 +93,8 @@ public sealed class SiteAiChat : IAiChat
 
     public string? Model => Resolve() is { } resolved ? resolved.Settings.Model ?? resolved.Provider.DefaultModel : null;
 
+    public string? ProviderKind => Resolve()?.Provider.Kind;
+
     /// <summary>
     /// True when the site lets any visitor's browser chat through <c>/_host/ai/chat</c>. False when
     /// it has no provider.
