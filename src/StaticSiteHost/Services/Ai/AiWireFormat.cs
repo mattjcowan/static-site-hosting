@@ -52,12 +52,20 @@ internal interface IAiStream
 /// settled on, and the request. A class rather than a record, so there is no generated
 /// <c>ToString</c> to put the key in a log line.
 /// </summary>
-internal sealed class AiCall(AiProviderRecord provider, string? apiKey, string model, AiChatRequest request)
+internal sealed class AiCall(AiProviderRecord provider, string? apiKey, string model, AiChatRequest request, bool cachePrefix = false)
 {
     public AiProviderRecord Provider { get; } = provider;
     public string? ApiKey { get; } = apiKey;
     public string Model { get; } = model;
     public AiChatRequest Request { get; } = request;
+
+    /// <summary>
+    /// Ask the provider to cache the start of the request, the tools and <see cref="AiChatRequest.System"/>,
+    /// which stay the same from call to call. Only Anthropic needs asking (OpenAI caches a long
+    /// prefix by itself). Set by the management assistant, whose tools are long and the same
+    /// every time, and never for a site's chats, which go exactly as before.
+    /// </summary>
+    public bool CachePrefix { get; } = cachePrefix;
 }
 
 /// <summary>Small JSON helpers the wire formats share.</summary>

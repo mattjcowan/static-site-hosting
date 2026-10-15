@@ -38,6 +38,9 @@ services:
       # empty. Turn it on for one start, sign in, then set it back to false.
       Bootstrap__ResetPasswordOnStartup: "${ADMIN_RESET_PASSWORD_ON_STARTUP:-false}"
 
+      # An API key for the administrator from the first start, for scripts and AI agents (/mcp).
+      Bootstrap__ApiKey: "${ADMIN_API_KEY:-}"
+
     volumes:
       - site-data:/data
 

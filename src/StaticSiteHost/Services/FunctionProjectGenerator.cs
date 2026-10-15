@@ -52,8 +52,11 @@ public sealed record GeneratedFunctionProject(
 /// against a newer package than the server runs fails here, at deploy, with a compiler error
 /// naming the missing member, rather than with a MissingMethodException on some later request.
 /// </summary>
-public sealed class FunctionProjectGenerator
+public sealed partial class FunctionProjectGenerator
 {
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bStaticSiteHost\.Functions\b")]
+    private static partial System.Text.RegularExpressions.Regex AbstractionsNamespace();
+
     public const string ProjectFileName = "functions.csproj";
 
     /// <summary>Assembly name of the built output, so callers know what to load.</summary>
@@ -162,14 +165,14 @@ public sealed class FunctionProjectGenerator
 
     /// <param name="Packages">What NuGet restores: every package asked for except StaticSiteHost.Abstractions.</param>
     /// <param name="UsesAbstractions">True when a file asked for StaticSiteHost.Abstractions.</param>
-    private sealed record MergedSources(
+    internal sealed record MergedSources(
         List<FunctionPackage> Packages,
         List<string> Usings,
         List<KeyValuePair<string, string>> Properties,
         bool NeedsAspNetCore,
         bool UsesAbstractions);
 
-    private static (MergedSources? Merged, string? Error) Merge(IReadOnlyList<(string FileName, FunctionSource Source)> sources)
+    internal static (MergedSources? Merged, string? Error) Merge(IReadOnlyList<(string FileName, FunctionSource Source)> sources)
     {
         var packages = new Dictionary<string, (FunctionPackage Package, string From)>(StringComparer.OrdinalIgnoreCase);
         var properties = new Dictionary<string, (string Value, string From)>(StringComparer.OrdinalIgnoreCase);
@@ -216,6 +219,13 @@ public sealed class FunctionProjectGenerator
                 properties[name] = (value, fileName);
             }
         }
+
+        // A file that uses the abstractions without the #:package line, which only an editor outside
+        // this server needs, gets them anyway: the reference is the host's own and compile-only,
+        // so nothing is restored, and the alternative is a compiler error that says nothing useful.
+        usesAbstractions |= sources.Any(s =>
+            AbstractionsNamespace().IsMatch(s.Source.Code) ||
+            s.Source.Usings.Any(u => u.StartsWith("StaticSiteHost.Functions", StringComparison.Ordinal)));
 
         return (new MergedSources(
             packages.Values.Select(p => p.Package).ToList(),

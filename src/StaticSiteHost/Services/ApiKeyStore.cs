@@ -91,6 +91,90 @@ public sealed class ApiKeyStore
             return (true, true);
         });
 
+    /// <summary>
+    /// Makes the key given in configuration (<c>Bootstrap:ApiKey</c>) usable for
+    /// <paramref name="userId"/>, and revokes every earlier configured key. Returns why the key
+    /// cannot be used, or null.
+    ///
+    /// Fails closed. A setting that cannot be read still revokes the key it replaces, so a typo
+    /// while rotating a leaked key never leaves the leaked one working. A key that was revoked,
+    /// in the UI or over the API, stays revoked even though the setting still names it: only a
+    /// new key in the setting gives the server a usable one again.
+    /// </summary>
+    public Task<string?> EnsureConfiguredAsync(string userId, string? plainText)
+    {
+        string? id = null, secret = null, problem = null;
+
+        if (!string.IsNullOrWhiteSpace(plainText))
+        {
+            var parts = plainText.Trim().Split('_');
+            if (parts.Length != 3 || parts[0] != Prefix)
+                problem = $"it must look like {Prefix}_<id>_<secret>";
+            else if (parts[1].Length is < 8 or > 64 || !parts[1].All(char.IsAsciiLetterOrDigit))
+                problem = "the id must be 8 to 64 letters and digits";
+            else if (parts[2].Length < 32 || !parts[2].All(char.IsAsciiLetterOrDigit))
+                problem = "the secret must be at least 32 letters and digits";
+            else
+                (id, secret) = (parts[1], parts[2]);
+        }
+
+        var hash = secret is null ? null : Tokens.Sha256Hex(secret);
+
+        return _store.UpdateAsync(keys =>
+        {
+            var changed = false;
+
+            // Every configured key but the one named now, and that one too unless it is the same key.
+            foreach (var old in keys.Where(k => k.FromConfiguration && !k.Revoked && (k.Id != id || k.SecretHash != hash)))
+            {
+                old.Revoked = true;
+                changed = true;
+            }
+
+            if (problem is not null) return (problem, changed);
+            if (id is null) return ((string?)null, changed);
+
+            var existing = keys.FirstOrDefault(k => k.Id == id);
+            if (existing is { FromConfiguration: false })
+                return ("another API key already has that id; choose a different one", changed);
+
+            if (existing is null)
+            {
+                keys.Add(new ApiKeyRecord
+                {
+                    Id = id,
+                    UserId = userId,
+                    Name = "From configuration (Bootstrap:ApiKey)",
+                    SecretHash = hash!,
+                    Display = $"{Prefix}_{id}_{new string('•', 8)}",
+                    FromConfiguration = true
+                });
+                return (null, true);
+            }
+
+            if (existing.SecretHash != hash)
+            {
+                // The same id with a new secret: a new key, usable.
+                existing.SecretHash = hash!;
+                existing.UserId = userId;
+                existing.Revoked = false;
+                existing.ExpiresUtc = null;
+                return (null, true);
+            }
+
+            if (existing.Revoked)
+                return ("that key was revoked; put a new key in the setting to have one again", changed);
+
+            if (existing.UserId != userId)
+            {
+                existing.UserId = userId;
+                changed = true;
+            }
+
+            return (null, changed);
+        });
+    }
+
     public Task DeleteForUserAsync(string userId) =>
         _store.UpdateAsync(keys =>
         {

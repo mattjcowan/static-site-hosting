@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using StaticSiteHost.Functions;
@@ -15,17 +14,38 @@ namespace StaticSiteHost.Pages.Admin;
 public class AiModel : PageModel
 {
     /// <summary>What the Test button sends: as short a round trip as a model will make.</summary>
-    public const string TestPrompt = "Reply with the single word OK.";
+    public const string TestPrompt = AiProviderTest.Prompt;
 
     private readonly AiProviderStore _providers;
     private readonly AiChatService _chat;
     private readonly SiteStore _sites;
+    private readonly StaticSiteHost.Services.Assistant.AssistantSettingsStore _assistant;
 
-    public AiModel(AiProviderStore providers, AiChatService chat, SiteStore sites)
+    public AiModel(AiProviderStore providers, AiChatService chat, SiteStore sites, StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant)
     {
         _providers = providers;
         _chat = chat;
         _sites = sites;
+        _assistant = assistant;
+    }
+
+    /// <summary>The management assistant's settings, for its card.</summary>
+    public StaticSiteHost.Services.Assistant.AssistantSettings Assistant { get; private set; } = new();
+
+    /// <summary>
+    /// Turns the assistant on with a provider and model, or off with none. Every message is billed
+    /// to the provider's key, so administrators decide whether members may use it.
+    /// </summary>
+    public async Task<IActionResult> OnPostAssistantAsync(string? providerId, string? model, bool membersMayUse)
+    {
+        if (await _assistant.SaveAsync(providerId, model, membersMayUse, Actor) is { } error)
+            TempData["ErrorMessage"] = error;
+        else if (string.IsNullOrWhiteSpace(providerId))
+            TempData["StatusMessage"] = "The assistant is off.";
+        else
+            TempData["StatusMessage"] = "The assistant is on. Open it with Assistant in the top bar.";
+
+        return RedirectToPage();
     }
 
     public IReadOnlyList<AiProviderRecord> Providers { get; private set; } = [];
@@ -49,6 +69,7 @@ public class AiModel : PageModel
 
     private async Task LoadAsync()
     {
+        Assistant = await _assistant.ReadAsync();
         Providers = await _providers.ListAsync();
         SiteCounts = _sites.List()
             .Where(site => site.Ai is { HasProvider: true })
@@ -109,26 +130,20 @@ public class AiModel : PageModel
             return RedirectToPage();
         }
 
-        var clock = Stopwatch.StartNew();
-        try
+        var test = await AiProviderTest.RunAsync(_chat, provider, HttpContext.RequestAborted);
+        if (test.Ok)
         {
-            var answer = await _chat.CompleteAsync(provider, new AiChatRequest
-            {
-                Messages = [AiMessage.User(TestPrompt)],
-                MaxTokens = 16
-            }, HttpContext.RequestAborted);
-
-            var text = answer.Text.Trim();
+            var text = test.Text ?? "";
             var said = text.Length == 0 ? "no text" : $"“{(text.Length > 200 ? text[..200] + "…" : text)}”";
-            var stop = answer.StopReason is null ? "" : $", stopping on {answer.StopReason}";
+            var stop = test.StopReason is null ? "" : $", stopping on {test.StopReason}";
 
             TempData["StatusMessage"] =
-                $"{provider.Name} answered in {clock.ElapsedMilliseconds:N0} ms with {said}: model {answer.Model}, " +
-                $"{answer.InputTokens:N0} tokens in and {answer.OutputTokens:N0} out{stop}.";
+                $"{provider.Name} answered in {test.ElapsedMs:N0} ms with {said}: model {test.Model}, " +
+                $"{test.InputTokens:N0} tokens in and {test.OutputTokens:N0} out{stop}.";
         }
-        catch (AiChatException ex)
+        else
         {
-            TempData["ErrorMessage"] = $"{provider.Name} failed the test after {clock.ElapsedMilliseconds:N0} ms. {ex.Message}";
+            TempData["ErrorMessage"] = $"{provider.Name} failed the test after {test.ElapsedMs:N0} ms. {test.Error}";
         }
 
         return RedirectToPage();

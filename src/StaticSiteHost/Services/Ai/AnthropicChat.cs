@@ -30,6 +30,9 @@ internal sealed class AnthropicChat : IAiWireFormat
 
     public static readonly AnthropicChat Instance = new();
 
+    /// <summary>The cache breakpoint for <see cref="AiCall.CachePrefix"/>.</summary>
+    private static readonly object Ephemeral = new { type = "ephemeral" };
+
     private AnthropicChat()
     {
     }
@@ -50,7 +53,9 @@ internal sealed class AnthropicChat : IAiWireFormat
         if (request.Tools is { Count: > 0 } tools)
         {
             body["tools"] = tools
-                .Select(tool => new { name = tool.Name, description = tool.Description, input_schema = tool.InputSchema })
+                .Select((tool, i) => call.CachePrefix && i == tools.Count - 1
+                    ? (object)new { name = tool.Name, description = tool.Description, input_schema = tool.InputSchema, cache_control = Ephemeral }
+                    : new { name = tool.Name, description = tool.Description, input_schema = tool.InputSchema })
                 .ToList();
         }
 
@@ -64,8 +69,20 @@ internal sealed class AnthropicChat : IAiWireFormat
             };
         }
 
-        var joined = string.Join("\n\n", system.Where(part => part.Length > 0));
-        if (joined.Length > 0) body["system"] = joined;
+        if (call.CachePrefix && !string.IsNullOrEmpty(request.System))
+        {
+            // The request's own system prompt is the same every call and ends the cached prefix;
+            // system messages from the conversation change, so they follow it, uncached.
+            var rest = string.Join("\n\n", system.Skip(1).Where(part => part.Length > 0));
+            var blocks = new List<object> { new { type = "text", text = request.System, cache_control = Ephemeral } };
+            if (rest.Length > 0) blocks.Add(new { type = "text", text = rest });
+            body["system"] = blocks;
+        }
+        else
+        {
+            var joined = string.Join("\n\n", system.Where(part => part.Length > 0));
+            if (joined.Length > 0) body["system"] = joined;
+        }
         if (request.Temperature is { } temperature) body["temperature"] = temperature;
         if (stream) body["stream"] = true;
 

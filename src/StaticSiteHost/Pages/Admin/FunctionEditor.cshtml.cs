@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
@@ -45,23 +44,18 @@ public class FunctionEditorModel : PageModel
         """;
 
     /// <summary>What a test sees when the host it names has no site: no variables at all.</summary>
-    private static readonly ResolvedVariables NoVariables = new(
-        FrozenDictionary<string, string>.Empty, FrozenDictionary<string, string>.Empty, [], []);
-
     private static readonly JsonSerializerOptions PageJson = new(JsonSerializerDefaults.Web);
 
     private readonly SiteStore _sites;
     private readonly FunctionDeploymentService _functions;
-    private readonly FunctionTestRunner _tests;
-    private readonly SiteVariableService _variables;
+    private readonly FunctionTestService _testService;
 
     public FunctionEditorModel(
-        SiteStore sites, FunctionDeploymentService functions, FunctionTestRunner tests, SiteVariableService variables)
+        SiteStore sites, FunctionDeploymentService functions, FunctionTestService testService)
     {
         _sites = sites;
         _functions = functions;
-        _tests = tests;
-        _variables = variables;
+        _testService = testService;
     }
 
     /// <summary>The site being edited; null for the global functions.</summary>
@@ -122,29 +116,7 @@ public class FunctionEditorModel : PageModel
     {
         if (!TryScope(domain, out var scope)) return NotFound();
 
-        var binDir = await _functions.ResolveBuildAsync(scope, request.Target);
-        FunctionTestResult result;
-
-        if (binDir is null)
-        {
-            result = new FunctionTestResult(0, null, [], [], 0, false, false,
-                request.Target is null or "live"
-                    ? "Nothing is live to test. Check the files, then test the checked build."
-                    : "That checked build has expired. Check the files again.");
-        }
-        else
-        {
-            var host = scope ?? (string.IsNullOrWhiteSpace(request.Host) ? "localhost" : request.Host.Trim());
-
-            // The variables a live request to that host would carry: global functions answer for
-            // whichever site the host names, and for a host with no site there are none.
-            var variables = _sites.TryGet(SiteStore.NormalizeDomain(host).Domain) is { } site
-                ? _variables.Resolve(site)
-                : NoVariables;
-
-            result = await _tests.RunAsync(binDir, host, _functions.DataDirectory(scope), variables, request,
-                HttpContext.RequestServices, ct);
-        }
+        var result = await _testService.RunAsync(scope, request, HttpContext.RequestServices, ct);
 
         var meta = JsonSerializer.Serialize(new
         {

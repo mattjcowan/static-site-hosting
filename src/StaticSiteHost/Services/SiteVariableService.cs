@@ -293,7 +293,7 @@ public sealed partial class SiteVariableService
     /// Replaces each <c>${env:NAME}</c> with that environment variable, collecting the names that
     /// are not set. One pass: text an environment variable brings in is not expanded again.
     /// </summary>
-    private static string Expand(string text, List<string> unset) =>
+    internal static string Expand(string text, List<string> unset) =>
         !text.Contains("${env:", StringComparison.Ordinal)
             ? text
             : EnvironmentReference().Replace(text, match =>

@@ -12,7 +12,15 @@
 
 <div class="card">
     <h2>Current release</h2>
-    @if (Model.Site.Current is { } current)
+    @if (Model.Site.Current is { IsFunctionsOnly: true } carrier)
+    {
+        <p class="hint">
+            No files have been deployed. Release <span class="mono">@carrier.Id</span> only carries the site's functions,
+            made @carrier.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") when they were added. The site answers
+            through its functions and <a href="#proxy">proxy routes</a>, and with a 404 on every other path.
+        </p>
+    }
+    else if (Model.Site.Current is { } current)
     {
         <p class="hint">
             <span class="mono">@current.Id</span> — @current.FileCount.ToString("N0") files, @Format.Bytes(current.TotalBytes),
@@ -27,6 +35,13 @@
         {
             <p class="hint">The archive wrapped everything in a single folder, which was unwrapped during extraction.</p>
         }
+    }
+    else if (Model.Site.Proxy.Count > 0)
+    {
+        <p class="hint">
+            No files have been deployed. The site answers through its <a href="#proxy">proxy routes</a>, and with a 404 on
+            every other path.
+        </p>
     }
     else
     {
@@ -124,6 +139,116 @@
               data-confirm="Remove the passcode from @Model.Site.Domain? Anyone with the link will be able to read it.">
             <button type="submit" class="btn-danger">Remove passcode</button>
         </form>
+    }
+</div>
+
+<div class="card" id="proxy">
+    <h2>
+        Proxy routes
+        @if (Model.Site.Proxy.Count > 0)
+        {
+            <span class="badge badge-ok">@Model.Site.Proxy.Count route@(Model.Site.Proxy.Count == 1 ? "" : "s")</span>
+        }
+        else
+        {
+            <span class="badge">none</span>
+        }
+    </h2>
+    <p class="hint">
+        Forward paths on this site to other servers, such as Docker containers or services on a private network, so one
+        domain can serve files, functions and backends together. A route's requests have already passed the passcode, the
+        site's middleware and its functions, so a site's sign-in protects them too, and a function can still answer one path
+        inside a proxied one. The site's header rules apply to what comes back.
+    </p>
+
+    @if (Model.ProxyUnsetEnvironment.Count > 0)
+    {
+        <div class="alert alert-warning">
+            The server has no environment variable @string.Join(", ", Model.ProxyUnsetEnvironment). A route whose target names
+            one answers 502 until it is set; a request header that names one is sent empty.
+        </div>
+    }
+
+    @if (Model.IsAdministrator)
+    {
+        @foreach (var editor in Model.ProxyEditors.Where(e => !e.IsNew))
+        {
+            var route = editor.Route;
+            <details class="proxy-route" open="@(editor.Errors.Count > 0 || editor.TestResult is not null)">
+                <summary>
+                    <span class="mono">@editor.OriginalPath</span>
+                    <span class="muted">→</span>
+                    <span class="mono proxy-target">@route.Target</span>
+                    @if (!route.Enabled)
+                    {
+                        <span class="badge badge-warn">off</span>
+                    }
+                    @if (route.WebSockets)
+                    {
+                        <span class="badge">WebSockets</span>
+                    }
+                    @if (route.Streaming)
+                    {
+                        <span class="badge">streaming</span>
+                    }
+                    @if (route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2)
+                    {
+                        <span class="badge">HTTP/2</span>
+                    }
+                    @if (route.FilesFirst)
+                    {
+                        <span class="badge">files first</span>
+                    }
+                </summary>
+                <partial name="_ProxyRoute" model="editor" />
+            </details>
+        }
+
+        var adding = Model.ProxyEditors.Single(e => e.IsNew);
+        <details class="proxy-route proxy-add" open="@(Model.Site.Proxy.Count == 0 || adding.Errors.Count > 0)">
+            <summary>Add a route</summary>
+            <partial name="_ProxyRoute" model="adding" />
+        </details>
+    }
+    else if (Model.Site.Proxy.Count > 0)
+    {
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Path</th>
+                        <th>Target</th>
+                        <th>Settings</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var route in Model.Site.Proxy)
+                    {
+                        <tr>
+                            <td class="mono">@route.Path</td>
+                            <td class="mono">@route.Target</td>
+                            <td class="muted">
+                                @(string.Join(", ", new[]
+                                {
+                                    route.Enabled ? null : "off",
+                                    route.StripPath ? "path removed" : "path kept",
+                                    route.WebSockets ? "WebSockets" : null,
+                                    route.Streaming ? "streaming" : null,
+                                    route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2 ? "HTTP/2" : null,
+                                    route.FilesFirst ? "files first" : null,
+                                    $"{route.TimeoutSeconds} s timeout"
+                                }.Where(part => part is not null)))
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="hint" style="margin: 0.75rem 0 0">Only administrators can change proxy routes, because a route makes the server send requests wherever it points.</p>
+    }
+    else
+    {
+        <p class="muted">This site has no proxy routes. Only administrators can add them, because a route makes the server send requests wherever it points.</p>
     }
 </div>
 
@@ -565,6 +690,7 @@
                     <div class="field">
                         <label for="ai-model">Model</label>
                         <input id="ai-model" name="model" type="text" autocomplete="off" spellcheck="false"
+                               data-model-suggest data-model-provider="#ai-provider"
                                maxlength="@SiteAiSettings.MaxModelLength" value="@Model.AiModelName"
                                placeholder="@(Model.AiProvider?.DefaultModel ?? "the provider's default")" />
                     </div>
@@ -812,7 +938,7 @@
                         <td class="muted">@(release.DeployedBy ?? "—")</td>
                         <td>@release.FileCount.ToString("N0")</td>
                         <td class="nowrap">@Format.Bytes(release.TotalBytes)</td>
-                        <td class="muted">@(release.ArchiveName ?? "—")</td>
+                        <td class="muted">@(release.IsFunctionsOnly ? "functions only, no files" : release.ArchiveName ?? "—")</td>
                         <td class="mono muted">@(release.Functions is null ? "—" : Model.BundleLabel(release.Functions))</td>
                         <td class="actions">
                             @if (release.Id != Model.Site.CurrentRelease)

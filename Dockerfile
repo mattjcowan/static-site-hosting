@@ -26,6 +26,8 @@ COPY src/StaticSiteHost.Abstractions/StaticSiteHost.Abstractions.csproj src/Stat
 RUN dotnet restore src/StaticSiteHost/StaticSiteHost.csproj
 
 COPY src/ src/
+# Built into the server as the manual its read_docs tool serves (src/StaticSiteHost/Tools/Manual.cs).
+COPY README.md ./
 
 # The release version, such as 1.2.3 from the tag the publish workflow runs for. It is also
 # the StaticSiteHost.Abstractions version the server compiles functions against and reports.

@@ -92,6 +92,10 @@ public sealed class AiProviderStore
         if (!AiProviderRecord.IsKnownKind(kind))
             return (null, $"Choose a kind: {AiProviderRecord.KindOpenAi} for OpenAI and anything that copies its API, or {AiProviderRecord.KindAnthropic}.");
 
+        // A new provider with no base URL gets its kind's own: the common case, OpenAI or Anthropic
+        // themselves, needs only a key. A proxy or a local server names its own.
+        if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = DefaultBaseUrl(kind!);
+
         var (fields, error) = Check(name, baseUrl, defaultModel);
         if (error is not null) return (null, error);
         if (CheckKey(apiKey) is { } keyError) return (null, keyError);
@@ -234,12 +238,16 @@ public sealed class AiProviderStore
 
     private readonly record struct Fields(string Name, string BaseUrl, string Model);
 
+    /// <summary>The API's own address for a kind of provider.</summary>
+    public static string DefaultBaseUrl(string kind) =>
+        kind == AiProviderRecord.KindAnthropic ? "https://api.anthropic.com" : "https://api.openai.com/v1";
+
     private static (Fields Fields, string? Error) Check(string? name, string? baseUrl, string? model)
     {
         name = name?.Trim() ?? "";
         model = model?.Trim() ?? "";
 
-        if (name.Length == 0) return (default, "Give the provider a name, such as \"OpenAI\" or \"Team LiteLLM\".");
+        if (name.Length == 0) return (default, "Give the provider a name, such as \"OpenAI\" or \"Claude Sonnet\".");
         if (name.Length > MaxNameLength) return (default, $"A provider's name can be at most {MaxNameLength} characters.");
         if (name.Any(char.IsControl)) return (default, "A provider's name is one line of text.");
 

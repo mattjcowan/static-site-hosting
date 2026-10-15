@@ -15,6 +15,11 @@ A site can be a plain folder of HTML. It can also be a whole application from th
 * [realtime](#realtime) events sent to the pages open on the site
 * an [AI](#ai) chat that uses an API key the server keeps
 
+A site can also front other servers: [proxy routes](#proxy-routes) forward paths to Docker
+containers or services on a private network, with WebSockets, streaming and HTTP/2 set per path.
+And the whole server can be run without the UI, from scripts, CI jobs or an AI agent over
+[MCP](#automation-and-ai-agents).
+
 Every deploy replaces the site's code in place. Nothing needs a restart.
 
 ![Deploying a site: drop a zip, pick a domain, and it is live](docs/screenshots/deploy.png)
@@ -124,6 +129,7 @@ zip.
 | Static files | Serve HTML, CSS, scripts and images from a zip | Upload the zip on the **Deploy** page, or `POST /api/v1/sites/{domain}/deploy` | Member or administrator | [How hosting works](#how-hosting-works) |
 | Header rules | Set response headers, such as `Cache-Control`, per path | A `_headers` file in the zip, **Sites → the domain → Header rules**, or `PUT /api/v1/sites/{domain}/headers` | Member or administrator | [Header rules](#header-rules) |
 | Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
+| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming and HTTP/2 | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy` | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
 | Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
 | Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
 | Functions | Answer requests with C# code | A `_functions/` folder in the zip, an upload on the site's **Functions** card, the browser editor, or `PUT /api/v1/sites/{domain}/functions` | Administrator | [Functions](#functions) |
@@ -131,7 +137,9 @@ zip.
 | Services and jobs | Register services; run code in the background or on a timetable | `[ConfigureServices]`, `[BackgroundService]`, `[Schedule]` or `[Every]` on a method in a function file | Administrator | [Services and jobs](#services-and-jobs) |
 | Realtime | Send events from the server to the pages open on the site | On for every site. Pages use `site.realtime` from `/_host/site.js`; functions use `IRealtime`; anything else uses `POST /api/v1/sites/{domain}/realtime/publish`. `[RealtimeConnect]` and `[RealtimeJoin]` hooks decide who may connect and join | Any page may listen; any API key may publish; administrators write the hooks | [Realtime](#realtime) |
 | AI | Chat with an AI model through the server, which keeps the API key | Add a provider under **AI** in the top bar, then choose it under **Sites → the domain → AI**. Pages use `site.ai.chat`; functions use `IAiChat`; an `[AiAccess]` hook decides which visitors may chat | Administrator | [AI](#ai) |
-| The API | Deploy and manage sites from scripts and CI jobs | Create an API key under **Account → API keys** | Member or administrator (a key can do what its owner can do) | [API](#api) |
+| The API | Deploy and manage sites from scripts and CI jobs | Create an API key under **Account → API keys**, or give a new server one in `Bootstrap:ApiKey` | Member or administrator (a key can do what its owner can do) | [API](#api) |
+| MCP | Let an AI agent set up and manage sites by conversation | Connect the agent to `/mcp` with an API key | Member or administrator (as the key's owner) | [Automation and AI agents](#automation-and-ai-agents) |
+| The assistant | Set up and manage sites by conversation, inside this UI | Choose a provider under **AI → Assistant**, then open **Assistant** in the top bar | Administrators; members too if allowed | [The assistant](#the-assistant) |
 | Accounts | Give people access to the management UI and the API | An administrator creates accounts under **Users** | Administrator | [Accounts](#accounts) |
 
 **The deploy loop.** A deploy works the same way for every capability. You upload a zip, in the
@@ -173,7 +181,7 @@ Node, and it downloads Chromium the first time. The app itself needs neither.
 | Host                                        | Response                                    |
 | ------------------------------------------- | ------------------------------------------- |
 | listed in `SiteHosting:ManagementHosts`      | the management UI and API                   |
-| a domain with a site published to it         | that site: its `/_host/` endpoints, functions and middleware, then its files |
+| a domain with a site published to it         | that site: its `/_host/` endpoints, functions and middleware, then its proxy routes, then its files |
 | anything else                                | the management UI when no management hosts are configured, otherwise `404` |
 
 A request to `/healthz` on any host goes to the management app, which answers
@@ -188,10 +196,12 @@ not your sign-in page.
 port 80.
 
 **Changing a site's domain.** An administrator can move a site to another domain under
-**Sites → the domain → Change domain**, or with `POST /api/v1/sites/{domain}/rename`. The site
-keeps its releases, rules, passcode, variables and data folder. The old domain stops answering
-at once, and nothing redirects from it. Point DNS at the server first, and update any deploy
-scripts, because API calls name the domain.
+**Sites → the domain → Change domain**, with `POST /api/v1/sites/{domain}/rename`, or by asking the
+[assistant](#the-assistant). The site keeps its releases, rules, passcode, variables, proxy routes,
+AI settings, functions and data folder; its functions restart under the new name. The old domain
+stops answering at once, and nothing redirects from it. Point DNS at the server first, and update
+any deploy scripts, because API calls name the domain. Visitors to a private site enter the
+passcode again, since the unlock belongs to the old domain.
 
 ### Request resolution
 
@@ -212,6 +222,8 @@ Because of step 2, a site's links can leave `.html` off: a link to `/about` is a
 
 [Redirects and rewrites](#redirects-and-rewrites) are checked before these steps. So a rule can
 answer a request with a different file, or send the visitor somewhere else.
+[Proxy routes](#proxy-routes) come before both: a path a route covers is forwarded, not served
+from files.
 
 **Assets are handled differently on purpose.** The server skips step 4 for a request that wants
 an asset, such as `/assets/app.js`. A request wants an asset when its path has an extension other
@@ -396,7 +408,8 @@ even when a file exists, put `!` after the status:
   a rule saved on the site wins over a rule from the release: the server checks the site's
   redirect rules before the release's.
 * A redirect target can be a path on this site or a full `http://` or `https://` address. A
-  rewrite target must be a path on this site. The server serves files; it is not a proxy.
+  rewrite target must be a path on this site. To answer a path from another server, use a
+  [proxy route](#proxy-routes).
 * The server adds the visitor's query string to the target, unless the target has its own.
 * The server looks up a rewrite's target directly among the files. It never checks the target
   against the rules again. So one rewrite cannot trigger another, and rules cannot loop.
@@ -412,6 +425,121 @@ even when a file exists, put `!` after the status:
 
 **Errors.** A `_redirects` file that does not parse is ignored, and the deploy reports a warning.
 The UI and the API refuse a rule that is not valid, and save nothing.
+
+### Proxy routes
+
+**What it is.** A proxy route forwards every request under a path to another server and sends its
+answer back, so one domain can serve files, functions and backends together. Use it to put a
+Docker container or a service on a private network on a public domain, or to let a site's pages
+call their API on their own host so they never need CORS. A site can be nothing but proxy routes.
+
+**How to use it.**
+
+1. **Sites → New site.** Enter the domain. The site is created with no files. (Deploying a zip
+   creates a site too; a site can have files and routes.)
+2. **Sites → the domain → Proxy routes → Add a route.** Enter a path and a target, then
+   **Add route**:
+
+   | Path   | Target                       | What it does |
+   | ------ | ---------------------------- | ------------ |
+   | `/api` | `http://orders-api:8080`     | `/api/orders/7?full=1` is answered by `http://orders-api:8080/orders/7?full=1` |
+   | `/`    | `http://web:3000`            | everything else is answered by the `web` container |
+
+3. **Test** sends a `GET` to the target from the server and shows the status, the time it took
+   and the HTTP version, so a mistyped container name shows up before a visitor finds it.
+
+**Matching.** A route's path matches whole segments, ignoring case: `/api` covers `/api` and
+`/api/orders` but not `/apis`. `/` covers everything. The longest matching path wins, whatever
+order the routes were added in.
+
+**Where routes sit in a request.** A request for a proxied path has already passed the site's
+passcode, its middleware and its functions. So a [passcode](#private-sites) or a site's own
+sign-in in [middleware](#middleware) protects what it proxies, and a [function](#functions) can
+still answer one path inside a proxied one. Routes come before [redirects](#redirects-and-rewrites)
+and files. A site made only of proxy routes can have functions too: the first time it is given
+some, it gets a release with no files to carry them, shown as "functions only, no files" in its
+releases list.
+
+**Settings.** Each route has its own:
+
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| Target | – | An `http://` or `https://` URL, optionally with a base path (`http://api:8080/v2`). It can name an environment variable: `${env:ORDERS_URL}` |
+| Remove the path | on | `/api/orders` goes to `{target}/orders`. Off: to `{target}/api/orders` |
+| Enabled | on | Off keeps the route but leaves its paths to the site's files |
+| WebSockets | off | Forward WebSocket connections, over HTTP/1.1 and HTTP/2. Off, an upgrade is refused with `403` |
+| WebSockets from other sites | off | Off refuses an upgrade whose `Origin` is another site. The visitor's cookies go along with it, so leave this off unless the backend checks `Origin` itself |
+| Streaming | off | For server-sent events, long polls and large downloads: the response is never compressed or buffered by this server, and carries `X-Accel-Buffering: no` for an nginx in front |
+| HTTP version | Auto | **Auto:** HTTP/2 when an `https://` target offers it, HTTP/1.1 otherwise. **HTTP/1.1 only.** **HTTP/2 only:** HTTP/2 even over plain `http://` (h2c), as gRPC to a container needs |
+| Timeout | 100 s | How long the target may go without sending anything: the wait for the headers, the gaps in a streamed answer, an idle WebSocket |
+| Largest request body | `MaxUploadBytes` | Lower it for an API that never takes big bodies, or raise it for an upload service |
+| Send the visitor's Host | off | For a backend that tells sites apart by name. Off, it gets the target's own host |
+| Forwarded headers | on | Send `X-Forwarded-For`, `-Proto`, `-Host` and, when the path is removed, `-Prefix`. Whatever the visitor sent under those names is dropped either way |
+| Request headers | none | `Name: value` lines set on every request, or `Name:` to remove one. Give a backend its API key here with `${env:…}`, and the browser never sees it |
+| Cookies the target sets | this host | **This host only:** their `Domain` is removed. **The domain the target names:** left alone. **A parent domain:** moved to a domain the site belongs to, so sibling subdomains share a sign-in |
+| Rewrite redirects | on | A redirect to the target's own address becomes the same place on this site, with the route's path put back in front |
+| Files first | off | Serve the site's file when one exists at the path, and forward only when none does. For a single-page app whose missing paths belong to a server |
+| Accept any certificate | off | For an `https://` target with a self-signed certificate on a network you trust |
+
+**What passes through, and what does not.**
+
+* The method, the path, the query string, the body (streamed, never held in memory) and the
+  headers go to the target. The status, headers and body come back.
+* **The server's own cookies never leave.** Every cookie whose name starts with `ssh.` (the
+  management session, a site's passcode) is taken out of the request. A cookie with such a name
+  set by the target is dropped, so a backend cannot plant one next to the server's.
+* [Header rules](#header-rules) apply to proxied answers too, after the target's own headers, so
+  a rule wins. Scope them by path if a rule for files should not touch the API.
+* On a [private site](#private-sites), proxied answers are marked `private` and
+  `X-Robots-Tag: noindex, nofollow`, like its files.
+* A target that names a path with no host in a redirect is left alone. A backend behind a removed
+  path that redirects with bare paths should build them from `X-Forwarded-Prefix`.
+
+**Errors.** The visitor gets a short answer that names nothing about the target: JSON
+(`{"error":"…"}`) when the request accepts JSON, and the server's error page otherwise. The
+server log has the route, the target and the reason.
+
+| What went wrong | Status |
+| --------------- | ------ |
+| The target refused the connection, does not resolve, or failed TLS | `502` |
+| The target sent nothing for longer than the timeout | `504` |
+| The target names an environment variable the server does not have | `502`, until it is set. The request does not fall through to the site's files |
+| A WebSocket the route does not allow | `403` |
+| The target leads back to this server, round and round | `508` |
+
+A site with routes and no files answers `404` on the paths no route covers.
+
+**Who may set them.** Only administrators may add, change or remove routes, in the UI and the
+API: a route makes the server send requests wherever it points. Members can see a site's routes,
+but not the values of their request headers. A deploy never brings routes: the server does not
+read any route file from a zip. Routes belong to the site and survive deploys and rollbacks.
+Every change is written to the audit log.
+
+**Rules and limits.**
+
+* **What a route cannot reach.** The server's own port (8080, or whatever it listens on) at any
+  address of this machine: `localhost`, `0.0.0.0`, or the container's own address on its Docker
+  network. That would put the management app on a site's domain. Other ports on this machine are
+  fine, so `http://localhost:3000` works on a server that is not in a container. In a container,
+  `localhost` is the container itself; use the other container's service name, or
+  `host.docker.internal` for a service on the host. Link-local addresses (`169.254.0.0/16`,
+  `fe80::/10`) are blocked too, because cloud metadata services answer there. Change that list
+  with `SiteHosting:ProxyBlockedNetworks`. Every check is made on the address a name resolves to,
+  when the connection is made.
+* **Loops.** Each proxied request carries an `X-Site-Host-Hops` count. A request that arrives
+  having been proxied 5 times already is refused with `508`, which stops a route whose target
+  comes back to this server through a public name or a published port.
+* A site can have 50 routes. A path can be 512 characters and a target 2,048. A route can set 25
+  request headers. The timeout is between 1 second and 1 day.
+* A path cannot be `/_host/…` or `/healthz`, which belong to the server, or contain `?`, `#`, `%`,
+  spaces, `//`, `.` or `..` segments.
+* A target cannot carry a user name or password, a query string or a fragment.
+* The request headers a route cannot set are `Host`, `Cookie`, the `X-Forwarded-*` headers,
+  `Forwarded`, `X-Site-Host-Hops`, `Content-Length` and the other transport headers.
+* gRPC needs HTTP/2 on every hop. Use **HTTP/2 only** on the route for the hop to the target. The
+  hop into this server is the catch: on port 8080, which is plain HTTP, the server refuses HTTP/2
+  (it answers `HTTP_1_1_REQUIRED`), so a TLS proxy in front cannot pass gRPC through it yet.
+  WebSockets, streaming and everything else work over HTTP/1.1.
 
 ### Variables
 
@@ -783,7 +911,8 @@ To use it, reference it like any package, and add `using StaticSiteHost.Function
 The server never downloads this package. It compiles your files against its own copy, so it
 ignores the version in the file, and the build reports the version it used. The package on
 nuget.org gives your editor and LINQPad IntelliSense. Its README lists every type, property and
-method.
+method. The server needs no reference at all: a file that uses `StaticSiteHost.Functions` without
+one is compiled against the server's copy just the same. The line is for your editor.
 
 * A file that uses a property or method the server's copy does not have fails to build. The
   compiler error names it.
@@ -1295,6 +1424,7 @@ two roles: **Member** and **Administrator**.
 |                                              | Member | Administrator |
 | -------------------------------------------- | :----: | :-----------: |
 | Deploy to any domain                         |   ✅   |      ✅       |
+| Create a site with no files                  |   ✅   |      ✅       |
 | Roll back a release                          |   ✅   |      ✅       |
 | Set or clear a site passcode                 |   ✅   |      ✅       |
 | Set plain variables                          |   ✅   |      ✅       |
@@ -1305,6 +1435,8 @@ two roles: **Member** and **Administrator**.
 | Rename or delete a site                      |   —    |      ✅       |
 | Manage users                                 |   —    |      ✅       |
 | Manage AI providers and a site's AI settings |   —    |      ✅       |
+| Add or change a site's proxy routes          |   —    |      ✅       |
+| Use the assistant                            | if allowed |   ✅       |
 
 **The first administrator.** The server creates the account named by `Bootstrap:Username` from
 configuration on startup. It is created once. A password changed in the UI is not reset by a
@@ -1662,6 +1794,24 @@ bar. Each provider has a name, a kind, a base URL, an API key and a default mode
 | `openai`    | `https://api.openai.com/v1`  | OpenAI, and any service with the same chat completions API: a [LiteLLM](https://docs.litellm.ai/) proxy (`http://litellm:4000/v1`), [Ollama](https://ollama.com/) (`http://ollama:11434/v1`), [OpenRouter](https://openrouter.ai/) (`https://openrouter.ai/api/v1`) |
 | `anthropic` | `https://api.anthropic.com`  | Anthropic's Messages API, with a model such as `claude-sonnet-5` |
 
+Leave the base URL empty for OpenAI's or Anthropic's own; it is filled in from the kind.
+
+**Choosing a model.** Every model field (a provider's default model, a site's AI card, the
+assistant's settings) suggests the models the provider offers, as soon as you click into it. The
+list comes from the provider itself, with its own key (`GET /v1/models` for Anthropic,
+`GET {base URL}/models` for the rest), so it is exactly what that key can use. It works for a
+local Ollama or a LiteLLM proxy too. The fast, inexpensive models (Haiku, mini, nano, flash…) come
+first. You can still type any name, such as a model newer than the list or a fine-tune.
+
+* While a provider is being added, the list comes from the kind, base URL and key typed into the
+  form, before anything is saved.
+* Left out of the list: embedding, speech, image and moderation models, and models that only
+  answer on APIs this server does not use (OpenAI's codex, deep-research, search, `-pro` and
+  completions-only `instruct` models).
+* A list is kept for 10 minutes, and asked for again when the provider changes. A provider that
+  cannot list its models leaves the field as a plain text box, with the reason under it.
+* Scripts use `GET /api/v1/ai/providers/{id}/models`; agents use the `list_ai_models` tool.
+
 **Rules and limits.**
 
 * The server adds the endpoint to the base URL (`/chat/completions` or `/v1/messages`). It does
@@ -1990,7 +2140,9 @@ this way, in `_functions/Ai.cs`.
 deploy the UI can do. A key can do exactly what its owner can do.
 
 **How to use it.** Create a key under **Account → API keys**. You can give it a name and an
-expiry of 1 to 3,650 days. The key is shown once. Revoke it on the same page.
+expiry of 1 to 3,650 days. The key is shown once. Revoke it on the same page. A new server can
+also be given a key in its configuration, so a script can set it up before anyone signs in: see
+[Automation and AI agents](#automation-and-ai-agents).
 
 Authenticate with either header:
 
@@ -2007,6 +2159,7 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `GET`    | `/api/v1/me`                                | who the key belongs to      |
 | `GET`    | `/api/v1/sites`                             | every published domain      |
 | `GET`    | `/api/v1/sites/{domain}`                    | one domain, with releases   |
+| `POST`   | `/api/v1/sites/{domain}`                    | create a site with no files; `409` if it exists |
 | `POST`   | `/api/v1/sites/{domain}/deploy`             | upload a zip                |
 | `POST`   | `/api/v1/sites/{domain}/rollback/{release}` | make an earlier release live |
 | `PUT`    | `/api/v1/sites/{domain}/passcode`           | `{"passcode":"…"}` — make it private |
@@ -2017,6 +2170,10 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `GET`    | `/api/v1/sites/{domain}/redirects`          | redirects, site and release |
 | `PUT`    | `/api/v1/sites/{domain}/redirects`          | replace the site's redirects |
 | `DELETE` | `/api/v1/sites/{domain}/redirects`          | remove them                 |
+| `GET`    | `/api/v1/sites/{domain}/proxy`              | the site's [proxy routes](#proxy-routes); request header values for administrators only |
+| `PUT`    | `/api/v1/sites/{domain}/proxy`              | `{"routes":[{"path":"/api","target":"http://orders:8080"}]}` — replace them; administrators only |
+| `DELETE` | `/api/v1/sites/{domain}/proxy`              | remove them; administrators only |
+| `POST`   | `/api/v1/sites/{domain}/proxy/test`         | `{"path":"/api"}` — send a `GET` to that route's target and report what came back; administrators only |
 | `GET`    | `/api/v1/sites/{domain}/variables`          | variables, their values and where each comes from |
 | `PUT`    | `/api/v1/sites/{domain}/variables`          | replace every value the site sets |
 | `DELETE` | `/api/v1/sites/{domain}/variables`          | remove them, back to the release defaults |
@@ -2034,11 +2191,30 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `PUT`    | `/api/v1/sites/{domain}/functions`          | upload `.cs`/`.linq` files; administrators only |
 | `DELETE` | `/api/v1/sites/{domain}/functions`          | stop running functions; administrators only |
 | `DELETE` | `/api/v1/sites/{domain}/functions/files/{name}` | remove one file and redeploy the rest; administrators only |
+| `POST`   | `/api/v1/sites/{domain}/functions/check`    | compile files as `PUT` would, without going live; returns a `draft` id and the compiler's `diagnostics`; administrators only |
+| `POST`   | `/api/v1/sites/{domain}/functions/test`     | `{"target":"live","method":"GET","path":"/api/x"}` — run one request against the live functions or a `draft`, in memory; returns status, headers and body; administrators only |
 | `GET`    | `/api/v1/functions`                         | the global functions and their status |
 | `GET`    | `/api/v1/functions/source`                  | their source                |
 | `PUT`    | `/api/v1/functions`                         | upload global functions; administrators only |
 | `DELETE` | `/api/v1/functions`                         | remove them; administrators only |
 | `DELETE` | `/api/v1/functions/files/{name}`            | remove one global file and redeploy the rest; administrators only |
+| `POST`   | `/api/v1/functions/check`, `/api/v1/functions/test` | the same two for the global functions; administrators only |
+| `POST`   | `/api/v1/ai/providers`                      | `{"name":"…","kind":"anthropic","apiKey":"…","defaultModel":"…"}` — add one; without a `baseUrl` it gets OpenAI's or Anthropic's own; administrators only |
+| `PUT`    | `/api/v1/ai/providers/{id}`                 | change one; an empty `apiKey` keeps its key; administrators only |
+| `DELETE` | `/api/v1/ai/providers/{id}`                 | remove one; administrators only |
+| `GET`    | `/api/v1/ai/providers/{id}/models`          | the models the provider offers, asked of the provider, fast ones first; administrators only |
+| `POST`   | `/api/v1/ai/providers/{id}/test`            | send it a one-word prompt and report the answer, time and tokens; administrators only |
+| `GET`    | `/api/v1/keys`                              | your own API keys, without their secrets |
+| `POST`   | `/api/v1/keys`                              | `{"name":"ci","expiresInDays":90}` — a new key for yourself, shown once |
+| `DELETE` | `/api/v1/keys/{id}`                         | revoke one of your keys |
+| `GET`    | `/api/v1/users`                             | every account; administrators only |
+| `POST`   | `/api/v1/users`                             | `{"username":"…","role":"Member","credential":"link"}` — returns an `inviteLink` (or, with `"password"`, a `temporaryPassword`) once; administrators only |
+| `PUT`    | `/api/v1/users/{id}`                        | `{"role":"Administrator"}` and/or `{"disabled":true}`; administrators only |
+| `POST`   | `/api/v1/users/{id}/invite`                 | a new private link, which also resets the password; administrators only |
+| `DELETE` | `/api/v1/users/{id}`                        | delete an account and its keys; administrators only |
+| `GET`    | `/api/v1/assistant`                         | the [assistant](#the-assistant)'s settings; administrators only |
+| `PUT`    | `/api/v1/assistant`                         | `{"providerId":"…","model":"…","membersMayUse":false}` — change them; no `providerId` turns it off; administrators only |
+| `GET`    | `/api/v1/audit`                             | the audit log, newest first; `?limit=` (100), `?action=site`, `?domain=`, `?since=`; administrators only |
 | `DELETE` | `/api/v1/sites/{domain}`                    | administrators only         |
 
 **Rollback.** A rollback brings back the functions the release had. Add `?functions=keep` to run
@@ -2184,6 +2360,152 @@ curl -X PUT -H "X-Api-Key: $SSH_KEY" -H "Content-Type: application/json" \
 | `403` | the key's owner does not have the role | none |
 | `404` | no site is published at that domain (`{ "error": "No site is published at '…'." }`), or the item asked for does not exist | `{ "error": "…" }` |
 
+The user rules are the UI's: nobody changes their own role, disables or deletes their own
+account through the API either, and at least one active administrator always remains.
+
+---
+
+## Automation and AI agents
+
+**What it is.** Everything the UI does to sites, and the server's own administration, can be
+done without the UI: by a script, a CI job, or an AI agent. There are three parts: a key a new
+server starts with, the [API](#api), and an MCP endpoint that gives agents the same abilities as
+tools.
+
+### A key from the first start
+
+Give the server an API key in its configuration, and it works from the first start, before
+anyone signs in. It belongs to the first administrator (`Bootstrap:Username`).
+
+```bash
+# Make one: sshost_, an id of 8 to 64 letters and digits, _, a secret of at least 32.
+echo "sshost_$(openssl rand -hex 6)_$(openssl rand -hex 24)"
+```
+
+Set it as `ADMIN_API_KEY` in `.env` (`Bootstrap__ApiKey`). Then a fresh server can be set up
+from a script:
+
+```bash
+export SSH_KEY=sshost_…   # the same key
+curl -sS -X POST -H "X-Api-Key: $SSH_KEY" https://deploy.example.com/api/v1/sites/app.example.com
+curl -sS -X PUT  -H "X-Api-Key: $SSH_KEY" -H "Content-Type: application/json" \
+  -d '{"routes":[{"path":"/","target":"http://web:3000"},{"path":"/api","target":"http://api:8080","webSockets":true}]}' \
+  https://deploy.example.com/api/v1/sites/app.example.com/proxy
+```
+
+* Change the setting to replace the key, and remove the setting to revoke it. Either way the old
+  key stops working at the next start, and so it does if the new value cannot be read: a typo
+  while rotating a leaked key never leaves the leaked one working (the log says what is wrong).
+* Revoking the key under **Account → API keys** or with `DELETE /api/v1/keys/{id}` sticks, even
+  while the setting still names it. Put a new key in the setting to have one again.
+* It shows under **Account → API keys** as "From configuration".
+* Treat it like the administrator's password. For CI, make a member's key with an expiry
+  (`POST /api/v1/keys`) and give the job that instead.
+
+### MCP
+
+**What it is.** An [MCP](https://modelcontextprotocol.io) endpoint at `/mcp` on the management
+host. An agent that speaks MCP, such as Claude Code, Claude Desktop or Cursor, connects to it
+and can then create sites, deploy files, set rules, variables and proxy routes, write, check and
+test functions, and read the manual, by conversation.
+
+**How to use it.** Connect with an API key. The agent can do what the key's owner can do.
+
+```bash
+claude mcp add --transport http site-host https://deploy.example.com/mcp \
+  --header "X-Api-Key: sshost_…"
+```
+
+Then ask, for example: *"Create the site shop.example.com, forward / to
+http://web.railway.internal:3000 and /api to http://api.railway.internal:8080 with WebSockets on,
+and test both."*
+
+**The tools.** Each calls what the UI and the API call, with the same checks and the same audit
+log entries.
+
+| Area | Tools |
+| ---- | ----- |
+| You and the server | `who_am_i`, `read_docs` (this manual, section by section), `read_audit_log` |
+| Sites | `list_sites`, `get_site`, `create_site`, `deploy_files`, `rollback_site`, `rename_site`, `delete_site` |
+| Visibility and rules | `set_passcode`, `remove_passcode`, `get_rules`, `set_header_rules`, `set_redirect_rules` |
+| Variables | `get_variables`, `set_variable`, `remove_variable` |
+| Proxy routes | `get_proxy_routes`, `set_proxy_route`, `remove_proxy_route`, `test_proxy_route` |
+| Functions | `get_functions`, `check_functions`, `test_functions`, `deploy_functions`, `remove_functions` |
+| AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `test_ai_provider`, `set_site_ai` |
+| Users | `list_users`, `create_user` |
+
+* `deploy_files` takes the files themselves (`[{path, content}]`, binary as base64), not a zip.
+  They make a new release, which replaces the whole previous one, as a zip deploy does.
+* The rule tools take the `_headers` and `_redirects` text formats.
+* Each tool says whether it only reads, changes something, or is destructive (`delete_site`,
+  `remove_functions`, `remove_proxy_route`, `remove_variable`, `remove_passcode`), so an agent
+  that asks before acting knows when to ask.
+* A tool that cannot do what was asked answers `{ "error": "…" }`, or `{ "errors": [...] }`, with
+  the reason, so the agent can correct the call.
+
+**Rules and limits.**
+
+* `/mcp` answers on the management host only, never on a site's domain.
+* It needs an API key; without one it answers `401`.
+* Each call is one request. The server keeps no session.
+
+### The assistant
+
+**What it is.** A chat panel on every page of the management UI. Tell it what to set up, and it
+does it with the same tools MCP serves, as you: *"Create shop.example.com, send / to
+http://web.railway.internal:3000 and /api to http://api.railway.internal:8080 with WebSockets."*
+
+**How to use it.**
+
+1. **AI → Assistant.** Choose a provider and, if you like, a model. A fast, inexpensive model
+   works well, such as Claude Haiku. Tick **Members may use it too** to let
+   members use it. A member's assistant can only do what a member can.
+2. Open **Assistant** in the top bar. On a site's page it knows which site you mean by "this
+   site".
+
+What you see:
+
+* Its answer, as it writes it.
+* Each step as it runs, with ✓ or ✗ and the reason when a step fails.
+* **Run** and **Cancel** before it removes anything (a site, functions, a proxy route, a
+  variable's value) or makes a private site public. Nothing of that kind runs until you choose
+  **Run**.
+* The page under the panel brings itself up to date after a change: it cross-fades to the new
+  content in place, with no reload, keeping your scroll position and the sections you opened.
+  If you have typed something on the page that is not saved, it is left alone, and the panel
+  offers **Update it anyway** instead. Browsers without view transitions swap the content
+  without the fade.
+* **New** starts a new conversation. The panel and its conversation stay open as you move
+  between pages.
+
+**Why it is quick.**
+
+* Every call tells the model who you are, the sites on the server and the site the page shows,
+  so it rarely needs to look anything up first.
+* The tool descriptions carry the formats and rules, so it does not need to read the manual.
+* It makes independent calls together: both routes in one step, not two.
+* Setting a proxy route also checks that the target answers, so no separate test step is needed.
+* `set_proxy_route` and `deploy_files` create the site when it does not exist, so there is no
+  separate step for that.
+* With an Anthropic provider, the instructions and tools (about 8,000 tokens) are cached between
+  calls, so each call after the first sends only a few hundred new tokens.
+
+A typical setup takes two model calls: one that makes the changes, one that says what happened.
+Measured with Claude Haiku 5.5, GPT-5.4 mini and GPT-5.4 nano: putting a site in front of two
+servers took 2.5 to 3.5 seconds, setting a passcode or header rules 1.5 to 3 seconds, writing and
+deploying a function 6 to 12 seconds, and a delete well under a second to ask and to run.
+
+**Rules and limits.**
+
+* Every message is billed to the provider's key. Under each answer the panel shows the tokens it
+  used and how many model calls it took.
+* At most 12 model calls per message. A message is limited to 8,000 characters.
+* A conversation is kept in the server's memory for 2 hours after its last message, and is lost
+  on a restart.
+* It answers on the management host only, signed in, with the UI's own antiforgery check.
+* `GET` and `PUT /api/v1/assistant` read and change its settings (`providerId`, `model`,
+  `membersMayUse`); administrators only.
+
 ---
 
 ## Configuration
@@ -2218,11 +2540,14 @@ environment variable with `__` as the separator (`SiteHosting__MaxUploadBytes`),
 | `SiteHosting:RealtimeNegotiationsPerMinute` | `60`    | Realtime connections one address may start to one site in a minute, counted before the site's `[RealtimeConnect]` hook runs; `0` turns the limit off |
 | `SiteHosting:RealtimeMaxGroupsPerSite` | `1000`       | Realtime groups one site may have in use at once |
 | `SiteHosting:RealtimeMaxGroupsPerConnection` | `100`  | Realtime groups one page may be in |
+| `SiteHosting:ProxyBlockedNetworks`     | `169.254.0.0/16, fe80::/10` | Comma-separated networks a [proxy route](#proxy-routes) may never connect to. The server's own ports are refused whatever this says |
+| `SiteHosting:ProxyConnectTimeoutSeconds` | `10`       | How long a proxy route waits to connect to its target |
 | `Bootstrap:Username`                   | `admin`      | The first administrator |
 | `Bootstrap:Password`                   | *(empty)*    | Empty generates one on first run |
 | `Bootstrap:DisplayName`                | `Administrator` | The first administrator's display name |
 | `Bootstrap:MustChangePassword`         | `false`      | Require a change even with a configured password |
 | `Bootstrap:ResetPasswordOnStartup`     | `false`      | Recovery switch — applies the configured password again on every start |
+| `Bootstrap:ApiKey`                     | *(empty)*    | An API key for the first administrator that works from the first start; see [Automation and AI agents](#automation-and-ai-agents) |
 
 With Docker Compose, `.env` sets these names (see `.env.example`):
 
@@ -2235,6 +2560,7 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 | `TRUST_FORWARDED_HEADERS` | `SiteHosting:TrustForwardedHeaders` |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME` | `Bootstrap:Username`, `Bootstrap:Password`, `Bootstrap:DisplayName` |
 | `ADMIN_RESET_PASSWORD_ON_STARTUP` | `Bootstrap:ResetPasswordOnStartup` |
+| `ADMIN_API_KEY` | `Bootstrap:ApiKey` |
 | `MAX_UPLOAD_BYTES` | `SiteHosting:MaxUploadBytes` |
 | `RELEASES_TO_KEEP` | `SiteHosting:ReleasesToKeep` |
 
@@ -2275,6 +2601,11 @@ Back up `/data`, and you have backed up everything.
 * **Forwarded headers.** Set `TRUST_FORWARDED_HEADERS=true` only when a proxy you control is in
   front of the app. Routing uses the `Host` header, so a forged `X-Forwarded-Host` would let a
   caller choose which site answers.
+* **Proxy routes to containers.** Put the containers a site's [proxy routes](#proxy-routes)
+  forward to on a Docker network the app is also on, and use their service names in targets
+  (`http://orders-api:8080`). Their ports need not be published on the host. A container that
+  restarts on a new address is found again on the next new connection, and pooled connections
+  are renewed every five minutes in any case.
 * **Single instance.** Users, keys and site metadata are JSON files owned by one process. Give
   the server more resources; do not run several copies. The passcode and sign-in failure
   counters are in memory, so they reset on restart.
@@ -2298,8 +2629,12 @@ Back up `/data`, and you have backed up everything.
 ## Local development
 
 ```bash
-dotnet run --project src/StaticSiteHost
+npm run dev     # or: dotnet run --project src/StaticSiteHost
 ```
+
+`npm run dev` runs `dotnet watch`, which reloads the server as you edit. Nothing needs installing
+for it: the root `package.json` only holds shortcuts to the .NET SDK (`npm start`, `npm run build`
+and `npm test` too).
 
 It starts on <http://localhost:8080>, the same port as the container, so every URL in this
 README works either way. Stop the container first if it is running, or the port is already in
@@ -2388,7 +2723,7 @@ the Actions tab for a version that is already tagged, for example after a push t
 
 | Term | Meaning |
 | ---- | ------- |
-| **site** | Everything published at one domain: its releases, rules, variables, passcode, functions, data folder and AI settings. |
+| **site** | Everything published at one domain: its releases, rules, variables, passcode, proxy routes, functions, data folder and AI settings. |
 | **release** | One uploaded zip, unpacked into its own directory. One release is live at a time. |
 | **functions** | A site's C# code (`.cs` and `.linq` files), compiled by the server. **Global functions** answer on every site. |
 | **handler** | A `public static` method in the functions with a route attribute, such as `[HttpGet("/path")]`. It answers requests. |
@@ -2397,6 +2732,9 @@ the Actions tab for a version that is already tagged, for example after a push t
 | **background service** | A `[BackgroundService]` method that runs for as long as the functions are live. |
 | **job** | A `[Schedule]` or `[Every]` method that runs on a timetable. |
 | **hook** | A method that decides who may do something from a browser: `[RealtimeConnect]`, `[RealtimeJoin]` or `[AiAccess]`. |
+| **proxy route** | A path on a site whose requests are forwarded to another server, set by an administrator. |
+| **assistant** | The chat panel in the management UI that sets things up by conversation, with the same tools as MCP. |
+| **MCP** | The [Model Context Protocol](https://modelcontextprotocol.io): how AI agents such as Claude Code call this server's tools, at `/mcp`. |
 | **variable** | A named value for a site. A release declares it in `_variables.json`, and its value is set on the site. |
 | **secret** | A variable whose value is stored encrypted and never shown again. Only administrators may set it. |
 | **provider** | An AI service (OpenAI-compatible or Anthropic) that an administrator adds under **AI**. |
@@ -2404,6 +2742,6 @@ the Actions tab for a version that is already tagged, for example after a push t
 | **connection** | One page's link to the site's realtime hub. It has an id, an optional user, and its groups. |
 | **page** | An HTML page of the site, open in a visitor's browser. |
 | **visitor** | Anyone who opens a site in a browser. |
-| **member** | A signed-in user who can deploy and manage sites, but not functions, secrets, users or AI. |
-| **administrator** | A signed-in user who can do everything, including functions, secrets, users and AI. |
+| **member** | A signed-in user who can deploy and manage sites, but not functions, secrets, proxy routes, users or AI. |
+| **administrator** | A signed-in user who can do everything, including functions, secrets, proxy routes, users and AI. |
 | **API key** | A key that lets a script or CI job call the [API](#api) with its owner's rights. |

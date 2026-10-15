@@ -1,3 +1,5 @@
+@inject StaticSiteHost.Services.Assistant.AssistantSettingsStore AssistantSettings
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
 @{
     var path = (Context.Request.Path.Value ?? "/").ToLowerInvariant();
     bool Active(string prefix) => prefix == "/" ? path == "/" : path.StartsWith(prefix, StringComparison.Ordinal);
@@ -5,6 +7,10 @@
     var signedIn = User.Identity?.IsAuthenticated == true;
     var isAdmin = User.IsInRole(Roles.Administrator);
     var displayName = User.FindFirstValue("display_name") ?? User.Identity?.Name;
+
+    // The assistant panel, when it is on for this user. It is told which site the page shows.
+    var assistant = signedIn && await AssistantSettings.IsAvailableToAsync(isAdmin);
+    var pageDomain = Context.Request.RouteValues["domain"] as string ?? Context.Request.Query["domain"].FirstOrDefault();
 
     var status = TempData["StatusMessage"] as string;
     var error = TempData["ErrorMessage"] as string;
@@ -41,9 +47,18 @@
                         <a asp-page="/Admin/Functions" class="@(Active("/admin/functions") ? "active" : null)">Functions</a>
                         <a asp-page="/Admin/Ai" class="@(Active("/admin/ai") ? "active" : null)">AI</a>
                     }
+                    @if (assistant)
+                    {
+                        <button type="button" class="nav-assistant" data-assistant-toggle aria-controls="assistant" aria-expanded="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            Assistant
+                        </button>
+                    }
                     <span class="nav-user">
                         @displayName
-                        <form method="post" asp-page="/Logout">
+                        <form method="post" asp-page="/Logout" data-sign-out>
                             <button type="submit" class="btn-link">Sign out</button>
                         </form>
                     </span>
@@ -65,6 +80,35 @@
         @RenderBody()
     </main>
 
+    @if (assistant)
+    {
+        <aside id="assistant" class="assistant" hidden aria-label="Assistant"
+               data-csrf="@Antiforgery.GetAndStoreTokens(Context).RequestToken" data-domain="@pageDomain"
+               data-user="@User.FindFirstValue(ClaimTypes.NameIdentifier)">
+            <header class="assistant-head">
+                <strong>Assistant</strong>
+                <span class="assistant-where muted">@(pageDomain is null ? "" : pageDomain)</span>
+                <button type="button" class="btn-link" data-assistant-new title="Start a new conversation">New</button>
+                <button type="button" class="assistant-close" data-assistant-toggle aria-label="Close the assistant">×</button>
+            </header>
+            <div class="assistant-log" aria-live="polite">
+                <p class="assistant-empty muted">
+                    Tell it what to set up. For example: <em>“Create shop.example.com, send / to http://web:3000 and /api to
+                    http://api:8080 with WebSockets.”</em> It acts as you, and asks before deleting anything.
+                </p>
+            </div>
+            <form class="assistant-form">
+                <textarea rows="2" placeholder="Ask, or tell it what to do…" aria-label="Message" maxlength="8000"></textarea>
+                <button type="submit" class="btn-primary">Send</button>
+            </form>
+        </aside>
+        <script src="~/js/assistant.js" asp-append-version="true"></script>
+    }
+
+    @if (isAdmin)
+    {
+        <script src="~/js/model-suggestions.js" asp-append-version="true"></script>
+    }
     <script src="~/js/app.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>

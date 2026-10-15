@@ -1,0 +1,795 @@
+using System.ComponentModel;
+using System.IO.Compression;
+using System.Reflection;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.AI;
+using StaticSiteHost.Endpoints;
+using StaticSiteHost.Models;
+using StaticSiteHost.Serving;
+using StaticSiteHost.Services;
+using StaticSiteHost.Services.Ai;
+using StaticSiteHost.Services.Realtime;
+
+namespace StaticSiteHost.Tools;
+
+/// <summary>How a tool is used, for clients that ask before running something that changes things.</summary>
+public enum ToolEffect
+{
+    /// <summary>Only reads.</summary>
+    Read,
+
+    /// <summary>Changes something, and the change can be put back.</summary>
+    Change,
+
+    /// <summary>
+    /// Removes something (a site, functions, a route, a variable's value) or makes a private site
+    /// public. The management assistant asks the user before it runs one.
+    /// </summary>
+    Destructive
+}
+
+/// <summary>Marks a method of <see cref="SiteHostTools"/> as a tool, with the name agents call it by.</summary>
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class SiteHostToolAttribute(string name, ToolEffect effect) : Attribute
+{
+    public string Name { get; } = name;
+    public ToolEffect Effect { get; } = effect;
+}
+
+/// <summary>One tool: the function to call, and how it is used.</summary>
+public sealed record SiteHostTool(AIFunction Function, ToolEffect Effect);
+
+/// <summary>A file for <see cref="SiteHostTools.DeployFiles"/>.</summary>
+/// <param name="Path">Where it goes in the site, such as index.html or assets/app.js.</param>
+/// <param name="Content">The file's text, or its bytes in base64 when <paramref name="Base64"/> is true.</param>
+public sealed record SiteFileInput(string Path, string Content, bool Base64 = false);
+
+/// <summary>A function source file for the function tools.</summary>
+/// <param name="Name">The file name: .cs for C#, .linq for a LINQPad file.</param>
+/// <param name="Content">The file's text.</param>
+public sealed record FunctionFileInput(string Name, string Content);
+
+/// <summary>
+/// Everything an agent can do on this server, as tools. Defined once here and served two ways:
+/// over MCP at <c>/mcp</c> (Program.cs), and to any other caller in this process that wants to
+/// hand an AI model the same abilities. Each tool calls the service the UI and the API use, with
+/// the same checks, so a tool can do exactly what its caller could do through the API, no more.
+///
+/// The caller is whoever the current HTTP request is signed in as, read through
+/// <see cref="IHttpContextAccessor"/>: an API key's owner over MCP. Results are the API's JSON
+/// shapes. A tool that cannot do what was asked returns <c>{ "error": "…" }</c> rather than
+/// throwing, so the model reads why and can fix the call.
+/// </summary>
+public static class SiteHostTools
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()
+    };
+
+    /// <summary>The version the build was stamped with, without the commit suffix.</summary>
+    public static string ServerVersion { get; } =
+        (typeof(SiteHostTools).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0")
+        .Split('+')[0];
+
+    /// <summary>Every tool, built once.</summary>
+    public static IReadOnlyList<SiteHostTool> All { get; } = Build();
+
+    private static List<SiteHostTool> Build() =>
+        typeof(SiteHostTools)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Select(method => (Method: method, Tool: method.GetCustomAttribute<SiteHostToolAttribute>()))
+            .Where(pair => pair.Tool is not null)
+            .Select(pair => new SiteHostTool(
+                AIFunctionFactory.Create(pair.Method, target: null, new AIFunctionFactoryOptions
+                {
+                    Name = pair.Tool!.Name,
+                    SerializerOptions = Json
+                }),
+                pair.Tool.Effect))
+            .OrderBy(tool => tool.Function.Name, StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>
+    /// What an agent is told about the server before its first call, over MCP and in the management
+    /// assistant. Kept short: the tool descriptions carry the details, so a model can act on the
+    /// first turn without reading the manual.
+    /// </summary>
+    public const string Instructions = """
+        You manage a web hosting server. Each site is a domain. A site can serve uploaded files, run C# functions,
+        and forward paths to other servers (proxy routes), all at once.
+
+        Recipes:
+        - Site in front of other servers (containers, Railway, a private network): one set_proxy_route per
+          path ("/" for the app, "/api" for the API...), all in one turn. It creates the site if needed, and each
+          result already reports whether the target answered.
+        - Site from files: deploy_files (creates the site if needed).
+        - Private site: set_passcode. Caching or security headers: set_header_rules. Moved pages: set_redirect_rules.
+        - Server code: check_functions, then test_functions, then deploy_functions.
+
+        Work fast:
+        - Act on what you are told. Do not list or read things you already know from the context given.
+        - Put every call you already know you need in the same turn. They run in the order given, so steps that
+          depend on each other can go together, such as deploy_files then deploy_functions.
+        - Do not call read_docs unless a tool's description does not cover what is needed.
+        - A result with "error" or "errors" says what to fix: fix the call and try again once.
+        - When done, answer in one or two short sentences: what changed, and anything that failed.
+        """;
+
+    /// <summary>How function files are written, for the function tools' descriptions.</summary>
+    private const string FunctionsGuide =
+        "Function files are .NET 10 file-based C# apps. Minimal file: " +
+        "'#:sdk Microsoft.NET.Sdk.Web' first line; then 'using Microsoft.AspNetCore.Http; using Microsoft.AspNetCore.Mvc;' and " +
+        "'public static class Api { [HttpGet(\"/api/hello/{name?}\")] public static IResult Hello(string? name) => Results.Json(new { hi = name ?? \"you\" }, Json); " +
+        "private static readonly System.Text.Json.JsonSerializerOptions Json = new(); }'. " +
+        "Rules: handlers are public static methods of a public class with [HttpGet], [HttpPost], [HttpPut], [HttpDelete] or [Route] naming the full path ({x} one segment, {x?} optional). " +
+        "Parameters are filled by type: HttpContext, HttpRequest, HttpResponse, CancellationToken, ILogger, DirectoryInfo (the site's data folder, for SQLite or files), " +
+        "or by name from the route then the query string for strings, numbers, bool, Guid and dates. " +
+        "Return IResult (Results.Json with a static JsonSerializerOptions field, Results.Text, Results.File...), string (text/plain), int (a status code), or nothing (204). " +
+        "For site types add '#:package StaticSiteHost.Abstractions@*' and 'using StaticSiteHost.Functions;': ISite, ISiteVariables (the site's variables), IAiChat, IRealtime as parameters; " +
+        "[Middleware] public static async Task Gate(HttpContext context, Func<Task> next) runs before every request to the site, files and proxy routes included (call next() to continue). " +
+        "NuGet packages: '#:package Name@version'.";
+
+    // ================================================================ you and the server
+
+    [SiteHostTool("who_am_i", ToolEffect.Read)]
+    [Description("Who this connection acts as: user name and role. Administrators can use every tool; members cannot change functions, proxy routes, AI, users, or rename or delete sites.")]
+    public static JsonElement WhoAmI(IServiceProvider services)
+    {
+        var caller = Caller.Of(services);
+        return ToJson(new
+        {
+            username = caller.Principal.Identity?.Name,
+            displayName = caller.Principal.FindFirstValue("display_name"),
+            role = caller.Principal.FindFirstValue(ClaimTypes.Role),
+            administrator = caller.IsAdministrator
+        });
+    }
+
+    [SiteHostTool("read_docs", ToolEffect.Read)]
+    [Description("The server's manual. With no section, lists the section titles. With a section title (or part of one, such as 'Proxy routes' or 'Redirects'), returns that section's text.")]
+    public static JsonElement ReadDocs(
+        [Description("A section title or part of one. Leave empty to list the sections.")] string? section = null)
+    {
+        var sections = Manual.Sections;
+        if (string.IsNullOrWhiteSpace(section))
+            return ToJson(new { sections = sections.Select(s => s.Title) });
+
+        var match = sections.FirstOrDefault(s => s.Title.Equals(section.Trim(), StringComparison.OrdinalIgnoreCase))
+                    ?? sections.FirstOrDefault(s => s.Title.Contains(section.Trim(), StringComparison.OrdinalIgnoreCase));
+        return match is null
+            ? Error($"No section is called '{section}'. Call read_docs with no section for the list.")
+            : ToJson(new { title = match.Title, text = match.Text });
+    }
+
+    [SiteHostTool("read_audit_log", ToolEffect.Read)]
+    [Description("Recent changes on the server, newest first: who deployed, what settings changed. Administrators only.")]
+    public static async Task<JsonElement> ReadAuditLog(
+        IServiceProvider services,
+        [Description("How many entries, 1 to 1000.")] int limit = 50,
+        [Description("Only this action or its kind, such as 'site.deploy' or 'site'.")] string? action = null,
+        [Description("Only entries about this site.")] string? domain = null)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        return ToJson(await services.GetRequiredService<AuditLog>().ReadAsync(limit, action, domain));
+    }
+
+    // ================================================================ sites
+
+    [SiteHostTool("list_sites", ToolEffect.Read)]
+    [Description("Every site on the server, with its current release, rule counts, proxy routes and functions.")]
+    public static JsonElement ListSites(IServiceProvider services) =>
+        ToJson(services.GetRequiredService<SiteStore>().List().Select(site => DescribeSite(services, site)));
+
+    [SiteHostTool("get_site", ToolEffect.Read)]
+    [Description("One site in full: releases, counts of rules and routes, functions, whether it has a passcode.")]
+    public static JsonElement GetSite(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        WithSite(services, domain, site => DescribeSite(services, site));
+
+    [SiteHostTool("create_site", ToolEffect.Change)]
+    [Description("Creates a site with no files at a domain (fails if the domain already has one). Rarely needed: set_proxy_route and deploy_files both create the site when it does not exist, so call them directly. Point the domain's DNS at this server for visitors to reach it.")]
+    public static async Task<JsonElement> CreateSite(IServiceProvider services, [Description("The domain, such as app.example.com.")] string domain)
+    {
+        var caller = Caller.Of(services);
+        var (ok, error, created, _) = await services.GetRequiredService<ZipDeploymentService>().CreateAsync(domain, caller.Actor);
+        return ok
+            ? ToJson(DescribeSite(services, services.GetRequiredService<SiteStore>().TryGet(created)!))
+            : Error(error);
+    }
+
+    [SiteHostTool("deploy_files", ToolEffect.Change)]
+    [Description("Publishes a new release of a site from the files given, creating the site if it does not exist. The files replace the whole previous release, which stays available to roll back to. Put index.html at the root; a path with no file falls back to the nearest index.html, so a single-page app works as is; a link to /about is answered by about.html. Optional files read from the release: _headers and _redirects (the formats of set_header_rules and set_redirect_rules), _variables.json (declares variables), and C# function files in a top-level _functions/ folder (administrators only).")]
+    public static async Task<JsonElement> DeployFiles(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("Every file of the site. Text goes in content as is; binary files as base64 with base64 true.")] IReadOnlyList<SiteFileInput> files,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (files is not { Count: > 0 }) return Error("Give at least one file, such as index.html.");
+
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                byte[] bytes;
+                try
+                {
+                    bytes = file.Base64 ? Convert.FromBase64String(file.Content ?? "") : Encoding.UTF8.GetBytes(file.Content ?? "");
+                }
+                catch (FormatException)
+                {
+                    return Error($"{file.Path}: base64 is true but the content is not base64.");
+                }
+
+                await using var entry = archive.CreateEntry((file.Path ?? "").TrimStart('/')).Open();
+                await entry.WriteAsync(bytes, ct);
+            }
+        }
+
+        zip.Position = 0;
+        var result = await services.GetRequiredService<ZipDeploymentService>().DeployAsync(
+            domain, zip, "files.zip", caller.Actor, "mcp", canDeployFunctions: caller.IsAdministrator, ct);
+
+        return result.Ok
+            ? ToJson(new
+            {
+                ok = true,
+                domain = result.Domain,
+                release = result.Release!.Id,
+                fileCount = result.Release.FileCount,
+                warnings = result.Warnings ?? []
+            })
+            : ToJson(new { error = result.Error, diagnostics = result.Diagnostics?.Select(d => d.ToString()) });
+    }
+
+    [SiteHostTool("rollback_site", ToolEffect.Change)]
+    [Description("Makes an earlier release of a site live again. get_site lists the releases.")]
+    public static async Task<JsonElement> RollbackSite(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The release id to go back to.")] string releaseId,
+        [Description("True runs the site's current functions on the older release; false brings back the functions it had.")] bool keepFunctions = false) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            var (ok, error) = await services.GetRequiredService<ZipDeploymentService>()
+                .RollbackAsync(site.Domain, releaseId, Caller.Of(services).Actor, keepFunctions);
+            return ok ? new { ok = true, domain = site.Domain, release = releaseId } : new { error };
+        });
+
+    [SiteHostTool("rename_site", ToolEffect.Change)]
+    [Description("Moves a site to another domain. The old domain stops answering at once. Administrators only.")]
+    public static async Task<JsonElement> RenameSite(
+        IServiceProvider services,
+        [Description("The site's current domain.")] string domain,
+        [Description("The new domain.")] string newDomain)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var (ok, error, to) = await services.GetRequiredService<ZipDeploymentService>().RenameAsync(site.Domain, newDomain, caller.Actor);
+            return ok ? new { ok = true, from = site.Domain, domain = to } : (object)new { error };
+        });
+    }
+
+    [SiteHostTool("delete_site", ToolEffect.Destructive)]
+    [Description("Deletes a site and everything it has: every release, its settings, functions and data. It cannot be undone. Administrators only.")]
+    public static async Task<JsonElement> DeleteSite(IServiceProvider services, [Description("The site's domain.")] string domain)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var (normalized, error) = SiteStore.NormalizeDomain(domain);
+        if (normalized is null) return Error(error);
+
+        return await services.GetRequiredService<ZipDeploymentService>().DeleteAsync(normalized, caller.Actor)
+            ? ToJson(new { ok = true, domain = normalized })
+            : Error($"No site is published at '{normalized}'.");
+    }
+
+    // ================================================================ visibility
+
+    [SiteHostTool("set_passcode", ToolEffect.Change)]
+    [Description("Makes a site private: visitors must enter this passcode before anything is served, proxied paths included. At least 8 characters. Replacing it signs out everyone who entered the old one.")]
+    public static async Task<JsonElement> SetPasscode(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The passcode visitors will enter.")] string passcode) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            var (ok, error) = await services.GetRequiredService<SitePasscodeGate>().SetAsync(site, passcode, Caller.Of(services).Actor);
+            if (!ok) return new { error };
+
+            services.GetRequiredService<RealtimeRegistry>().DisconnectSite(site.Domain);
+            return (object)new { ok = true, domain = site.Domain, passcodeProtected = true };
+        });
+
+    [SiteHostTool("remove_passcode", ToolEffect.Destructive)]
+    [Description("Makes a site public again.")]
+    public static async Task<JsonElement> RemovePasscode(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            await services.GetRequiredService<SitePasscodeGate>().ClearAsync(site, Caller.Of(services).Actor);
+            return new { ok = true, domain = site.Domain, passcodeProtected = false };
+        });
+
+    // ================================================================ rules
+
+    [SiteHostTool("get_rules", ToolEffect.Read)]
+    [Description("A site's header rules and redirects, in the _headers and _redirects text formats: the site's own, which set_header_rules and set_redirect_rules replace, and the ones its current release brought.")]
+    public static JsonElement GetRules(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        WithSite(services, domain, site => new
+        {
+            domain = site.Domain,
+            headerRules = HeaderRuleText.Format(site.Headers),
+            redirectRules = RedirectRuleText.Format(site.Redirects),
+            releaseHeaderRules = HeaderRuleText.Format(site.Current?.Headers),
+            releaseRedirectRules = RedirectRuleText.Format(site.Current?.Redirects)
+        });
+
+    [SiteHostTool("set_header_rules", ToolEffect.Change)]
+    [Description("Replaces a site's own header rules (the whole list; get_rules shows the current one). The _headers format: a line starting with / is a path pattern, and the indented 'Name: value' lines under it are the headers it sets. Example: \"/assets/**\\n  Cache-Control: public, max-age=31536000, immutable\\n/**\\n  X-Frame-Options: DENY\". In patterns * matches within one segment and ** across segments. Every matching rule applies; a later rule wins for the same header. They apply to files and proxied answers. Set-Cookie, Content-Encoding and transport headers cannot be set. Empty text removes them all.")]
+    public static async Task<JsonElement> SetHeaderRules(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The rules, in the _headers format.")] string rules) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            if (!HeaderRuleText.TryParse(rules, out var parsed, out var parseErrors)) return new { errors = parseErrors };
+
+            var (ok, errors) = await services.GetRequiredService<SiteRuleService>().SetHeadersAsync(site, parsed, Caller.Of(services).Actor);
+            return ok ? new { ok = true, domain = site.Domain, rules = parsed.Count } : (object)new { errors };
+        });
+
+    [SiteHostTool("set_redirect_rules", ToolEffect.Change)]
+    [Description("Replaces a site's own redirects and rewrites (the whole list). The _redirects format: one rule per line, 'from to status', such as \"/old /new 301\", \"/blog/* /articles/:1 301\" (:1 is what * matched) or \"/docs/** https://docs.example.com/:1 302\". A 3xx sends the visitor elsewhere; 200 serves another file of the site at the same address; 404 answers not found. A rule is skipped where a real file exists unless the status ends in ! (301!). The first matching rule wins. Empty text removes them all. To answer a path from another server, use set_proxy_route instead.")]
+    public static async Task<JsonElement> SetRedirectRules(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The rules, in the _redirects format.")] string rules) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            if (!RedirectRuleText.TryParse(rules, out var parsed, out var parseErrors)) return new { errors = parseErrors };
+
+            var (ok, errors) = await services.GetRequiredService<SiteRuleService>().SetRedirectsAsync(site, parsed, Caller.Of(services).Actor);
+            return ok ? new { ok = true, domain = site.Domain, rules = parsed.Count } : (object)new { errors };
+        });
+
+    // ================================================================ variables
+
+    [SiteHostTool("get_variables", ToolEffect.Read)]
+    [Description("A site's variables: each one's value (secrets hidden), whether it is public to the browser, and where the value comes from.")]
+    public static JsonElement GetVariables(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        WithSite(services, domain, site => ApiEndpoints.DescribeVariables(site, services.GetRequiredService<SiteVariableService>(), saved: false));
+
+    [SiteHostTool("set_variable", ToolEffect.Change)]
+    [Description("Sets one variable on a site: a setting kept on the server rather than in the files, such as an API URL or a key. Functions read it (ISiteVariables); with isPublic true, the site's pages read it too, with site.get('NAME') after loading /_host/site.js. Only administrators may set secrets or values that read the server's environment with ${env:NAME}.")]
+    public static async Task<JsonElement> SetVariable(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The variable's name, such as API_URL.")] string name,
+        [Description("Its value.")] string value,
+        [Description("True to let the site's pages read it through /_host/site.js. Leave out to keep what it has.")] bool? isPublic = null,
+        [Description("True to store it encrypted and never show it again. Administrators only. Leave out to keep what it has.")] bool? isSecret = null)
+    {
+        var caller = Caller.Of(services);
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var variables = services.GetRequiredService<SiteVariableService>();
+            var (ok, error) = await variables.SetAsync(site, name, value, isPublic, isSecret, caller.Actor, caller.IsAdministrator);
+            return ok ? ApiEndpoints.DescribeVariables(site, variables, saved: true) : new { error };
+        });
+    }
+
+    [SiteHostTool("remove_variable", ToolEffect.Destructive)]
+    [Description("Removes a site's own value for a variable, so it goes back to the release's default, if it has one.")]
+    public static async Task<JsonElement> RemoveVariable(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The variable's name.")] string name)
+    {
+        var caller = Caller.Of(services);
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var variables = services.GetRequiredService<SiteVariableService>();
+            var (removed, error) = await variables.RemoveAsync(site, name, caller.Actor, caller.IsAdministrator);
+            return removed
+                ? ApiEndpoints.DescribeVariables(site, variables, saved: true)
+                : new { error = error ?? $"{site.Domain} has no value of its own for {name}." };
+        });
+    }
+
+    // ================================================================ proxy routes
+
+    [SiteHostTool("get_proxy_routes", ToolEffect.Read)]
+    [Description("A site's proxy routes: the paths it forwards to other servers, and each route's settings.")]
+    public static JsonElement GetProxyRoutes(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        WithSite(services, domain, site => ApiEndpoints.DescribeProxy(site, Caller.Of(services).IsAdministrator));
+
+    [SiteHostTool("set_proxy_route", ToolEffect.Change)]
+    [Description("Adds a proxy route to a site, or changes the one at the same path: every request under the path is forwarded to the target server and its answer sent back. Path '/' forwards everything; '/api' forwards /api and everything under it (not /apis), and by default removes '/api' first, so /api/users goes to {target}/users. The longest matching path wins, so '/' and '/api' can be set together. Settings left out take their defaults. Creates the site first when it does not exist, so no create_site is needed. Call it once per route; several calls can go in one turn. The result includes 'check': a GET sent to the target just now, with its status, so there is no need to call test_proxy_route after it. Administrators only.")]
+    public static async Task<JsonElement> SetProxyRoute(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The route. Required: path and target (an http:// or https:// URL, such as http://api:8080). Optional settings: stripPath (default true), enabled, webSockets, crossSiteWebSockets, streaming (server-sent events), httpVersion ('auto', '1.1' or '2'; '2' for gRPC), timeoutSeconds (default 100), maxRequestBodyBytes, keepHost, forwardedHeaders, requestHeaders ([{name, value}], empty value removes), cookieMode ('host', 'keep' or 'parent') with cookieParentDomain, rewriteRedirects, filesFirst, acceptAnyCertificate.")] ProxyRoute route,
+        [Description("The path the route is saved under now, to change its path. Leave out otherwise.")] string? originalPath = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        // A route for a domain with no site yet makes the site, as a deploy does: one call, not two.
+        var (normalized, domainError) = SiteStore.NormalizeDomain(domain);
+        if (normalized is null) return Error(domainError);
+        if (services.GetRequiredService<SiteStore>().TryGet(normalized) is null)
+        {
+            // Checked first, so a route that cannot be saved does not leave an empty site behind.
+            if (SiteProxyService.CheckNewSiteRoute(normalized, route) is { Count: > 0 } routeErrors)
+                return ToJson(new { errors = routeErrors });
+
+            // Someone else creating it at the same moment is as good as creating it here.
+            var (created, createError, _, alreadyExists) = await services.GetRequiredService<ZipDeploymentService>().CreateAsync(normalized, caller.Actor);
+            if (!created && !alreadyExists) return Error(createError);
+        }
+
+        return await WithSiteAsync(services, normalized, async site =>
+        {
+            var proxy = services.GetRequiredService<SiteProxyService>();
+            var (ok, errors) = await proxy.SaveRouteAsync(site, originalPath ?? route.Path, route, caller.Actor);
+            if (!ok) return new { errors };
+
+            // Saves the model a round: whether the target answers comes back with the save. Short,
+            // so a target that is down costs a few seconds, not the full test timeout.
+            var saved = site.Proxy.First(r => r.Path.Equals(ProxyRouteRules.NormalizePath(route.Path), StringComparison.OrdinalIgnoreCase));
+            var check = saved.Enabled ? await proxy.TestAsync(saved, CancellationToken.None, TimeSpan.FromSeconds(3)) : null;
+
+            return (object)new
+            {
+                saved = new { saved.Path, saved.Target },
+                check = check is null ? null : new { answered = check.Answered, status = check.Status, error = check.Error, summary = check.Describe() },
+                routes = site.Proxy.Select(r => new { r.Path, r.Target, r.Enabled, r.StripPath, r.WebSockets, r.Streaming, r.HttpVersion })
+            };
+        });
+    }
+
+    [SiteHostTool("remove_proxy_route", ToolEffect.Destructive)]
+    [Description("Removes a site's proxy route at a path. Its paths go back to the site's files. Administrators only.")]
+    public static async Task<JsonElement> RemoveProxyRoute(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The route's path.")] string path)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        return await WithSiteAsync(services, domain, async site =>
+            await services.GetRequiredService<SiteProxyService>().RemoveRouteAsync(site, path, caller.Actor)
+                ? ApiEndpoints.DescribeProxy(site, administrator: true)
+                : new { error = $"{site.Domain} has no proxy route at {ProxyRouteRules.NormalizePath(path)}." });
+    }
+
+    [SiteHostTool("test_proxy_route", ToolEffect.Read)]
+    [Description("Sends a GET to a proxy route's target from the server and reports the status, the time and the HTTP version, or why it failed. Use it after set_proxy_route. Administrators only.")]
+    public static async Task<JsonElement> TestProxyRoute(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The route's path.")] string path,
+        CancellationToken ct = default)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var normalized = ProxyRouteRules.NormalizePath(path);
+            var route = site.Proxy.FirstOrDefault(r => r.Path.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+            if (route is null) return new { error = $"{site.Domain} has no proxy route at {normalized}." };
+
+            var result = await services.GetRequiredService<SiteProxyService>().TestAsync(route, ct);
+            return (object)new { answered = result.Answered, status = result.Status, version = result.Version, url = result.Url, milliseconds = (int)result.Elapsed.TotalMilliseconds, error = result.Error, summary = result.Describe() };
+        });
+    }
+
+    // ================================================================ functions
+
+    [SiteHostTool("get_functions", ToolEffect.Read)]
+    [Description("A site's live functions (or the global ones, with no domain): their routes, middleware, jobs and hooks, and whether they are loaded or failed and why.")]
+    public static async Task<JsonElement> GetFunctions(
+        IServiceProvider services,
+        [Description("The site's domain, or empty for the global functions that answer on every site.")] string? domain = null)
+    {
+        var host = services.GetRequiredService<FunctionHost>();
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            var global = await services.GetRequiredService<FunctionDeploymentService>().GlobalAsync();
+            return ToJson(new { functions = global.Current, status = await host.StatusAsync(null) });
+        }
+
+        return await WithSiteAsync(services, domain, async site =>
+            new { domain = site.Domain, functions = site.CurrentFunctions, status = await host.StatusAsync(site.Domain) });
+    }
+
+    [SiteHostTool("check_functions", ToolEffect.Read)]
+    [Description("Compiles function files exactly as a deploy would, without making them live. Returns a draft id for test_functions, the routes found, and compiler errors with file and line. Files are written as deploy_functions describes. Administrators only.")]
+    public static Task<JsonElement> CheckFunctions(
+        IServiceProvider services,
+        [Description("The files: C# (.cs) or LINQPad (.linq).")] IReadOnlyList<FunctionFileInput> files,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null,
+        [Description("True when the files are the whole set; false merges them into the live files, replacing same-named ones.")] bool replace = false,
+        CancellationToken ct = default) =>
+        BuildFunctionsAsync(services, files, domain, replace, deploy: false, ct);
+
+    [SiteHostTool("deploy_functions", ToolEffect.Change)]
+    [Description("Compiles function files and makes them live. Nothing changes if they do not compile; the errors come back with file and line, so this can be called directly without check_functions when no test is needed. Works on a site with no files too, such as one made only of proxy routes: a [Middleware] there runs before the proxied paths, so it can guard them with a sign-in. Administrators only. " + FunctionsGuide)]
+    public static Task<JsonElement> DeployFunctions(
+        IServiceProvider services,
+        [Description("The files: C# (.cs) or LINQPad (.linq).")] IReadOnlyList<FunctionFileInput> files,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null,
+        [Description("True when the files are the whole set; false merges them into the live files, replacing same-named ones.")] bool replace = false,
+        CancellationToken ct = default) =>
+        BuildFunctionsAsync(services, files, domain, replace, deploy: true, ct);
+
+    [SiteHostTool("test_functions", ToolEffect.Read)]
+    [Description("Runs one HTTP request against a site's functions in memory, live or a draft from check_functions, and returns the status, headers and body. Nothing goes over the network and nothing goes live. Administrators only.")]
+    public static async Task<JsonElement> TestFunctions(
+        IServiceProvider services,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null,
+        [Description("'live', or a draft id from check_functions.")] string target = "live",
+        [Description("The HTTP method.")] string method = "GET",
+        [Description("The path, such as /api/orders.")] string path = "/",
+        [Description("The query string, without the ?.")] string? query = null,
+        [Description("Request headers, one 'Name: value' per line.")] string? headers = null,
+        [Description("The request body.")] string? body = null,
+        [Description("For global functions, the site host the request is for.")] string? host = null,
+        CancellationToken ct = default)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+
+        var (scope, scopeError) = FunctionScope(services.GetRequiredService<SiteStore>(), domain);
+        if (scopeError is not null) return Error(scopeError);
+
+        var result = await services.GetRequiredService<FunctionTestService>().RunAsync(
+            scope, new FunctionTestRequest(target, method, path, query, headers, body, host), services, ct);
+        var (text, encoding) = FunctionEndpoints.AsText(result.Body, result.ContentType);
+
+        return ToJson(new
+        {
+            status = result.Status,
+            contentType = result.ContentType,
+            headers = result.Headers,
+            body = text,
+            bodyEncoding = encoding,
+            elapsedMs = result.ElapsedMs,
+            matched = result.Matched,
+            truncated = result.Truncated,
+            error = result.Error
+        });
+    }
+
+    [SiteHostTool("remove_functions", ToolEffect.Destructive)]
+    [Description("Stops running a site's functions (or the global ones, with no domain). Earlier releases keep theirs. Administrators only.")]
+    public static async Task<JsonElement> RemoveFunctions(
+        IServiceProvider services,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        // Never null by accident: a domain that cannot be read is an error, not the global functions.
+        var (scope, scopeError) = FunctionScope(services.GetRequiredService<SiteStore>(), domain);
+        if (scopeError is not null) return Error(scopeError);
+
+        var (ok, error) = await services.GetRequiredService<FunctionDeploymentService>().RemoveAsync(scope, caller.Actor);
+        return ok ? ToJson(new { ok = true, domain = scope }) : Error(error);
+    }
+
+    // ================================================================ AI
+
+    [SiteHostTool("list_ai_providers", ToolEffect.Read)]
+    [Description("The AI providers sites can chat through. Their keys are never shown. Administrators only.")]
+    public static async Task<JsonElement> ListAiProviders(IServiceProvider services)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        return ToJson((await services.GetRequiredService<AiProviderStore>().ListAsync()).Select(AdminEndpoints.DescribeProvider));
+    }
+
+    [SiteHostTool("list_ai_models", ToolEffect.Read)]
+    [Description("The models an AI provider offers, asked of the provider itself, fast and inexpensive ones first. Use it to choose a model for set_site_ai or add_ai_provider instead of guessing a name. Administrators only.")]
+    public static async Task<JsonElement> ListAiModels(
+        IServiceProvider services, [Description("The provider's id, from list_ai_providers.")] string providerId, CancellationToken ct = default)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+
+        var provider = await services.GetRequiredService<AiProviderStore>().FindAsync(providerId);
+        if (provider is null) return Error("No AI provider has that id.");
+
+        var list = await services.GetRequiredService<AiModelCatalog>().ListAsync(provider, ct);
+        return list.Error is not null
+            ? Error(list.Error)
+            : ToJson(new { providerId = provider.Id, models = list.Models.Take(60).Select(m => m.Fast ? $"{m.Id} (fast)" : m.Id) });
+    }
+
+    [SiteHostTool("add_ai_provider", ToolEffect.Change)]
+    [Description("Adds an AI provider. Kind 'openai' is OpenAI and anything with the same API (OpenRouter, Ollama, LiteLLM); 'anthropic' is Anthropic. The key is stored encrypted and never shown again. Administrators only.")]
+    public static async Task<JsonElement> AddAiProvider(
+        IServiceProvider services,
+        [Description("A name to choose it by.")] string name,
+        [Description("'openai' or 'anthropic'.")] string kind,
+        [Description("The model used when a site names none.")] string defaultModel,
+        [Description("The API key.")] string? apiKey = null,
+        [Description("The API's base URL. Leave out for OpenAI's or Anthropic's own; give it for a proxy or local server, such as http://ollama:11434/v1.")] string? baseUrl = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var (provider, error) = await services.GetRequiredService<AiProviderStore>().AddAsync(name, kind, baseUrl, apiKey, defaultModel, caller.Actor);
+        return provider is null ? Error(error) : ToJson(AdminEndpoints.DescribeProvider(provider));
+    }
+
+    [SiteHostTool("test_ai_provider", ToolEffect.Read)]
+    [Description("Sends a one-word prompt to an AI provider and reports the answer, the time and the tokens, or why it failed. Billed like any other chat. Administrators only.")]
+    public static async Task<JsonElement> TestAiProvider(
+        IServiceProvider services, [Description("The provider's id.")] string id, CancellationToken ct = default)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+
+        var provider = await services.GetRequiredService<AiProviderStore>().FindAsync(id);
+        if (provider is null) return Error("No AI provider has that id.");
+
+        return ToJson(await AiProviderTest.RunAsync(services.GetRequiredService<AiChatService>(), provider, ct));
+    }
+
+    [SiteHostTool("set_site_ai", ToolEffect.Change)]
+    [Description("Chooses the AI provider a site's functions and pages chat through, the model and the system prompt. Functions then take an IAiChat parameter; pages call site.ai.chat('question', { onText }) after loading /_host/site.js, if allowVisitors is true. Administrators only.")]
+    public static async Task<JsonElement> SetSiteAi(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The provider's id, from list_ai_providers.")] string providerId,
+        [Description("The model. Leave out for the provider's default.")] string? model = null,
+        [Description("Sent ahead of every conversation.")] string? systemPrompt = null,
+        [Description("True lets every visitor's page chat, billed to the provider's key.")] bool allowVisitors = false)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var (ok, error) = await services.GetRequiredService<SiteAiSettingsService>()
+                .SetAsync(site, providerId, model, systemPrompt, allowVisitors, caller.Actor);
+            return ok ? ApiEndpoints.DescribeAi(site, services.GetRequiredService<SiteAiChatFactory>(), saved: true) : new { error };
+        });
+    }
+
+    // ================================================================ users
+
+    [SiteHostTool("list_users", ToolEffect.Read)]
+    [Description("The server's accounts and their roles. Administrators only.")]
+    public static async Task<JsonElement> ListUsers(IServiceProvider services)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        return ToJson((await services.GetRequiredService<UserStore>().ListAsync()).Select(AdminEndpoints.DescribeUser));
+    }
+
+    [SiteHostTool("create_user", ToolEffect.Change)]
+    [Description("Creates an account and returns, once, a private link (or a temporary password) for the person to sign in with. Send it to them yourself. Administrators only.")]
+    public static async Task<JsonElement> CreateUser(
+        IServiceProvider services,
+        [Description("The user name they sign in with.")] string username,
+        [Description("The name shown for them.")] string? displayName = null,
+        [Description("'Member' or 'Administrator'.")] string role = Roles.Member,
+        [Description("True for a temporary password, false for a private link.")] bool temporaryPassword = false)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var (created, error) = await services.GetRequiredService<UserAdminService>()
+            .CreateAsync(username, displayName, role, temporaryPassword, caller.Actor);
+        if (created is null) return Error(error);
+
+        var links = services.GetRequiredService<LinkGenerator>();
+        return ToJson(new
+        {
+            user = AdminEndpoints.DescribeUser(created.User),
+            temporaryPassword = created.TemporaryPassword,
+            inviteLink = created.InviteToken is null ? null : links.GetUriByPage(caller.Http, "/Activate", null, new { token = created.InviteToken })
+        });
+    }
+
+    // ================================================================ helpers
+
+    private static object DescribeSite(IServiceProvider services, SiteRecord site) => ApiEndpoints.Describe(
+        site,
+        services.GetRequiredService<SiteVariableService>(),
+        services.GetRequiredService<SiteAiChatFactory>(),
+        services.GetRequiredService<RealtimeRegistry>());
+
+    private static async Task<JsonElement> BuildFunctionsAsync(
+        IServiceProvider services, IReadOnlyList<FunctionFileInput> files, string? domain, bool replace, bool deploy, CancellationToken ct)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        if (files is not { Count: > 0 }) return Error("Give at least one file.");
+
+        var (scope, scopeError) = FunctionScope(services.GetRequiredService<SiteStore>(), domain);
+        if (scopeError is not null) return Error(scopeError);
+
+        var read = new List<FunctionFile>();
+        foreach (var file in files)
+        {
+            if (FunctionUploadReader.Read(file.Name, Encoding.UTF8.GetBytes(file.Content ?? ""), read) is { } readError)
+                return Error(readError);
+        }
+
+        var functions = services.GetRequiredService<FunctionDeploymentService>();
+        var result = deploy
+            ? await functions.DeployAsync(scope, read, caller.Actor, "mcp", replace, ct)
+            : await functions.CheckAsync(scope, read, caller.Actor, ct, replace, source: "mcp");
+
+        return result.Ok
+            ? ToJson(new { ok = true, draft = deploy ? null : result.Bundle?.Id, functions = result.Bundle, kept = result.Kept, diagnostics = result.Diagnostics })
+            : ToJson(new { error = result.Error, diagnostics = result.Diagnostics });
+    }
+
+    /// <summary>
+    /// Which functions a function tool acts on: a site's, or the global ones when no domain is
+    /// given at all. A domain that is given but cannot be read, or has no site, is an error, never
+    /// the global functions: those answer on every site.
+    /// </summary>
+    internal static (string? Scope, string? Error) FunctionScope(SiteStore sites, string? domain)
+    {
+        if (string.IsNullOrWhiteSpace(domain)) return (null, null);
+
+        var (normalized, error) = SiteStore.NormalizeDomain(domain);
+        if (normalized is null) return (null, error ?? $"'{domain}' is not a domain.");
+        return sites.TryGet(normalized) is null
+            ? (null, $"No site is published at '{normalized}'. Leave the domain out for the global functions.")
+            : (normalized, null);
+    }
+
+    private static JsonElement WithSite(IServiceProvider services, string domain, Func<SiteRecord, object> action)
+    {
+        var (site, error) = Find(services, domain);
+        return site is null ? Error(error) : ToJson(action(site));
+    }
+
+    private static async Task<JsonElement> WithSiteAsync(IServiceProvider services, string domain, Func<SiteRecord, Task<object>> action)
+    {
+        var (site, error) = Find(services, domain);
+        return site is null ? Error(error) : ToJson(await action(site));
+    }
+
+    private static (SiteRecord? Site, string? Error) Find(IServiceProvider services, string domain)
+    {
+        var (normalized, error) = SiteStore.NormalizeDomain(domain);
+        if (normalized is null) return (null, error);
+
+        var site = services.GetRequiredService<SiteStore>().TryGet(normalized);
+        return site is null ? (null, $"No site is published at '{normalized}'. create_site makes one.") : (site, null);
+    }
+
+    private static JsonElement ToJson(object? value) => JsonSerializer.SerializeToElement(value, Json);
+
+    private static JsonElement Error(string? message) => ToJson(new { error = message });
+
+    /// <summary>Who is calling: the user the current request is signed in as.</summary>
+    private sealed record Caller(HttpContext Http, ClaimsPrincipal Principal)
+    {
+        public static Caller Of(IServiceProvider services)
+        {
+            var http = services.GetRequiredService<IHttpContextAccessor>().HttpContext
+                       ?? throw new InvalidOperationException("Site host tools run inside a signed-in HTTP request.");
+            return new Caller(http, http.User);
+        }
+
+        public bool IsAdministrator => Principal.IsInRole(Roles.Administrator);
+
+        public string Actor => ApiEndpoints.Actor(Principal);
+
+        /// <summary>Null for an administrator; otherwise the refusal to return.</summary>
+        public JsonElement? AdministratorsOnly() =>
+            IsAdministrator ? null : Error("Only administrators can do this. who_am_i shows your role.");
+    }
+}

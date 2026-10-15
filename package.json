@@ -1,0 +1,11 @@
+{
+  "name": "static-site-hosting",
+  "private": true,
+  "description": "Shortcuts for working on the server. Nothing to install: each script calls the .NET SDK.",
+  "scripts": {
+    "dev": "dotnet watch run --project src/StaticSiteHost --non-interactive",
+    "start": "dotnet run --project src/StaticSiteHost",
+    "build": "dotnet build src/StaticSiteHost",
+    "test": "dotnet test tests/StaticSiteHost.Tests"
+  }
+}

@@ -79,10 +79,15 @@ public sealed class AiChatService
     /// part way through its answer.
     /// </exception>
     /// <exception cref="ArgumentException">The request is not a chat that can be sent. See <see cref="Validate"/>.</exception>
-    public async IAsyncEnumerable<AiChatChunk> StreamAsync(
-        AiProviderRecord provider, AiChatRequest request, [EnumeratorCancellation] CancellationToken ct = default)
+    public IAsyncEnumerable<AiChatChunk> StreamAsync(
+        AiProviderRecord provider, AiChatRequest request, CancellationToken ct = default) =>
+        StreamAsync(provider, request, cachePrefix: false, ct);
+
+    /// <param name="cachePrefix">Ask the provider to cache the tools and the system prompt. See <see cref="AiCall.CachePrefix"/>.</param>
+    internal async IAsyncEnumerable<AiChatChunk> StreamAsync(
+        AiProviderRecord provider, AiChatRequest request, bool cachePrefix, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var call = Prepare(provider, request);
+        var call = Prepare(provider, request, cachePrefix);
         var format = FormatOf(provider);
 
         using var message = format.CreateRequest(call, stream: true);
@@ -150,13 +155,13 @@ public sealed class AiChatService
 
     // ---- sending ------------------------------------------------------------
 
-    private AiCall Prepare(AiProviderRecord provider, AiChatRequest request)
+    private AiCall Prepare(AiProviderRecord provider, AiChatRequest request, bool cachePrefix = false)
     {
         ArgumentNullException.ThrowIfNull(provider);
         Validate(request);
 
         var model = string.IsNullOrWhiteSpace(request.Model) ? provider.DefaultModel : request.Model.Trim();
-        return new AiCall(provider, _providers.UnprotectKey(provider), model, request);
+        return new AiCall(provider, _providers.UnprotectKey(provider), model, request, cachePrefix);
     }
 
     private static IAiWireFormat FormatOf(AiProviderRecord provider) => provider.Kind switch

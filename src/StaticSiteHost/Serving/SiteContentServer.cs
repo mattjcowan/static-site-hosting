@@ -89,6 +89,15 @@ public sealed class SiteContentServer
         var root = _sites.GetCurrentReleasePath(domain);
         if (root is null)
         {
+            // A site made only of proxy routes has nothing at the paths they leave: that is a 404,
+            // not a site waiting for its first deploy.
+            if (site.Proxy.Count > 0)
+            {
+                await WriteMessageAsync(context, StatusCodes.Status404NotFound,
+                    "Not found", $"{WebUtility.HtmlEncode(context.Request.GetDisplayUrl())} could not be found.");
+                return;
+            }
+
             await WriteMessageAsync(context, StatusCodes.Status503ServiceUnavailable,
                 "Nothing deployed yet", $"No content has been published for {WebUtility.HtmlEncode(domain)}.");
             return;
@@ -159,6 +168,14 @@ public sealed class SiteContentServer
                 return;
         }
     }
+
+    /// <summary>The site's header rules, compiled, for responses that are not files (see <see cref="SiteProxy"/>).</summary>
+    internal SiteHeaderRules HeaderRulesFor(SiteRecord site) =>
+        _rules.GetOrAdd(site.Domain, static (_, s) => SiteRules.Compile(s), site).Headers;
+
+    /// <summary>Whether the live release really has something at a path, as a redirect rule's <c>!</c> asks.</summary>
+    internal bool HasFile(SiteRecord site, string requestPath) =>
+        _sites.GetCurrentReleasePath(site.Domain) is { } root && _resolver.Exists(root, requestPath);
 
     /// <summary>
     /// Answers with a redirect. Header rules are applied here as well as to files: a redirect
@@ -299,7 +316,7 @@ public sealed class SiteContentServer
     }
 
     /// <summary>Strips "public" out of a Cache-Control value and makes sure it says private.</summary>
-    private static string KeepPrivate(string cacheControl)
+    internal static string KeepPrivate(string cacheControl)
     {
         var directives = cacheControl
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -318,7 +335,8 @@ public sealed class SiteContentServer
     private static Task NotFoundAsync(HttpContext context) =>
         WriteMessageAsync(context, StatusCodes.Status404NotFound, "Not found", "The requested file could not be found.");
 
-    private static async Task WriteMessageAsync(HttpContext context, int statusCode, string title, string detail)
+    /// <summary>The server's own small error page. <paramref name="detail"/> is HTML, so encode what goes into it.</summary>
+    internal static async Task WriteMessageAsync(HttpContext context, int statusCode, string title, string detail)
     {
         if (context.Response.HasStarted) return;
 

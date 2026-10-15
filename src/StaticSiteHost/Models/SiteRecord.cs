@@ -52,6 +52,14 @@ public sealed class SiteRecord
     /// </summary>
     public SiteAiSettings? Ai { get; set; }
 
+    /// <summary>
+    /// Paths forwarded to other servers. Administrators only; a deploy never brings any, and they
+    /// survive deploys and rollbacks. Replaced as a whole on every change, never edited in place,
+    /// so a request reading the list never sees it half-changed, and <c>SiteProxy</c> can cache
+    /// what it compiles from each list for as long as the list lives.
+    /// </summary>
+    public List<ProxyRoute> Proxy { get; set; } = [];
+
     /// <summary>Every function bundle some retained release still runs.</summary>
     public List<FunctionBundle> FunctionBundles { get; set; } = [];
 
@@ -71,11 +79,21 @@ public sealed class SiteRecord
 
 public sealed class ReleaseRecord
 {
+    /// <summary>The <see cref="Source"/> of a release with no files that only carries functions.</summary>
+    public const string FunctionsOnlySource = "functions";
+
+    /// <summary>A release made to carry functions, with no files of its own.</summary>
+    [JsonIgnore]
+    public bool IsFunctionsOnly => Source == FunctionsOnlySource && FileCount == 0;
+
     public string Id { get; set; } = "";
     public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
     public string? DeployedBy { get; set; }
 
-    /// <summary>"web" or "api".</summary>
+    /// <summary>
+    /// "web" or "api" for an uploaded zip; <see cref="FunctionsOnlySource"/> for the empty release a
+    /// site with no files gets when it is given functions.
+    /// </summary>
     public string Source { get; set; } = "web";
 
     public int FileCount { get; set; }

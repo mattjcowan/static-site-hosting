@@ -2,7 +2,9 @@
 
   <!--
     Unit tests for the host's pure pieces: parsers and rules that need no server, no disk and no
-    network. Run with: dotnet test tests/StaticSiteHost.Tests
+    network. The one exception is ProxyForwardingTests, which runs proxy routes against real servers
+    on loopback, because forwarding is only worth testing over real connections.
+    Run with: dotnet test tests/StaticSiteHost.Tests
   -->
 
   <PropertyGroup>

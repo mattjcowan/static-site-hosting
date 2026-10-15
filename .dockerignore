@@ -9,7 +9,6 @@
 .gitignore
 .env
 data/
-README.md
 docker-compose*.yml
 Dockerfile
 

@@ -6,13 +6,32 @@
 
 <div class="page-head">
     <h1>Sites</h1>
-    <p>Every domain that has content published on this server.</p>
+    <p>Every domain this server answers for.</p>
+</div>
+
+<div class="card">
+    <h2>New site</h2>
+    <p class="hint">
+        Creates a site with no files. Use it for a site made of proxy routes that forward paths to other servers,
+        such as Docker containers or services on a private network, or to set a site up before its first deploy.
+        To publish files, <a asp-page="/Index">deploy a zip</a> instead: that creates the site as well.
+    </p>
+    <form method="post" asp-page-handler="Create">
+        <div class="row">
+            <div class="field">
+                <label for="new-domain">Domain</label>
+                <input id="new-domain" name="domain" type="text" placeholder="app.example.com"
+                       autocomplete="off" autocapitalize="off" spellcheck="false" required />
+            </div>
+            <button type="submit" class="btn-primary">Create site</button>
+        </div>
+    </form>
 </div>
 
 <div class="card">
     @if (Model.Sites.Count == 0)
     {
-        <p class="empty">Nothing has been published yet. <a asp-page="/Index">Deploy your first site</a>.</p>
+        <p class="empty">There are no sites yet. <a asp-page="/Index">Deploy your first site</a>, or create one above.</p>
     }
     else
     {
@@ -38,6 +57,10 @@
                                 @if (site.IsPasscodeProtected)
                                 {
                                     <span class="badge badge-warn" title="Visitors must enter a passcode">passcode</span>
+                                }
+                                @if (site.Proxy.Count > 0)
+                                {
+                                    <span class="badge" title="Paths forwarded to other servers">@site.Proxy.Count proxy route@(site.Proxy.Count == 1 ? "" : "s")</span>
                                 }
                             </td>
                             <td>@(release?.FileCount.ToString("N0") ?? "—")</td>

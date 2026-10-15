@@ -24,6 +24,97 @@ public sealed record DeploySnippet(string Id, string Title, string Hint, string 
     public int Lines => Command.Count(c => c == '\n') + 1;
 }
 
+/// <summary>One form on the Proxy card: a saved route, or the empty one for adding.</summary>
+/// <param name="Id">Prefix for the form's element ids.</param>
+/// <param name="OriginalPath">The path the route is saved under, or null for a new one.</param>
+/// <param name="HeadersText">The request headers, in the text form the box shows.</param>
+/// <param name="Errors">Why the last save of this form was refused.</param>
+/// <param name="TestResult">What the last test of this route found, and whether it got an answer.</param>
+public sealed record ProxyRouteEditor(
+    string Id,
+    string Domain,
+    ProxyRoute Route,
+    string? OriginalPath,
+    string HeadersText,
+    IReadOnlyList<string> Errors,
+    (string Message, bool Answered)? TestResult = null)
+{
+    public bool IsNew => OriginalPath is null;
+
+    /// <summary>What was typed into the body limit when a save was refused, shown back as it was.</summary>
+    public string? BodyLimitText { get; init; }
+}
+
+/// <summary>
+/// What a Proxy card form posts. The body limit is in megabytes here, fractions allowed, and in
+/// bytes everywhere else. It arrives as text and is read with the invariant culture, since a
+/// number field always sends a dot whatever language the server runs in.
+/// </summary>
+public sealed class ProxyRouteInput
+{
+    public string? Path { get; set; }
+    public string? Target { get; set; }
+    public bool Enabled { get; set; }
+    public bool StripPath { get; set; }
+    public bool WebSockets { get; set; }
+    public bool CrossSiteWebSockets { get; set; }
+    public bool Streaming { get; set; }
+    public string? HttpVersion { get; set; }
+    public int TimeoutSeconds { get; set; } = 100;
+    public string? MaxRequestBodyMegabytes { get; set; }
+    public bool KeepHost { get; set; }
+    public bool ForwardedHeaders { get; set; }
+    public string? RequestHeaders { get; set; }
+    public string? CookieMode { get; set; }
+    public string? CookieParentDomain { get; set; }
+    public bool RewriteRedirects { get; set; }
+    public bool FilesFirst { get; set; }
+    public bool AcceptAnyCertificate { get; set; }
+
+    private const decimal Megabyte = 1024 * 1024;
+
+    /// <summary>A byte count as the form shows it: megabytes, with up to three decimals; empty for none.</summary>
+    public static string Megabytes(long? bytes) =>
+        bytes is { } b ? (b / Megabyte).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : "";
+
+    /// <summary>Why the body limit typed cannot be used, or null.</summary>
+    public string? BodyLimitError =>
+        string.IsNullOrWhiteSpace(MaxRequestBodyMegabytes) || BytesOf(MaxRequestBodyMegabytes) is not null
+            ? null
+            : "Largest request body: write a number of megabytes greater than 0 with a dot for decimals, such as 0.5 or 10, or leave it empty.";
+
+    /// <summary>Megabytes as typed, in bytes; null when empty or not a number above 0.</summary>
+    public static long? BytesOf(string? megabytes) =>
+        // A dot for the decimal point and nothing else: no thousands separators, so "1,5" is refused
+        // rather than read as 15.
+        decimal.TryParse(megabytes?.Trim(), System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var mb) &&
+        mb > 0 && mb < long.MaxValue / Megabyte
+            ? (long)Math.Round(mb * Megabyte)
+            : null;
+
+    public ProxyRoute ToRoute(List<ProxyHeader> headers) => new()
+    {
+        Path = Path ?? "",
+        Target = Target ?? "",
+        Enabled = Enabled,
+        StripPath = StripPath,
+        WebSockets = WebSockets,
+        CrossSiteWebSockets = CrossSiteWebSockets,
+        Streaming = Streaming,
+        HttpVersion = HttpVersion ?? ProxyHttpVersions.Auto,
+        TimeoutSeconds = TimeoutSeconds,
+        MaxRequestBodyBytes = BytesOf(MaxRequestBodyMegabytes),
+        KeepHost = KeepHost,
+        ForwardedHeaders = ForwardedHeaders,
+        RequestHeaders = headers,
+        CookieMode = CookieMode ?? ProxyCookieModes.Host,
+        CookieParentDomain = CookieParentDomain,
+        RewriteRedirects = RewriteRedirects,
+        FilesFirst = FilesFirst,
+        AcceptAnyCertificate = AcceptAnyCertificate
+    };
+}
+
 public class DetailsModel : PageModel
 {
     private readonly SiteStore _sites;
@@ -32,6 +123,7 @@ public class DetailsModel : PageModel
     private readonly SitePasscodeGate _passcodes;
     private readonly ApiKeyStore _apiKeys;
     private readonly SiteRuleService _rules;
+    private readonly SiteProxyService _proxy;
     private readonly SiteVariableService _variables;
     private readonly AuditLog _audit;
     private readonly FunctionHost _functions;
@@ -49,6 +141,7 @@ public class DetailsModel : PageModel
         SitePasscodeGate passcodes,
         ApiKeyStore apiKeys,
         SiteRuleService rules,
+        SiteProxyService proxy,
         SiteVariableService variables,
         AuditLog audit,
         FunctionHost functions,
@@ -71,6 +164,7 @@ public class DetailsModel : PageModel
         _passcodes = passcodes;
         _apiKeys = apiKeys;
         _rules = rules;
+        _proxy = proxy;
         _variables = variables;
         _audit = audit;
         _options = options.Value;
@@ -116,6 +210,12 @@ public class DetailsModel : PageModel
     public IReadOnlyList<string> HeaderRuleErrors { get; private set; } = [];
 
     public IReadOnlyList<string> RedirectRuleErrors { get; private set; } = [];
+
+    /// <summary>The Proxy card's forms: one per saved route, in path order, then the one for adding.</summary>
+    public IReadOnlyList<ProxyRouteEditor> ProxyEditors { get; private set; } = [];
+
+    /// <summary>Environment variables a route names with <c>${env:…}</c> that the server does not have.</summary>
+    public IReadOnlyList<string> ProxyUnsetEnvironment { get; private set; } = [];
 
     /// <summary>Where the site's live functions stand: loaded and running their jobs, failed and why, or not loaded yet. Null without functions.</summary>
     public FunctionScopeStatus? FunctionsStatus { get; private set; }
@@ -276,6 +376,7 @@ public class DetailsModel : PageModel
         DeploySnippets = BuildDeploySnippets(site.Domain);
         HeaderRules = HeaderRuleText.Format(site.Headers);
         RedirectRules = RedirectRuleText.Format(site.Redirects);
+        LoadProxy(site);
 
         FunctionsStatus = site.CurrentFunctions is null ? null : await _functions.StatusAsync(site.Domain);
         Variables = _variables.Describe(site);
@@ -299,6 +400,30 @@ public class DetailsModel : PageModel
         RealtimeGroups = _realtime.GroupSizes(site.Domain);
         RealtimeSnippet = BuildRealtimeSnippet();
         RealtimePublishSnippet = BuildRealtimePublishSnippet(site.Domain);
+    }
+
+    private void LoadProxy(SiteRecord site)
+    {
+        var testedPath = TempData["ProxyTestPath"] as string;
+        (string, bool)? test = TempData["ProxyTestResult"] is string message
+            ? (message, TempData["ProxyTestAnswered"] as bool? == true)
+            : null;
+
+        ProxyEditors =
+        [
+            .. site.Proxy.Select((route, i) => new ProxyRouteEditor(
+                $"proxy-{i}", site.Domain, route, route.Path, ProxyRouteRules.FormatHeaders(route.RequestHeaders), [],
+                route.Path == testedPath ? test : null)),
+            new ProxyRouteEditor("proxy-new", site.Domain, new ProxyRoute(), null, "", [])
+        ];
+
+        var unset = new List<string>();
+        foreach (var route in site.Proxy)
+        {
+            SiteVariableService.Expand(route.Target, unset);
+            foreach (var header in route.RequestHeaders) SiteVariableService.Expand(header.Value, unset);
+        }
+        ProxyUnsetEnvironment = unset;
     }
 
     /// <summary>The live functions' <c>[AiAccess]</c> method, as their record names it ("AiAccess Ai.Writers" gives "Ai.Writers"), or null.</summary>
@@ -483,6 +608,86 @@ public class DetailsModel : PageModel
         HeaderRuleErrors = headerErrors;
         RedirectRuleErrors = redirectErrors;
         return Page();
+    }
+
+    /// <summary>
+    /// Adds a proxy route, or saves one under the path it had (<paramref name="originalPath"/>).
+    /// Administrators only: a route makes the server send requests wherever it points.
+    /// </summary>
+    public async Task<IActionResult> OnPostSaveProxyRouteAsync(string domain, string? originalPath, ProxyRouteInput input)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        ProxyRouteRules.TryParseHeaders(input.RequestHeaders, out var headers, out var headerError);
+
+        IReadOnlyList<string> errors;
+        if (headerError is not null) errors = [headerError];
+        else if (input.BodyLimitError is { } bodyLimitError) errors = [bodyLimitError];
+        else
+        {
+            var (ok, failures) = await _proxy.SaveRouteAsync(site, originalPath, input.ToRoute(headers), User.Identity?.Name ?? "unknown");
+            if (ok)
+            {
+                var path = ProxyRouteRules.NormalizePath(input.Path);
+                TempData["StatusMessage"] = originalPath is null
+                    ? $"{site.Domain}{path} now forwards to {input.Target?.Trim()}."
+                    : $"The proxy route at {path} was saved.";
+                return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
+            }
+
+            errors = failures;
+        }
+
+        // Rendered in place, so what was typed comes back with the errors instead of being thrown away.
+        await LoadAsync(site);
+        var draft = input.ToRoute(headers);
+        ProxyEditors = ProxyEditors
+            .Select(editor => editor.OriginalPath == originalPath
+                ? editor with { Route = draft, HeadersText = input.RequestHeaders ?? "", BodyLimitText = input.MaxRequestBodyMegabytes, Errors = errors }
+                : editor)
+            .ToList();
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRemoveProxyRouteAsync(string domain, string? path)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        if (await _proxy.RemoveRouteAsync(site, path, User.Identity?.Name ?? "unknown"))
+            TempData["StatusMessage"] = $"The proxy route at {ProxyRouteRules.NormalizePath(path)} was removed from {site.Domain}.";
+        else
+            TempData["ErrorMessage"] = $"{site.Domain} has no proxy route at {ProxyRouteRules.NormalizePath(path)}.";
+
+        return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
+    }
+
+    /// <summary>Sends a GET to a saved route's target from the server and shows what came back beside the route.</summary>
+    public async Task<IActionResult> OnPostTestProxyRouteAsync(string domain, string? path, CancellationToken ct)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var normalized = ProxyRouteRules.NormalizePath(path);
+        var route = site.Proxy.FirstOrDefault(r => r.Path.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (route is null)
+        {
+            TempData["ErrorMessage"] = $"{site.Domain} has no proxy route at {normalized}.";
+            return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
+        }
+
+        var result = await _proxy.TestAsync(route, ct);
+        TempData["ProxyTestPath"] = route.Path;
+        TempData["ProxyTestResult"] = result.Describe();
+        TempData["ProxyTestAnswered"] = result.Answered;
+        return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
     }
 
     /// <summary>
@@ -703,20 +908,7 @@ public class DetailsModel : PageModel
         var site = Resolve(domain);
         if (site is null) return RedirectToPage("Index");
 
-        // The site's functions are gone, background work and requests and all, before its
-        // directory is, and cannot load again until it has been; then once more for good measure.
-        await using (await _functions.EvictAsync(site.Domain))
-        {
-            await _sites.DeleteAsync(site.Domain);
-        }
-
-        _functions.Evict(site.Domain);
-        _content.Evict(site.Domain);
-        _variables.Evict(site.Domain);
-
-        // Once the site is gone, not before, so no connection can arrive in between and stay.
-        _realtime.DisconnectSite(site.Domain);
-        await _audit.WriteAsync("site.delete", User.Identity?.Name, new { domain = site.Domain });
+        await _deployer.DeleteAsync(site.Domain, User.Identity?.Name ?? "unknown");
 
         TempData["StatusMessage"] = $"{site.Domain} and all of its content were removed.";
         return RedirectToPage("Index");

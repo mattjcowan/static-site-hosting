@@ -115,6 +115,20 @@ public sealed class SiteHostingOptions
     /// <summary>How many groups one connection, which is one open page, may be in at once.</summary>
     public int RealtimeMaxGroupsPerConnection { get; set; } = 100;
 
+    /// <summary>
+    /// Networks a proxy route may never connect to, comma-separated, checked against the address a
+    /// target's name resolves to when the connection is made. The default is link-local addresses,
+    /// which is where cloud metadata services answer. Private networks and other ports on this
+    /// machine are allowed: Docker networks and services beside the server are what proxy routes are
+    /// for. This server's own ports are refused whatever this says (see <c>ProxyInvokers</c>). Empty
+    /// blocks nothing more. A string rather than a list, so that setting it replaces the default
+    /// instead of being merged into it.
+    /// </summary>
+    public string ProxyBlockedNetworks { get; set; } = "169.254.0.0/16, fe80::/10";
+
+    /// <summary>How long a proxy route waits for a connection to its target.</summary>
+    public int ProxyConnectTimeoutSeconds { get; set; } = 10;
+
     private HashSet<string>? _managementHostSet;
 
     public bool IsManagementHost(string host)

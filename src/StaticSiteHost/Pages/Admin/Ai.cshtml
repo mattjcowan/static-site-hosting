@@ -10,12 +10,68 @@
     <p>The AI services sites can chat through. Each site chooses one on its own page; the keys stay here.</p>
 </div>
 
+<div class="card" id="assistant-settings">
+    <h2>
+        Assistant
+        @if (Model.Assistant.ProviderId is not null && Model.Providers.Any(p => p.Id == Model.Assistant.ProviderId))
+        {
+            <span class="badge badge-ok">on</span>
+        }
+        else
+        {
+            <span class="badge">off</span>
+        }
+    </h2>
+    <p class="hint">
+        A chat panel on every page of this site, opened from <strong>Assistant</strong> in the top bar. Ask it to create a
+        site, forward paths to other servers, set headers or a passcode, or write and test functions, and it does it with
+        the same rights as whoever is signed in. It asks before deleting anything. Every message is billed to the
+        provider's key. A fast, inexpensive model works well, such as Claude Haiku.
+    </p>
+
+    @if (Model.Providers.Count == 0)
+    {
+        <p class="muted">Add a provider below first.</p>
+    }
+    else
+    {
+        <form method="post" asp-page-handler="Assistant">
+            <div class="row">
+                <div class="field">
+                    <label for="assistant-provider">Provider</label>
+                    <select id="assistant-provider" name="providerId">
+                        <option value="" selected="@(Model.Assistant.ProviderId is null)">Off</option>
+                        @foreach (var provider in Model.Providers)
+                        {
+                            <option value="@provider.Id" selected="@(provider.Id == Model.Assistant.ProviderId)">@provider.Name (@provider.DefaultModel)</option>
+                        }
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="assistant-model">Model</label>
+                    <input id="assistant-model" name="model" type="text" autocomplete="off" spellcheck="false"
+                           data-model-suggest data-model-provider="#assistant-provider"
+                           maxlength="@AiProviderStore.MaxModelLength" value="@Model.Assistant.Model" placeholder="the provider's default" />
+                </div>
+            </div>
+            <div class="checkline" style="margin-top: 0.75rem">
+                <input id="assistant-members" name="membersMayUse" type="checkbox" value="true" checked="@Model.Assistant.MembersMayUse" />
+                <label for="assistant-members">Members may use it too (it can do only what a member can)</label>
+            </div>
+            <input type="hidden" name="membersMayUse" value="false" />
+            <button type="submit" class="btn-primary" style="margin-top: 0.75rem">Save assistant settings</button>
+        </form>
+    }
+</div>
+
 <div class="card">
     <h2>Add a provider</h2>
     <p class="hint">
         <strong>OpenAI-compatible</strong> covers OpenAI and anything that copies its chat completions API:
-        a LiteLLM proxy, Ollama, OpenRouter. The key is encrypted on this server and never shown again; leave it
-        empty for a provider that needs none, such as a local Ollama. Every chat is billed to the key's owner.
+        a LiteLLM proxy, Ollama, OpenRouter. Leave the base URL empty for OpenAI's or Anthropic's own. The key is
+        encrypted on this server and never shown again; leave it empty for a provider that needs none, such as a local
+        Ollama. Every chat is billed to the key's owner. Once the kind and key are filled in, the default model field
+        suggests the models the provider offers.
     </p>
 
     <form method="post" asp-page-handler="Create" class="ai-add">
@@ -23,7 +79,7 @@
             <div class="field">
                 <label for="ai-name">Name</label>
                 <input type="text" id="ai-name" name="name" required autocomplete="off" maxlength="@AiProviderStore.MaxNameLength"
-                       placeholder="Team LiteLLM" value="@Model.NewName" />
+                       placeholder="Provider name" value="@Model.NewName" />
             </div>
             <div class="field" style="flex:0 1 300px">
                 <label for="ai-kind">Kind</label>
@@ -40,7 +96,7 @@
             </div>
             <div class="field">
                 <label for="ai-base-url">Base URL</label>
-                <input type="text" id="ai-base-url" name="baseUrl" required autocomplete="off" spellcheck="false"
+                <input type="text" id="ai-base-url" name="baseUrl" autocomplete="off" spellcheck="false"
                        maxlength="@AiProviderStore.MaxBaseUrlLength" placeholder="https://api.openai.com/v1" value="@Model.NewBaseUrl" />
             </div>
         </div>
@@ -53,6 +109,7 @@
             <div class="field">
                 <label for="ai-model">Default model</label>
                 <input type="text" id="ai-model" name="defaultModel" required autocomplete="off" spellcheck="false"
+                       data-model-suggest data-model-form
                        maxlength="@AiProviderStore.MaxModelLength" placeholder="gpt-4o-mini" value="@Model.NewModel" />
             </div>
             <button type="submit" class="btn-primary">Add provider</button>
@@ -154,6 +211,7 @@
                                         <div class="field">
                                             <label for="model-@provider.Id">Default model</label>
                                             <input type="text" id="model-@provider.Id" name="defaultModel" required autocomplete="off" spellcheck="false"
+                                                   data-model-suggest data-model-provider-id="@provider.Id"
                                                    maxlength="@AiProviderStore.MaxModelLength" value="@provider.DefaultModel" />
                                         </div>
                                         <div class="field">

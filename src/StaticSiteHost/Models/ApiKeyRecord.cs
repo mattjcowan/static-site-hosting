@@ -19,6 +19,12 @@ public sealed class ApiKeyRecord
     public DateTimeOffset? ExpiresUtc { get; set; }
     public bool Revoked { get; set; }
 
+    /// <summary>
+    /// Made from <c>Bootstrap:ApiKey</c> rather than in the UI. Such a key is revoked when the
+    /// configuration stops naming it, so taking the setting away takes the key away.
+    /// </summary>
+    public bool FromConfiguration { get; set; }
+
     [JsonIgnore]
     public bool IsExpired => ExpiresUtc is { } exp && exp <= DateTimeOffset.UtcNow;
 

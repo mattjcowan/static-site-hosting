@@ -22,9 +22,10 @@ namespace StaticSiteHost.Serving;
 /// A site's request goes: the passcode gate, the host's own /_host/ endpoints, then
 /// <see cref="FunctionHost.HandleAsync"/>, which runs the global middleware, the site's
 /// middleware, the site's functions and the global functions, and hands whatever they pass on
-/// to the static content. So middleware sees every request for the site's files as well as
-/// its functions, and no function, middleware included, runs before the passcode gate or
-/// answers under /_host/.
+/// to the site's proxy routes (<see cref="SiteProxy"/>) and then to the static content. So
+/// middleware sees every request for the site's files and proxied paths as well as its
+/// functions, and no function, middleware included, runs before the passcode gate or answers
+/// under /_host/.
 ///
 /// One /_host/ path leaves this class: the realtime hub, <see cref="SiteHub.Path"/>, is a SignalR
 /// endpoint that Program.cs maps, so its requests go on down the pipeline to routing, carrying
@@ -37,6 +38,7 @@ public sealed class SiteHostingMiddleware
     private readonly RequestDelegate _next;
     private readonly SiteStore _sites;
     private readonly SiteContentServer _content;
+    private readonly SiteProxy _proxy;
     private readonly SitePasscodeGate _passcodes;
     private readonly SiteHostEndpoints _hostEndpoints;
     private readonly FunctionHost _functions;
@@ -48,6 +50,7 @@ public sealed class SiteHostingMiddleware
         RequestDelegate next,
         SiteStore sites,
         SiteContentServer content,
+        SiteProxy proxy,
         SitePasscodeGate passcodes,
         SiteHostEndpoints hostEndpoints,
         FunctionHost functions,
@@ -58,6 +61,7 @@ public sealed class SiteHostingMiddleware
         _next = next;
         _sites = sites;
         _content = content;
+        _proxy = proxy;
         _passcodes = passcodes;
         _hostEndpoints = hostEndpoints;
         _functions = functions;
@@ -96,7 +100,11 @@ public sealed class SiteHostingMiddleware
 
             if (await _hostEndpoints.TryHandleAsync(context, site)) return;
 
-            await _functions.HandleAsync(context, site, () => _content.ServeAsync(context, site));
+            await _functions.HandleAsync(context, site, async () =>
+            {
+                if (await _proxy.TryForwardAsync(context, site)) return;
+                await _content.ServeAsync(context, site);
+            });
             return;
         }
 

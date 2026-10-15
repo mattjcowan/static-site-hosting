@@ -5,7 +5,8 @@
     ViewData["Title"] = Model.Domain is null ? "Global functions editor" : $"Functions — {Model.Domain}";
 }
 
-<div class="page-head">
+@* Its editor lives in scripts bound at load, so the assistant must not swap this page's content in place. *@
+<div class="page-head" data-no-swap>
     <h1>Function editor</h1>
     @if (Model.Domain is null)
     {

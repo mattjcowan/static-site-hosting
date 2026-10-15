@@ -15,6 +15,8 @@ using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
 using StaticSiteHost.Services.Ai;
 using StaticSiteHost.Services.Realtime;
+using StaticSiteHost.Tools;
+using ModelContextProtocol.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -62,6 +64,7 @@ builder.Services.AddSingleton<SitePathResolver>();
 builder.Services.AddSingleton<SiteContentServer>();
 builder.Services.AddSingleton<SitePasscodeGate>();
 builder.Services.AddSingleton<SiteRuleService>();
+builder.Services.AddSingleton<SiteProxyService>();
 builder.Services.AddSingleton<SiteVariableService>();
 builder.Services.AddSingleton<SiteHostEndpoints>();
 builder.Services.AddSingleton<ZipDeploymentService>();
@@ -71,11 +74,39 @@ builder.Services.AddSingleton<FunctionBuildService>();
 builder.Services.AddSingleton<FunctionHost>();
 builder.Services.AddSingleton<FunctionBundleBuilder>();
 builder.Services.AddSingleton<FunctionTestRunner>();
+builder.Services.AddSingleton<FunctionTestService>();
 builder.Services.AddSingleton<FunctionDeploymentService>();
 // Loads the bundles that run background services or jobs once the server is listening, and stops them on shutdown.
 builder.Services.AddHostedService<FunctionWarmUp>();
 builder.Services.AddSingleton<BootstrapAdministrator>();
+builder.Services.AddSingleton<UserAdminService>();
 builder.Services.AddSingleton<LoginThrottle>();
+
+// ---------------------------------------------------------------- proxy routes
+
+// YARP's direct forwarder only: matching, settings and storage are SiteProxy's own.
+builder.Services.AddHttpForwarder();
+builder.Services.AddSingleton<ProxyInvokers>();
+builder.Services.AddSingleton<SiteProxy>();
+
+// ---------------------------------------------------------------- MCP
+
+// /mcp on the management host: the tools in Tools/SiteHostTools.cs, behind the same API keys as
+// /api/v1. Stateless, so each call is one authenticated request with no session to keep.
+builder.Services.AddHttpContextAccessor();
+builder.Services
+    .AddMcpServer(options =>
+    {
+        options.ServerInfo = new() { Name = "static-site-host", Title = "Static Site Host", Version = SiteHostTools.ServerVersion };
+        options.ServerInstructions = SiteHostTools.Instructions;
+    })
+    .WithHttpTransport(options => options.Stateless = true)
+    .WithTools(SiteHostTools.All.Select(tool => McpServerTool.Create(tool.Function, new McpServerToolCreateOptions
+    {
+        ReadOnly = tool.Effect == ToolEffect.Read,
+        Destructive = tool.Effect == ToolEffect.Destructive,
+        OpenWorld = false
+    })));
 
 // ---------------------------------------------------------------- AI providers
 
@@ -102,6 +133,11 @@ builder.Services.AddSingleton<SiteAiChatFactory>();
 builder.Services.AddSingleton<SiteAiSettingsService>();
 builder.Services.AddSingleton<AiVisitorLimiter>();
 builder.Services.AddSingleton<AiChatEndpoint>();
+builder.Services.AddSingleton<AiModelCatalog>();
+
+// The management assistant: the panel on every management page, using the tools MCP serves.
+builder.Services.AddSingleton<StaticSiteHost.Services.Assistant.AssistantSettingsStore>();
+builder.Services.AddSingleton<StaticSiteHost.Services.Assistant.AssistantService>();
 
 // ---------------------------------------------------------------- realtime
 
@@ -169,6 +205,8 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.AuthorizeFolder("/Admin", Policies.Administrator);
 });
 
+// Before AddResponseCompression, which only adds its own provider when none is registered.
+builder.Services.AddSingleton<IResponseCompressionProvider, SiteResponseCompressionProvider>();
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
@@ -189,6 +227,8 @@ var app = builder.Build();
 // ---------------------------------------------------------------- startup work
 
 app.Services.GetRequiredService<SiteStore>().Load();
+// Built now so a mistake in SiteHosting:ProxyBlockedNetworks stops the server here, not on a visitor's request.
+app.Services.GetRequiredService<ProxyInvokers>();
 await app.Services.GetRequiredService<AiProviderStore>().LoadAsync();
 app.Services.GetRequiredService<ZipDeploymentService>().CleanupStaging();
 await app.Services.GetRequiredService<BootstrapAdministrator>().EnsureAsync();
@@ -224,6 +264,9 @@ app.UseForcedPasswordChange();
 app.MapRazorPages();
 app.MapApi();
 app.MapHub<SiteHub>(SiteHub.Path);
+app.MapAssistant();
+app.MapModelSuggestions();
+app.MapMcp("/mcp").RequireAuthorization(Policies.ApiUser).DisableAntiforgery();
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
 app.Run();

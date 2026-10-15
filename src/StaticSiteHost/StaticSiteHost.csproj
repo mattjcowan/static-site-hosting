@@ -11,8 +11,29 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The manual, for the read_docs tool (Tools/Manual.cs): the container has no repository to read it from. -->
+    <EmbeddedResource Include="../../README.md" LogicalName="README.md" Link="README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The AI wire formats and other internals are tested directly. -->
     <InternalsVisibleTo Include="StaticSiteHost.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      One of the host's two NuGet dependencies. Only YARP's direct forwarder (IHttpForwarder) is used, for
+      proxy routes (Serving/SiteProxy.cs): matching, storage and settings are this project's own.
+      Functions never see it: they compile against StaticSiteHost.Abstractions alone, and a bundle
+      that brings its own Yarp.ReverseProxy loads its own copy (FunctionLoadContext).
+    -->
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+
+    <!--
+      The MCP endpoint at /mcp on the management host (Endpoints/McpTools.cs): the official C# SDK,
+      so the protocol is kept up to date for us. Like YARP, functions never see it.
+    -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -31,6 +31,18 @@ public static class FunctionEndpoints
             WithSite(domain, sites, site => DeployAsync(site.Domain, mode, http, principal, functions, ct)))
             .RequireAuthorization(Policies.ApiAdministrator);
 
+        api.MapPost("/sites/{domain}/functions/check", (
+            string domain, string? mode, HttpContext http, ClaimsPrincipal principal, SiteStore sites,
+            FunctionDeploymentService functions, CancellationToken ct) =>
+            WithSite(domain, sites, site => CheckAsync(site.Domain, mode, http, principal, functions, ct)))
+            .RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPost("/sites/{domain}/functions/test", (
+            string domain, FunctionTestRequest? body, HttpContext http, SiteStore sites,
+            FunctionTestService tests, CancellationToken ct) =>
+            WithSite(domain, sites, site => TestAsync(site.Domain, body, http, tests, ct)))
+            .RequireAuthorization(Policies.ApiAdministrator);
+
         api.MapDelete("/sites/{domain}/functions", (
             string domain, ClaimsPrincipal principal, SiteStore sites, FunctionDeploymentService functions) =>
             WithSite(domain, sites, site => RemoveAsync(site.Domain, principal, functions)))
@@ -52,6 +64,14 @@ public static class FunctionEndpoints
 
         api.MapPut("/functions", (string? mode, HttpContext http, ClaimsPrincipal principal, FunctionDeploymentService functions, CancellationToken ct) =>
             DeployAsync(null, mode, http, principal, functions, ct))
+            .RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPost("/functions/check", (string? mode, HttpContext http, ClaimsPrincipal principal, FunctionDeploymentService functions, CancellationToken ct) =>
+            CheckAsync(null, mode, http, principal, functions, ct))
+            .RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPost("/functions/test", (FunctionTestRequest? body, HttpContext http, FunctionTestService tests, CancellationToken ct) =>
+            TestAsync(null, body, http, tests, ct))
             .RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapDelete("/functions", (ClaimsPrincipal principal, FunctionDeploymentService functions) =>
@@ -92,6 +112,71 @@ public static class FunctionEndpoints
         return result.Ok
             ? Results.Ok(new { ok = true, functions = result.Bundle, kept = result.Kept, diagnostics = result.Diagnostics })
             : Results.BadRequest(new { error = result.Error, diagnostics = result.Diagnostics });
+    }
+
+    /// <summary>
+    /// Builds an upload as a deploy would, without making it live, and returns the draft's id for
+    /// <c>…/test</c>. Takes the same files and <c>?mode=</c> as a deploy.
+    /// </summary>
+    private static async Task<IResult> CheckAsync(
+        string? domain, string? mode, HttpContext http, ClaimsPrincipal principal, FunctionDeploymentService functions, CancellationToken ct)
+    {
+        if (mode is not (null or "merge" or "replace"))
+            return Results.BadRequest(new { error = "mode is 'merge' (the default) or 'replace'." });
+
+        var (files, readError) = await ReadUploadAsync(http, ct);
+        if (files is null) return Results.BadRequest(new { error = readError });
+
+        var result = await functions.CheckAsync(domain, files, ApiEndpoints.Actor(principal), ct, replace: mode == "replace", source: "api");
+        return result.Ok
+            ? Results.Ok(new { ok = true, draft = result.Bundle?.Id, functions = result.Bundle, kept = result.Kept, diagnostics = result.Diagnostics })
+            : Results.BadRequest(new { error = result.Error, diagnostics = result.Diagnostics });
+    }
+
+    /// <summary>
+    /// Runs one request against the live functions or a draft, in memory. The answer's body comes
+    /// back as text when it reads as UTF-8 text, and as base64 otherwise.
+    /// </summary>
+    private static async Task<IResult> TestAsync(
+        string? domain, FunctionTestRequest? request, HttpContext http, FunctionTestService tests, CancellationToken ct)
+    {
+        var result = await tests.RunAsync(domain, request ?? new FunctionTestRequest(null, null, null, null, null, null), http.RequestServices, ct);
+        var (body, encoding) = AsText(result.Body, result.ContentType);
+
+        return Results.Ok(new
+        {
+            status = result.Status,
+            contentType = result.ContentType,
+            headers = result.Headers,
+            body,
+            bodyEncoding = encoding,
+            elapsedMs = result.ElapsedMs,
+            matched = result.Matched,
+            truncated = result.Truncated,
+            error = result.Error
+        });
+    }
+
+    internal static (string Body, string Encoding) AsText(byte[] body, string? contentType)
+    {
+        var textual = contentType is null ||
+                      contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) ||
+                      contentType.Contains("json", StringComparison.OrdinalIgnoreCase) ||
+                      contentType.Contains("xml", StringComparison.OrdinalIgnoreCase) ||
+                      contentType.Contains("javascript", StringComparison.OrdinalIgnoreCase);
+
+        if (textual)
+        {
+            try
+            {
+                return (new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(body), "utf-8");
+            }
+            catch (DecoderFallbackException)
+            {
+            }
+        }
+
+        return (Convert.ToBase64String(body), "base64");
     }
 
     private static async Task<IResult> RemoveAsync(string? domain, ClaimsPrincipal principal, FunctionDeploymentService functions)

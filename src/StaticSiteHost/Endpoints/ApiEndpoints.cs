@@ -52,6 +52,21 @@ public static class ApiEndpoints
                 : Results.Ok(Describe(site, variables, ai, realtime));
         });
 
+        api.MapPost("/sites/{domain}", async (
+            string domain,
+            ClaimsPrincipal principal,
+            ZipDeploymentService deployer,
+            SiteStore sites,
+            SiteVariableService variables,
+            SiteAiChatFactory ai,
+            RealtimeRegistry realtime) =>
+        {
+            var (ok, error, created, alreadyExists) = await deployer.CreateAsync(domain, Actor(principal));
+            if (!ok) return alreadyExists ? Results.Conflict(new { error }) : Results.BadRequest(new { error });
+
+            return Results.Created($"/api/v1/sites/{created}", Describe(sites.TryGet(created)!, variables, ai, realtime));
+        });
+
         api.MapPost("/sites/{domain}/deploy", DeployAsync);
 
         api.MapPost("/sites/{domain}/rollback/{releaseId}", async (
@@ -189,6 +204,70 @@ public static class ApiEndpoints
             await rules.SetRedirectsAsync(site, [], Actor(principal));
             return Results.Ok(new { ok = true, domain = site.Domain, rules = 0 });
         });
+
+        api.MapGet("/sites/{domain}/proxy", (string domain, ClaimsPrincipal principal, SiteStore sites) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            return Results.Ok(DescribeProxy(site, IsAdministrator(principal)));
+        });
+
+        api.MapPut("/sites/{domain}/proxy", async (
+            string domain,
+            ProxyRoutesRequest? body,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteProxyService proxy) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var (ok, errors) = await proxy.SetRoutesAsync(site, body?.Routes ?? [], Actor(principal));
+            return ok
+                ? Results.Ok(DescribeProxy(site, administrator: true))
+                : Results.BadRequest(new { error = errors[0], errors });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapDelete("/sites/{domain}/proxy", async (
+            string domain,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteProxyService proxy) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            await proxy.SetRoutesAsync(site, [], Actor(principal));
+            return Results.Ok(DescribeProxy(site, administrator: true));
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPost("/sites/{domain}/proxy/test", async (
+            string domain,
+            ProxyTestRequest? body,
+            SiteStore sites,
+            SiteProxyService proxy,
+            CancellationToken ct) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var path = ProxyRouteRules.NormalizePath(body?.Path);
+            var route = site.Proxy.FirstOrDefault(r => r.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (route is null) return Results.NotFound(new { error = $"{site.Domain} has no proxy route at {path}." });
+
+            var result = await proxy.TestAsync(route, ct);
+            return Results.Ok(new
+            {
+                path = route.Path,
+                url = result.Url,
+                answered = result.Answered,
+                status = result.Status,
+                version = result.Version,
+                milliseconds = (int)result.Elapsed.TotalMilliseconds,
+                error = result.Error
+            });
+        }).RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapGet("/sites/{domain}/variables", (string domain, SiteStore sites, SiteVariableService variables) =>
         {
@@ -335,18 +414,7 @@ public static class ApiEndpoints
 
         // Keys are write-only: the list says whether each provider has one and nothing more.
         api.MapGet("/ai/providers", async (AiProviderStore providers) =>
-            Results.Ok((await providers.ListAsync()).Select(provider => new
-            {
-                id = provider.Id,
-                name = provider.Name,
-                kind = provider.Kind,
-                baseUrl = provider.BaseUrl,
-                defaultModel = provider.DefaultModel,
-                hasApiKey = provider.HasApiKey,
-                createdUtc = provider.CreatedUtc,
-                createdBy = provider.CreatedBy,
-                updatedUtc = provider.UpdatedUtc
-            })))
+            Results.Ok((await providers.ListAsync()).Select(AdminEndpoints.DescribeProvider)))
             .RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapPost("/sites/{domain}/rename", async (
@@ -365,38 +433,18 @@ public static class ApiEndpoints
                 : Results.BadRequest(new { error = failure });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
-        api.MapDelete("/sites/{domain}", async (
-            string domain,
-            ClaimsPrincipal principal,
-            SiteStore sites,
-            SiteContentServer content,
-            FunctionHost functions,
-            SiteVariableService variables,
-            RealtimeRegistry realtime,
-            AuditLog audit) =>
+        api.MapDelete("/sites/{domain}", async (string domain, ClaimsPrincipal principal, ZipDeploymentService deployer) =>
         {
             var (normalized, error) = SiteStore.NormalizeDomain(domain);
             if (normalized is null) return Results.BadRequest(new { error });
 
-            // The site's functions are gone, background work and requests and all, before its
-            // directory is, and cannot load again until it has been; then once more for good measure.
-            await using (await functions.EvictAsync(normalized))
-            {
-                if (!await sites.DeleteAsync(normalized))
-                    return Results.NotFound(new { error = $"No site is published at '{normalized}'." });
-            }
-
-            functions.Evict(normalized);
-            content.Evict(normalized);
-            variables.Evict(normalized);
-
-            // Once the site is gone, not before, so no connection can arrive in between and stay.
-            realtime.DisconnectSite(normalized);
-            await audit.WriteAsync("site.delete", Actor(principal), new { domain = normalized });
-            return Results.Ok(new { ok = true, domain = normalized });
+            return await deployer.DeleteAsync(normalized, Actor(principal))
+                ? Results.Ok(new { ok = true, domain = normalized })
+                : Results.NotFound(new { error = $"No site is published at '{normalized}'." });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapFunctionEndpoints();
+        api.MapAdminEndpoints();
 
         return app;
     }
@@ -503,6 +551,36 @@ public static class ApiEndpoints
         return Results.Ok(new { ok = true, domain = site.Domain, delivered });
     }
 
+    /// <summary>
+    /// A site's proxy routes. Request header values go to administrators only: one may carry a key
+    /// for the backend, typed in rather than read from <c>${env:…}</c>.
+    /// </summary>
+    internal static object DescribeProxy(SiteRecord site, bool administrator) => new
+    {
+        domain = site.Domain,
+        routes = site.Proxy.Select(route => administrator ? route : new ProxyRoute
+        {
+            Path = route.Path,
+            Target = route.Target,
+            StripPath = route.StripPath,
+            Enabled = route.Enabled,
+            WebSockets = route.WebSockets,
+            CrossSiteWebSockets = route.CrossSiteWebSockets,
+            Streaming = route.Streaming,
+            HttpVersion = route.HttpVersion,
+            TimeoutSeconds = route.TimeoutSeconds,
+            MaxRequestBodyBytes = route.MaxRequestBodyBytes,
+            KeepHost = route.KeepHost,
+            ForwardedHeaders = route.ForwardedHeaders,
+            RequestHeaders = route.RequestHeaders.Select(h => new ProxyHeader { Name = h.Name, Value = "" }).ToList(),
+            CookieMode = route.CookieMode,
+            CookieParentDomain = route.CookieParentDomain,
+            RewriteRedirects = route.RewriteRedirects,
+            FilesFirst = route.FilesFirst,
+            AcceptAnyCertificate = route.AcceptAnyCertificate
+        })
+    };
+
     /// <summary>Resolves a domain to a site, or the response to return instead.</summary>
     private static (SiteRecord? Site, IResult? Failure) Find(string domain, SiteStore sites)
     {
@@ -515,7 +593,7 @@ public static class ApiEndpoints
             : (site, null);
     }
 
-    private static object Describe(SiteRecord site, SiteVariableService variables, SiteAiChatFactory ai, RealtimeRegistry realtime) => new
+    internal static object Describe(SiteRecord site, SiteVariableService variables, SiteAiChatFactory ai, RealtimeRegistry realtime) => new
     {
         domain = site.Domain,
         currentRelease = site.CurrentRelease,
@@ -527,6 +605,7 @@ public static class ApiEndpoints
         passcodeSetUtc = site.PasscodeSetUtc,
         headerRules = (site.Headers?.Count ?? 0) + (site.Current?.Headers?.Count ?? 0),
         redirectRules = (site.Redirects?.Count ?? 0) + (site.Current?.Redirects?.Count ?? 0),
+        proxyRoutes = site.Proxy.Count,
         variables = variables.Describe(site).Count,
         missingVariables = variables.Resolve(site).Missing.Count,
         ai = ai.ProviderOf(site) is not null,
@@ -570,7 +649,7 @@ public static class ApiEndpoints
     /// needs attention. A secret's value and default are left out entirely rather than sent empty,
     /// so nothing reading the response can mistake one for the other.
     /// </summary>
-    private static object DescribeVariables(SiteRecord site, SiteVariableService variables, bool saved)
+    internal static object DescribeVariables(SiteRecord site, SiteVariableService variables, bool saved)
     {
         var resolved = variables.Resolve(site);
         var rows = variables.Describe(site).Select(variable =>
@@ -606,7 +685,7 @@ public static class ApiEndpoints
     /// A site's AI settings for the API. <c>configured</c> is false when the site has no provider,
     /// and also when the one it names was deleted, which <c>providerId</c> still shows.
     /// </summary>
-    private static object DescribeAi(SiteRecord site, SiteAiChatFactory ai, bool saved)
+    internal static object DescribeAi(SiteRecord site, SiteAiChatFactory ai, bool saved)
     {
         var settings = site.Ai;
         var provider = ai.ProviderOf(site);
@@ -646,6 +725,12 @@ public sealed record HeaderRulesRequest(List<HeaderRule>? Headers);
 
 /// <summary>Body of PUT /api/v1/sites/{domain}/redirects. Replaces the site's whole rule list.</summary>
 public sealed record RedirectRulesRequest(List<RedirectRule>? Redirects);
+
+/// <summary>Body of PUT /api/v1/sites/{domain}/proxy. Replaces the site's whole route list.</summary>
+public sealed record ProxyRoutesRequest(List<ProxyRoute>? Routes);
+
+/// <summary>Body of POST /api/v1/sites/{domain}/proxy/test: the path of the route to test.</summary>
+public sealed record ProxyTestRequest(string? Path);
 
 /// <summary>Body of PUT /api/v1/sites/{domain}/variables. Replaces every value the site holds.</summary>
 public sealed record VariablesRequest(List<VariableItem?>? Variables);

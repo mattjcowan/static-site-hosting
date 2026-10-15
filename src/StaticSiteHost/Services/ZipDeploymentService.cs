@@ -527,6 +527,59 @@ public sealed class ZipDeploymentService
     }
 
     /// <summary>
+    /// Creates a site with no release, for one made of proxy routes, or to set up before the first
+    /// deploy. Anyone who may deploy may do this: deploying to a new domain creates the site anyway.
+    /// </summary>
+    public async Task<(bool Ok, string? Error, string? Domain, bool AlreadyExists)> CreateAsync(string? domainInput, string actor)
+    {
+        var (domain, error) = SiteStore.NormalizeDomain(domainInput);
+        if (domain is null) return (false, error, null, false);
+        if (_options.IsManagementHost(domain))
+            return (false, $"'{domain}' is reserved for the management interface.", null, false);
+
+        // Same gate as a deploy, so a deploy creating the site at the same moment cannot be overwritten.
+        await _deployGate.WaitAsync();
+        try
+        {
+            if (_sites.Exists(domain)) return (false, $"A site is already published at '{domain}'.", domain, true);
+
+            await _sites.SaveAsync(new SiteRecord { Domain = domain, CreatedBy = actor });
+            _content.Evict(domain);
+            _variables.Evict(domain);
+
+            await _audit.WriteAsync("site.create", actor, new { domain });
+            _logger.LogInformation("Created site {Domain} with no release", domain);
+            return (true, null, domain, false);
+        }
+        finally
+        {
+            _deployGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Deletes a site and everything it has. Its functions are gone, background work and requests
+    /// and all, before its directory is, and cannot load again until it has been; then once more
+    /// for good measure. False when there is no such site.
+    /// </summary>
+    public async Task<bool> DeleteAsync(string domain, string actor)
+    {
+        await using (await _functions.EvictAsync(domain))
+        {
+            if (!await _sites.DeleteAsync(domain)) return false;
+        }
+
+        _functions.Evict(domain);
+        _content.Evict(domain);
+        _variables.Evict(domain);
+
+        // Once the site is gone, not before, so no connection can arrive in between and stay.
+        _realtime.DisconnectSite(domain);
+        await _audit.WriteAsync("site.delete", actor, new { domain });
+        return true;
+    }
+
+    /// <summary>
     /// Moves a site to a new domain. The old domain stops answering straight away; nothing
     /// redirects from it, and the pages connected to its realtime hub are closed, told not to
     /// reconnect, since the old domain no longer has a hub to reconnect to.
@@ -668,14 +721,21 @@ public sealed class ZipDeploymentService
     /// Makes <paramref name="bundle"/> the functions of the live release, or removes them when
     /// null. Under the deploy gate because it edits the same release list a deploy does.
     /// </summary>
-    public async Task<(bool Ok, string? Error)> SetFunctionsAsync(string domain, FunctionBundle? bundle)
+    public async Task<(bool Ok, string? Error)> SetFunctionsAsync(string domain, FunctionBundle? bundle, string? actor = null)
     {
         await _deployGate.WaitAsync();
         try
         {
             var site = _sites.TryGet(domain);
             if (site is null) return (false, $"No site is published at '{domain}'.");
-            if (site.Current is not { } current) return (false, "This site has no live release to attach functions to.");
+
+            var current = site.Current;
+            if (current is null)
+            {
+                if (bundle is null) return (false, "This site has no functions to remove.");
+                current = AddEmptyRelease(site, actor);
+            }
+
             if (bundle is null && current.Functions is null) return (false, "This site has no functions to remove.");
 
             if (bundle is not null) site.FunctionBundles.Add(bundle);
@@ -738,6 +798,34 @@ public sealed class ZipDeploymentService
         }
 
         return written;
+    }
+
+    /// <summary>
+    /// A release with no files, made live, for a site with no release that is given functions: a
+    /// site made only of proxy routes, whose functions (a sign-in middleware, say) attach to a
+    /// release like every other site's. Paths that nothing answers get a 404, as they did before.
+    /// A later deploy carries the functions forward to its release, as any deploy does.
+    /// </summary>
+    private ReleaseRecord AddEmptyRelease(SiteRecord site, string? actor)
+    {
+        var release = new ReleaseRecord
+        {
+            Id = NewReleaseId(),
+            DeployedBy = actor,
+            Source = ReleaseRecord.FunctionsOnlySource,
+            FileCount = 0,
+            TotalBytes = 0,
+            HasRootIndex = false
+        };
+
+        Directory.CreateDirectory(_paths.ReleaseDir(site.Domain, release.Id));
+        site.Releases.Insert(0, release);
+        site.CurrentRelease = release.Id;
+        site.LastDeployedBy = actor ?? site.LastDeployedBy;
+        _content.Evict(site.Domain);
+
+        _logger.LogInformation("Gave {Domain} an empty release {Release} to carry its functions", site.Domain, release.Id);
+        return release;
     }
 
     private static string NewReleaseId() =>

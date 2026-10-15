@@ -63,18 +63,25 @@ public sealed class FunctionDeploymentService
         string? domain, IReadOnlyList<FunctionFile> files, string actor, string source, bool replace,
         CancellationToken ct = default)
     {
-        IReadOnlyList<string> kept = [];
-        if (!replace)
-        {
-            var uploaded = files.Select(f => FunctionBundleBuilder.SafeFileName(f.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var carried = (await LiveFilesAsync(domain)).Where(f => !uploaded.Contains(f.Name)).ToList();
-
-            kept = carried.Select(f => f.Name).ToList();
-            files = [.. carried, .. files];
-        }
+        (files, var kept) = await WithLiveFilesAsync(domain, files, replace);
 
         var result = await DeployCoreAsync(domain, files, actor, source, ct);
         return result.Ok ? result with { Kept = kept } : result;
+    }
+
+    /// <summary>
+    /// The whole set an upload stands for: the upload alone with <paramref name="replace"/>,
+    /// otherwise the live files with same-named ones replaced by the upload. Also the names of the
+    /// live files carried over.
+    /// </summary>
+    private async Task<(IReadOnlyList<FunctionFile> Files, IReadOnlyList<string> Kept)> WithLiveFilesAsync(
+        string? domain, IReadOnlyList<FunctionFile> files, bool replace)
+    {
+        if (replace) return (files, []);
+
+        var uploaded = files.Select(f => FunctionBundleBuilder.SafeFileName(f.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var carried = (await LiveFilesAsync(domain)).Where(f => !uploaded.Contains(f.Name)).ToList();
+        return ([.. carried, .. files], carried.Select(f => f.Name).ToList());
     }
 
     private async Task<FunctionDeployResult> DeployCoreAsync(
@@ -82,15 +89,16 @@ public sealed class FunctionDeploymentService
     {
         if (domain is null) return await DeployGlobalAsync(files, actor, source, ct);
 
-        var site = _sites.TryGet(domain);
-        if (site?.Current is null)
-            return FunctionDeployResult.Failed("Functions attach to the live release, and this site has none yet. Deploy its content first.");
+        // A site with no release yet (one made only of proxy routes) is given an empty one to carry
+        // its functions: see ZipDeploymentService.SetFunctionsAsync.
+        if (_sites.TryGet(domain) is null)
+            return FunctionDeployResult.Failed($"No site is published at '{domain}'.");
 
         var built = await _builder.BuildAsync(_paths.FunctionsDir(domain), files, actor, source, ct);
         if (!built.Ok) return built;
 
         var bundle = built.Bundle!;
-        var (ok, error) = await _deployer.SetFunctionsAsync(domain, bundle);
+        var (ok, error) = await _deployer.SetFunctionsAsync(domain, bundle, actor);
         if (!ok)
         {
             TryDeleteDirectory(_paths.FunctionBundleDir(domain, bundle.Id));
@@ -202,12 +210,20 @@ public sealed class FunctionDeploymentService
     /// Builds files exactly as a deploy would, without making them live. The draft is kept for a
     /// while so the editor can run requests against it before deciding to deploy.
     /// </summary>
+    /// <param name="replace">
+    /// True when <paramref name="files"/> is the whole set, as the editor sends it; false merges
+    /// them into the live files first, as an upload without <c>?mode=replace</c> would be.
+    /// </param>
     public async Task<FunctionDeployResult> CheckAsync(
-        string? domain, IReadOnlyList<FunctionFile> files, string actor, CancellationToken ct = default)
+        string? domain, IReadOnlyList<FunctionFile> files, string actor, CancellationToken ct = default,
+        bool replace = true, string source = "editor")
     {
+        (files, var kept) = await WithLiveFilesAsync(domain, files, replace);
+
         var drafts = DraftsDir(domain);
         RemoveExpiredDrafts(drafts);
-        return await _builder.BuildAsync(drafts, files, actor, "editor", ct);
+        var result = await _builder.BuildAsync(drafts, files, actor, source, ct);
+        return result.Ok ? result with { Kept = kept } : result;
     }
 
     /// <summary>

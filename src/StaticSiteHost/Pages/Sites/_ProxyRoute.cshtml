@@ -1,0 +1,158 @@
+@model StaticSiteHost.Pages.Sites.ProxyRouteEditor
+@using StaticSiteHost.Models
+@{
+    var route = Model.Route;
+    var id = Model.Id;
+
+    void Switch(string name, bool value, string label, string hint)
+    {
+        <div class="proxy-switch">
+            <div class="checkline">
+                <input id="@id-@name" name="@name" type="checkbox" value="true" checked="@value" />
+                <label for="@id-@name">@label</label>
+            </div>
+            <input type="hidden" name="@name" value="false" />
+            <p class="hint">@hint</p>
+        </div>
+    }
+}
+
+<form method="post" asp-page-handler="SaveProxyRoute" asp-route-domain="@Model.Domain" class="proxy-form">
+    @if (!Model.IsNew)
+    {
+        <input type="hidden" name="originalPath" value="@Model.OriginalPath" />
+    }
+
+    @if (Model.Errors.Count > 0)
+    {
+        <div class="alert alert-error">
+            <strong>Nothing was saved.</strong>
+            <ul>
+                @foreach (var error in Model.Errors.Take(8))
+                {
+                    <li>@error</li>
+                }
+            </ul>
+        </div>
+    }
+
+    <div class="row">
+        <div class="field proxy-path">
+            <label for="@id-path">Path</label>
+            <input id="@id-path" name="Path" type="text" value="@route.Path" required maxlength="@StaticSiteHost.Serving.ProxyRouteRules.MaxPathLength"
+                   placeholder="/api" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </div>
+        <div class="field">
+            <label for="@id-target">Target</label>
+            <input id="@id-target" name="Target" type="text" value="@route.Target" required maxlength="@StaticSiteHost.Serving.ProxyRouteRules.MaxTargetLength"
+                   placeholder="http://orders-api:8080" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </div>
+    </div>
+    <p class="hint proxy-row-hint">
+        The path matches whole segments, ignoring case: <span class="mono">/api</span> covers <span class="mono">/api/users</span>
+        but not <span class="mono">/apis</span>, and <span class="mono">/</span> covers everything. The longest matching path wins.
+        The target may name an environment variable, as in <span class="mono">${env:ORDERS_URL}</span>.
+    </p>
+
+    <div class="proxy-switches">
+        @{
+            Switch("Enabled", route.Enabled, "Enabled",
+                "Off keeps the route but leaves its paths to the site's files.");
+            Switch("StripPath", route.StripPath, "Remove the path",
+                "/api/users goes to {target}/users. Off: to {target}/api/users.");
+            Switch("WebSockets", route.WebSockets, "WebSockets",
+                "Forward WebSocket connections, over HTTP/1.1 and HTTP/2. Off, they are refused.");
+            Switch("CrossSiteWebSockets", route.CrossSiteWebSockets, "WebSockets from other sites",
+                "Let pages on other sites open them. The visitor's cookies go along, so leave this off unless the backend checks Origin itself.");
+            Switch("Streaming", route.Streaming, "Streaming",
+                "For server-sent events, long polls and big downloads: never compressed or buffered here.");
+            Switch("FilesFirst", route.FilesFirst, "Files first",
+                "Serve the site's file when there is one at the path, and forward only when there is not.");
+            Switch("ForwardedHeaders", route.ForwardedHeaders, "Forwarded headers",
+                "Send X-Forwarded-For, -Proto, -Host and, when the path is removed, -Prefix. Any the visitor sent are dropped either way.");
+            Switch("KeepHost", route.KeepHost, "Send the visitor's Host",
+                "For a backend that tells sites apart by name. Off, it gets the target's own host.");
+            Switch("RewriteRedirects", route.RewriteRedirects, "Rewrite redirects",
+                "A redirect to the target's own address becomes the same place on this site.");
+            Switch("AcceptAnyCertificate", route.AcceptAnyCertificate, "Accept any certificate",
+                "For an https:// target with a self-signed certificate on a network you trust. Anyone in between could read the traffic.");
+        }
+    </div>
+
+    <div class="row proxy-settings">
+        <div class="field">
+            <label for="@id-version">HTTP version to the target</label>
+            <select id="@id-version" name="HttpVersion">
+                <option value="@ProxyHttpVersions.Auto" selected="@(route.HttpVersion == ProxyHttpVersions.Auto)">Auto</option>
+                <option value="@ProxyHttpVersions.Http11" selected="@(route.HttpVersion == ProxyHttpVersions.Http11)">HTTP/1.1 only</option>
+                <option value="@ProxyHttpVersions.Http2" selected="@(route.HttpVersion == ProxyHttpVersions.Http2)">HTTP/2 only (gRPC, h2c)</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="@id-timeout">Timeout (seconds)</label>
+            <input id="@id-timeout" name="TimeoutSeconds" type="number" min="1" max="@StaticSiteHost.Serving.ProxyRouteRules.MaxTimeoutSeconds"
+                   value="@route.TimeoutSeconds" required />
+        </div>
+        <div class="field">
+            <label for="@id-body">Largest request body (MB)</label>
+            <input id="@id-body" name="MaxRequestBodyMegabytes" type="text" inputmode="decimal" autocomplete="off"
+                   value="@(Model.BodyLimitText ?? StaticSiteHost.Pages.Sites.ProxyRouteInput.Megabytes(route.MaxRequestBodyBytes))"
+                   placeholder="server default" />
+        </div>
+    </div>
+    <p class="hint proxy-row-hint">
+        Auto uses HTTP/2 when an https:// target offers it, and HTTP/1.1 otherwise. The timeout is how long the target may
+        go without sending anything, an idle WebSocket included.
+    </p>
+
+    <div class="row proxy-settings">
+        <div class="field">
+            <label for="@id-cookies">Cookies the target sets belong to</label>
+            <select id="@id-cookies" name="CookieMode">
+                <option value="@ProxyCookieModes.Host" selected="@(route.CookieMode == ProxyCookieModes.Host)">This host only</option>
+                <option value="@ProxyCookieModes.Keep" selected="@(route.CookieMode == ProxyCookieModes.Keep)">The domain the target names</option>
+                <option value="@ProxyCookieModes.Parent" selected="@(route.CookieMode == ProxyCookieModes.Parent)">A parent domain…</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="@id-parent">Parent domain</label>
+            <input id="@id-parent" name="CookieParentDomain" type="text" value="@route.CookieParentDomain"
+                   placeholder="example.com" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </div>
+    </div>
+    <p class="hint proxy-row-hint">
+        A parent domain shares the cookies with its other subdomains, for sites that share a sign-in. Cookies named like the
+        server's own (<span class="mono">ssh.*</span>) are never passed on, in either direction.
+    </p>
+
+    <div class="field">
+        <label for="@id-headers">Request headers</label>
+        <textarea id="@id-headers" name="RequestHeaders" class="rules" rows="3" wrap="off" spellcheck="false"
+                  placeholder="X-Api-Key: ${env:ORDERS_API_KEY}&#10;X-Debug:">@Model.HeadersText</textarea>
+        <p class="hint snippet-hint">
+            One per line, <span class="mono">Name: value</span>, set on every request to the target. <span class="mono">Name:</span>
+            alone removes that header. Read keys from <span class="mono">${env:…}</span> so they never sit in the site's settings.
+        </p>
+    </div>
+
+    <button type="submit" class="btn-primary">@(Model.IsNew ? "Add route" : "Save route")</button>
+</form>
+
+@if (!Model.IsNew)
+{
+    <div class="proxy-actions">
+        <form method="post" asp-page-handler="TestProxyRoute" asp-route-domain="@Model.Domain">
+            <input type="hidden" name="path" value="@Model.OriginalPath" />
+            <button type="submit" class="btn">Test</button>
+        </form>
+        <form method="post" asp-page-handler="RemoveProxyRoute" asp-route-domain="@Model.Domain"
+              data-confirm="Remove the proxy route at @Model.OriginalPath? Its paths go back to the site's files.">
+            <input type="hidden" name="path" value="@Model.OriginalPath" />
+            <button type="submit" class="btn-danger">Remove route</button>
+        </form>
+    </div>
+    @if (Model.TestResult is { } test)
+    {
+        <div class="alert @(test.Answered ? "alert-success" : "alert-error") proxy-test" role="status">@test.Message</div>
+    }
+}
