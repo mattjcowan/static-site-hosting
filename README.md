@@ -2626,6 +2626,74 @@ Back up `/data`, and you have backed up everything.
 
 ---
 
+## Deploying on Railway
+
+**What it is.** [Railway](https://railway.com) can run the published image as a service, with a
+volume for the data and a wildcard domain, so every site under that domain works without a DNS
+change per site.
+
+**How to use it.**
+
+1. **New service from a Docker image:** `mattjcowan/static-site-hosting:latest`, or a version
+   such as `mattjcowan/static-site-hosting:0.5.0` to choose when to upgrade. The `slim` tag serves
+   static sites only, without functions.
+2. **Add a volume mounted at `/data`.** Users, keys, sites and releases live there. Without a
+   volume, every redeploy starts empty.
+3. **Set the variables** under the service's **Variables**. Railway has no `.env` or Compose file,
+   so use the server's own names, with `__` between the parts:
+
+   | Variable | Value | Why |
+   | -------- | ----- | --- |
+   | `SiteHosting__TrustForwardedHeaders` | `true` | Railway's edge ends HTTPS and forwards to the container. Without this the server sees every request as `http`, from Railway's address. It is safe here: the container can only be reached through Railway's edge. |
+   | `SiteHosting__ManagementHosts__0` | `admin.example.com` | Where the management UI and API answer. Without it, they answer on any host name that has no site. Add more with `__1`, `__2`… (say `deploy.example.com` for CI): every one answers with everything, and each needs its own domain on the service. |
+   | `Bootstrap__Password` | a strong password | The first administrator's. Left empty, one is generated and shown only in the deploy log. |
+   | `Bootstrap__ApiKey` | `sshost_<id>_<secret>` (optional) | An API key that works from the first start, for scripts and [MCP](#automation-and-ai-agents). |
+
+   Any other setting in [Configuration](#configuration) works the same way, such as
+   `SiteHosting__MaxUploadBytes`.
+4. **Domains.** Under the service's **Networking**, add each management host
+   (`admin.example.com`, and `deploy.example.com` if you set one) and a wildcard for the sites
+   (`*.apps.example.com`), with **8080** as the
+   target port: the port the container listens on. Railway shows the DNS records each one needs.
+5. **DNS** (Cloudflare shown; other providers are the same without the proxy setting):
+
+   | Record | Type | Value | Cloudflare proxy |
+   | ------ | ---- | ----- | ---------------- |
+   | `admin` (and `deploy`) | CNAME | the target Railway shows | either |
+   | `*.apps` | CNAME | the target Railway shows | DNS only, unless you have Advanced Certificate Manager (below) |
+   | `_acme-challenge.apps` | CNAME | the target Railway shows | **DNS only, always**: Railway issues the wildcard certificate through it |
+   | the `TXT` record Railway shows, if any | TXT | as shown | — |
+
+6. **Publish sites** to names under the wildcard, such as `shop.apps.example.com`. They work at
+   once. A site on another domain needs that domain added to the service and its DNS pointed at
+   Railway too.
+
+**Cloudflare and a wildcard one level down.** Cloudflare's free Universal SSL certificate covers
+`example.com` and `*.example.com`, one level only. A site at `shop.apps.example.com` is two levels
+down, so with its record proxied (orange cloud) browsers get a certificate error. Either:
+
+* keep `*.apps` **DNS only**, so Railway's own certificate is served (the simplest), or
+* buy Cloudflare's Advanced Certificate Manager and add a certificate for `*.apps.example.com`
+  (or turn on Total TLS), then proxy the record.
+
+When the records are proxied, set Cloudflare's SSL/TLS mode to **Full** while Railway issues its
+certificate: Railway serves a temporary one meanwhile, which **Full (strict)** refuses. Move to
+Full (strict) once Railway shows the certificate as issued.
+
+**Proxy routes to other Railway services** can use Railway's private network: a target such as
+`http://api.railway.internal:8080`, or with Railway's reference syntax
+`http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8080`. Private addresses are allowed for
+[proxy routes](#proxy-routes). Services on it normally speak plain HTTP, so use `http://`.
+
+**Rules and limits.**
+
+* Railway does not pull a new image by itself. Redeploy the service to pick up a new `latest`,
+  or change the tag to move to a new version.
+* Back up the volume before upgrading at a site that matters (Railway's volume backups, or
+  download `/data`).
+* gRPC through Railway's edge is not covered here: see the HTTP/2 note under
+  [Proxy routes](#proxy-routes).
+
 ## Local development
 
 ```bash
