@@ -50,7 +50,7 @@ host version is fetched fresh; nothing else needs changing.
 The management app's icons are the shapes of [Lucide](https://lucide.dev) icons (box, cloud-upload,
 globe, users, code, route, lock, sparkle, circle-user, search, message-square, menu, panel-left,
 log-out, monitor, sun, moon, languages, palette, external-link, arrow-right, file, file-plus, folder,
-image, upload, download, chevron-right, save, undo, git-compare, pencil, trash), written inline as SVG
+image, upload, download, chevron-right, save, undo, git-compare, pencil, trash, cloud), written inline as SVG
 path data, some with coordinates rounded.
 
 Lucide is under the ISC licence:

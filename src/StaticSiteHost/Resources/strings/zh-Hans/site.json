@@ -105,6 +105,7 @@
   "site.https.sourceField": "证书来源",
   "site.https.option.automatic": "自动",
   "site.https.option.letsEncrypt": "Let's Encrypt",
+  "site.https.option.cloudflareOrigin": "Cloudflare 源站证书（用于由 Cloudflare 代理的站点）",
   "site.https.option.selfSigned": "自签名",
   "site.https.option.shared": "共享证书",
   "site.https.option.uploaded": "为此站点上传的证书",

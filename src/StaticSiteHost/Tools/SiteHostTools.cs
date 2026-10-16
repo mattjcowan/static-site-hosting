@@ -729,7 +729,7 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("set_site_tls", ToolEffect.Change)]
-    [Description("Changes a site's HTTPS settings; anything left out stays as it is. source: 'automatic' (a shared certificate that covers it, otherwise the server's default, usually Let's Encrypt), 'letsencrypt', 'selfsigned', 'shared', 'uploaded' (only once a certificate was uploaded in the UI or API) or 'none' (HTTP only). A new certificate follows within a minute. HSTS makes browsers refuse plain HTTP for a year and cannot be taken back from a browser that saw it: turn it on only when the user asks and HTTPS already works. Administrators only.")]
+    [Description("Changes a site's HTTPS settings; anything left out stays as it is. source: 'automatic' (a shared certificate that covers it, otherwise the server's default, usually Let's Encrypt), 'letsencrypt' (checked through DNS when Cloudflare is connected and holds the domain, else over HTTP), 'cloudflare-origin' (a Cloudflare Origin certificate, for a site Cloudflare proxies; needs Cloudflare connected with SSL and Certificates: Edit), 'selfsigned', 'shared', 'uploaded' (only once a certificate was uploaded in the UI or API) or 'none' (HTTP only). A new certificate follows within a minute. HSTS makes browsers refuse plain HTTP for a year and cannot be taken back from a browser that saw it: turn it on only when the user asks and HTTPS already works. Administrators only.")]
     public static async Task<JsonElement> SetSiteTls(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
@@ -745,6 +745,106 @@ public static class SiteHostTools
             await certificates.SetSiteAsync(site, source, redirectToHttps, hsts, caller.Actor) is { } error
                 ? new { error }
                 : TlsEndpoints.DescribeSite(site, certificates));
+    }
+
+    [SiteHostTool("request_shared_certificate", ToolEffect.Change)]
+    [Description("Gets a certificate for many hosts at once, such as the wildcard *.apps.example.com, and renews it by itself; every site it covers uses it. source: 'letsencrypt' (checked through Cloudflare DNS, the only way to get a wildcard from Let's Encrypt) or 'cloudflare-origin' (a Cloudflare Origin certificate for 15 years, for sites Cloudflare proxies). A wildcard also covers its bare name. Needs HTTPS on in the server and Cloudflare connected (set_cloudflare_token). Takes up to a couple of minutes; get_tls shows it. Administrators only.")]
+    public static async Task<JsonElement> RequestSharedCertificate(
+        IServiceProvider services,
+        [Description("The names, such as ['*.apps.example.com'].")] IReadOnlyList<string> names,
+        [Description("'letsencrypt' or 'cloudflare-origin'.")] string source = "letsencrypt",
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var (info, error) = await services.GetRequiredService<StaticSiteHost.Tls.CertificateManager>()
+            .RequestSharedAsync(string.Join(",", names ?? []), source, caller.Actor, ct);
+        return info is null
+            ? Error(error!.English(services.GetRequiredService<StringCatalog>()))
+            : ToJson(new { ok = true, id = info.Id, names = info.Requested, info.Source, note = TlsEndpoints.Renewing });
+    }
+
+    // ================================================================ DNS (Cloudflare)
+
+    [SiteHostTool("get_dns", ToolEffect.Read)]
+    [Description("DNS through Cloudflare: whether a token is connected and the zones it can edit, whether every site gets a DNS record and what records point at (IPv4, IPv6 or a CNAME target), whether they go through Cloudflare's proxy, and each site's record and state (ok, off, excluded, noZone, noAddress, conflict, error). Administrators only.")]
+    public static async Task<JsonElement> GetDns(IServiceProvider services, CancellationToken ct = default)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        return ToJson(await DnsEndpoints.DescribeAsync(services.GetRequiredService<Services.Dns.DnsService>(), ct));
+    }
+
+    [SiteHostTool("set_cloudflare_token", ToolEffect.Change)]
+    [Description("Connects Cloudflare with an API token, checked with Cloudflare before it is kept (encrypted; never shown again). Give the token Zone: Read and DNS: Edit on the zones this server handles, and SSL and Certificates: Edit for Origin certificates. Administrators only.")]
+    public static async Task<JsonElement> SetCloudflareToken(
+        IServiceProvider services,
+        [Description("The Cloudflare API token.")] string token,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var dns = services.GetRequiredService<Services.Dns.DnsService>();
+        return await dns.SetTokenAsync(token, caller.Actor, ct) is { } error
+            ? Error(error.English(services.GetRequiredService<StringCatalog>()))
+            : ToJson(await DnsEndpoints.DescribeAsync(dns, ct));
+    }
+
+    [SiteHostTool("set_dns_records", ToolEffect.Change)]
+    [Description("Sets what sites' DNS records point at and whether every site gets one: made when a site is, moved when it is renamed, deleted with it. Give an IPv4 and/or IPv6 address (A and AAAA records) or a host name (a CNAME), not both; an empty string clears one. proxied sends visitors through Cloudflare's proxy (the orange cloud). Only records this server made are ever changed. Anything left out stays as it is. Administrators only.")]
+    public static async Task<JsonElement> SetDnsRecords(
+        IServiceProvider services,
+        [Description("Give every site a record.")] bool? forEverySite = null,
+        [Description("This server's public IPv4 address.")] string? ipv4 = null,
+        [Description("This server's public IPv6 address.")] string? ipv6 = null,
+        [Description("A host name to point at instead (CNAME).")] string? target = null,
+        [Description("Through Cloudflare's proxy.")] bool? proxied = null,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var dns = services.GetRequiredService<Services.Dns.DnsService>();
+        var current = await dns.SettingsAsync(ct);
+        var error = await dns.SetRecordsAsync(forEverySite ?? current.RecordsForSites, ipv4 ?? current.Ipv4, ipv6 ?? current.Ipv6,
+            target ?? current.Target, proxied ?? current.Proxied, caller.Actor, ct);
+        return error is null ? ToJson(await DnsEndpoints.DescribeAsync(dns, ct)) : Error(error.English(services.GetRequiredService<StringCatalog>()));
+    }
+
+    [SiteHostTool("add_site_dns_record", ToolEffect.Change)]
+    [Description("Gives one site its DNS record now (or changes whether it goes through Cloudflare's proxy), even when records are not made for every site. Administrators only.")]
+    public static async Task<JsonElement> AddSiteDnsRecord(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("Through Cloudflare's proxy; left out keeps the site's choice or the default.")] bool? proxied = null,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var dns = services.GetRequiredService<Services.Dns.DnsService>();
+        return await WithSiteAsync(services, domain, async site =>
+            await dns.AddSiteAsync(site.Domain, proxied, caller.Actor, ct) is { } error
+                ? new { error = error.English(services.GetRequiredService<StringCatalog>()) }
+                : DnsEndpoints.Describe(dns.Status.GetValueOrDefault(site.Domain)) ?? new { ok = true });
+    }
+
+    [SiteHostTool("remove_site_dns_record", ToolEffect.Destructive)]
+    [Description("Deletes the DNS records this server made for a site, and makes none for it again until asked. Visitors stop reaching the site by name once the change spreads. Administrators only.")]
+    public static async Task<JsonElement> RemoveSiteDnsRecord(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var dns = services.GetRequiredService<Services.Dns.DnsService>();
+        return await WithSiteAsync(services, domain, async site =>
+            await dns.RemoveSiteAsync(site.Domain, caller.Actor, ct) is { } error
+                ? new { error = error.English(services.GetRequiredService<StringCatalog>()) }
+                : (object)new { ok = true, domain = site.Domain });
     }
 
     [SiteHostTool("renew_certificate", ToolEffect.Change)]

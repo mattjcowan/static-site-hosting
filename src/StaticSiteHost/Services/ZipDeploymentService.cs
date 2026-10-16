@@ -55,6 +55,7 @@ public sealed class ZipDeploymentService
     private readonly RealtimeRegistry _realtime;
     private readonly SiteDeployedNotifier _deployed;
     private readonly ReleaseEditor _editor;
+    private readonly Dns.DnsService _dns;
     private readonly SiteHostingOptions _options;
     private readonly ILogger<ZipDeploymentService> _logger;
 
@@ -73,10 +74,12 @@ public sealed class ZipDeploymentService
         RealtimeRegistry realtime,
         SiteDeployedNotifier deployed,
         ReleaseEditor editor,
+        Dns.DnsService dns,
         IOptions<SiteHostingOptions> options,
         ILogger<ZipDeploymentService> logger)
     {
         _editor = editor;
+        _dns = dns;
         _functions = functions;
         _functionBuilder = functionBuilder;
         _variables = variables;
@@ -715,6 +718,9 @@ public sealed class ZipDeploymentService
         // and variables are the new domain's. A rename that failed leaves the site where it was, so
         // its functions start again there.
         await _functions.RefreshAsync(result.Ok ? to : domain);
+
+        // Its DNS record follows it: the old name's goes, the new name gets one.
+        if (result.Ok) await _dns.SiteRenamedAsync(domain, to);
         return result;
     }
 

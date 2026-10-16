@@ -17,9 +17,12 @@ public sealed class HostCertificateState
 
     /// <summary>No new attempt before this, after a failure, so Let's Encrypt's limits are never hit.</summary>
     public DateTimeOffset? NextAttemptUtc { get; set; }
+
+    /// <summary>How the last Let's Encrypt certificate was checked: <c>dns-01</c> or <c>http-01</c>.</summary>
+    public string? Check { get; set; }
 }
 
-/// <summary>A certificate uploaded for the whole server, used for every host it covers.</summary>
+/// <summary>A certificate for the whole server, used for every host it covers: uploaded, or got and renewed here.</summary>
 public sealed class SharedCertificateInfo
 {
     public string Id { get; set; } = "";
@@ -28,6 +31,21 @@ public sealed class SharedCertificateInfo
     public string Issuer { get; set; } = "";
     public string? UploadedBy { get; set; }
     public DateTimeOffset UploadedUtc { get; set; }
+
+    /// <summary>
+    /// Where it comes from (<see cref="Models.CertificateSources.ForShared"/>): uploaded, or got here
+    /// from Let's Encrypt (checked through DNS) or as a Cloudflare Origin certificate, and renewed.
+    /// </summary>
+    public string Source { get; set; } = Models.CertificateSources.Uploaded;
+
+    /// <summary>For one got here: the names asked for, which every renewal asks for again.</summary>
+    public List<string> Requested { get; set; } = [];
+
+    /// <summary>For a Cloudflare Origin certificate: its id, to revoke it when it is replaced or removed.</summary>
+    public string? OriginId { get; set; }
+
+    /// <summary>For one got here: how getting it has gone.</summary>
+    public HostCertificateState State { get; set; } = new();
 }
 
 /// <summary>
@@ -179,6 +197,69 @@ public sealed class CertificateStore
         return info;
     }
 
+    /// <summary>Every shared certificate's details, including ones asked for and not got yet.</summary>
+    public IReadOnlyList<SharedCertificateInfo> SharedInfos()
+    {
+        var dir = Path.Combine(_root, "shared");
+        if (!Directory.Exists(dir)) return [];
+
+        var infos = new List<SharedCertificateInfo>();
+        foreach (var each in Directory.EnumerateDirectories(dir))
+        {
+            var infoPath = Path.Combine(each, "info.json");
+            if (!File.Exists(infoPath)) continue;
+            try
+            {
+                if (JsonSerializer.Deserialize<SharedCertificateInfo>(File.ReadAllText(infoPath), Json) is { } info) infos.Add(info);
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return infos;
+    }
+
+    /// <summary>A shared certificate to get here: its details now, its certificate once it has one.</summary>
+    public async Task<SharedCertificateInfo> AddSharedRequestAsync(IReadOnlyList<string> names, string source, string actor)
+    {
+        var info = new SharedCertificateInfo
+        {
+            Id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(6)),
+            Names = [.. names],
+            Requested = [.. names],
+            Source = source,
+            UploadedBy = actor,
+            UploadedUtc = DateTimeOffset.UtcNow
+        };
+        await SaveSharedInfoAsync(info);
+        return info;
+    }
+
+    public async Task SaveSharedInfoAsync(SharedCertificateInfo info)
+    {
+        var dir = SharedDir(info.Id) ?? throw new ArgumentException($"'{info.Id}' is not a shared certificate id.", nameof(info));
+        Directory.CreateDirectory(dir);
+        await WriteFileAsync(Path.Combine(dir, "info.json"), JsonSerializer.SerializeToUtf8Bytes(info, Json));
+    }
+
+    /// <summary>Saves the certificate got for a shared entry, and its details.</summary>
+    public async Task SaveSharedCertificateAsync(SharedCertificateInfo info, string chainPem, string keyPem, ServedCertificate certificate)
+    {
+        var dir = SharedDir(info.Id) ?? throw new ArgumentException($"'{info.Id}' is not a shared certificate id.", nameof(info));
+        await WriteAsync(dir, chainPem, keyPem);
+        info.Names = [.. certificate.Names];
+        info.NotAfterUtc = certificate.NotAfter;
+        info.Issuer = certificate.Issuer;
+        await SaveSharedInfoAsync(info);
+    }
+
+    private string? SharedDir(string id) =>
+        id.Length == 12 && id.All(char.IsAsciiHexDigitLower) ? Path.Combine(_root, "shared", id) : null;
+
+    /// <summary>What was kept beside a host's certificate from a source: for Let's Encrypt the ACME directory, for Cloudflare Origin the certificate's id.</summary>
+    public string? OriginOf(string host, string source) => SourceDir(host, source) is { } dir ? ReadOrigin(dir) : null;
+
     public bool RemoveShared(string id)
     {
         if (id.Length != 12 || !id.All(char.IsAsciiHexDigit)) return false;
@@ -265,7 +346,8 @@ public sealed class CertificateStore
     }
 
     private string? SourceDir(string host, string source) =>
-        HostDir(host) is { } dir && source is Models.CertificateSources.LetsEncrypt or Models.CertificateSources.SelfSigned or Models.CertificateSources.Uploaded
+        HostDir(host) is { } dir && source is Models.CertificateSources.LetsEncrypt or Models.CertificateSources.SelfSigned
+            or Models.CertificateSources.Uploaded or Models.CertificateSources.CloudflareOrigin
             ? Path.Combine(dir, source)
             : null;
 

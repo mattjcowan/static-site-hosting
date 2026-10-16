@@ -335,6 +335,7 @@
                     <select id="tls-source" name="source">
                         <option value="automatic" selected="@(wantedSource == CertificateSources.Automatic)">@L["site.https.option.automatic"]</option>
                         <option value="letsencrypt" selected="@(wantedSource == CertificateSources.LetsEncrypt)">@L["site.https.option.letsEncrypt"]</option>
+                        <option value="cloudflare-origin" selected="@(wantedSource == CertificateSources.CloudflareOrigin)">@L["site.https.option.cloudflareOrigin"]</option>
                         <option value="selfsigned" selected="@(wantedSource == CertificateSources.SelfSigned)">@L["site.https.option.selfSigned"]</option>
                         <option value="shared" selected="@(wantedSource == CertificateSources.Shared)">@L["site.https.option.shared"]</option>
                         @if (cert?.ServedSource == CertificateSources.Uploaded || wantedSource == CertificateSources.Uploaded)

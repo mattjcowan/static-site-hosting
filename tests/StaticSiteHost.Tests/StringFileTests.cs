@@ -100,9 +100,10 @@ public partial class StringFileTests
     /// <summary>The code that shows text: the pages, the visitor screens and the scripts.</summary>
     private static readonly string[] TextCode = ["Pages", "Serving", "Tls", Path.Combine("wwwroot", "js")];
 
-    /// <summary>Code elsewhere that names keys: the Files tab's answers, and the errors of changes to a release's files.</summary>
+    /// <summary>Code elsewhere that names keys: the Files tab's answers, the errors of changes to a release's files, and DNS.</summary>
     private static readonly string[] TextFiles =
-        [Path.Combine("Endpoints", "SiteFileEditorEndpoints.cs"), Path.Combine("Services", "ReleaseEditor.cs"), Path.Combine("Services", "ZipDeploymentService.cs")];
+        [Path.Combine("Endpoints", "SiteFileEditorEndpoints.cs"), Path.Combine("Services", "ReleaseEditor.cs"), Path.Combine("Services", "ZipDeploymentService.cs"),
+         Path.Combine("Services", "Dns", "DnsService.cs")];
 
     /// <summary>
     /// A key the code names is a quoted literal that looks like one (an area, a dot, more) in the

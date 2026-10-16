@@ -1,0 +1,222 @@
+@page
+@model StaticSiteHost.Pages.Admin.DnsModel
+@{
+    ViewData["Title"] = L["dns.pageTitle"].Value;
+    string? ErrorFor(string form) => Model.ErrorFor == form ? Model.Error : null;
+}
+
+<div class="page-head">
+    <h1>@L["dns.title"]</h1>
+    <p>@L["dns.intro"]</p>
+</div>
+
+<div class="card">
+    <h2>
+        @L["dns.cloudflare.title"]
+        @if (Model.Connected)
+        {
+            <span class="badge badge-ok">@L["dns.cloudflare.connected"]</span>
+        }
+        else
+        {
+            <span class="badge">@L["dns.cloudflare.notConnected"]</span>
+        }
+    </h2>
+    <p class="hint">@L.Html("dns.cloudflare.hint")</p>
+
+    @if (Model.Connected)
+    {
+        <dl class="tls-facts">
+            <dt>@L["dns.cloudflare.token"]</dt>
+            <dd>@L.Text("dns.cloudflare.tokenSaved", new { date = Model.Settings.TokenSetUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), name = Model.Settings.TokenSetBy ?? "—" })</dd>
+            <dt>@L["dns.cloudflare.zones"]</dt>
+            <dd>
+                @if (Model.ZonesError is { } zonesError)
+                {
+                    <span class="validation">@zonesError</span>
+                }
+                else
+                {
+                    <span class="mono">@string.Join(", ", Model.Zones.Select(z => z.Name))</span>
+                }
+            </dd>
+        </dl>
+    }
+
+    @if (ErrorFor("token") is { } tokenError)
+    {
+        <div class="alert alert-error">@tokenError</div>
+    }
+
+    <form method="post" asp-page-handler="Token" class="row">
+        <div class="field" style="flex: 1 1 22rem">
+            <label for="dns-token">@L[Model.Connected ? "dns.cloudflare.replaceToken" : "dns.cloudflare.tokenField"]</label>
+            <input type="password" id="dns-token" name="token" autocomplete="off" spellcheck="false" required />
+        </div>
+        <button type="submit" class="btn-primary">@L["dns.cloudflare.save"]</button>
+    </form>
+    @if (Model.Connected)
+    {
+        <form method="post" asp-page-handler="RemoveToken" data-confirm="@L["dns.cloudflare.removeConfirm"]">
+            <button type="submit" class="btn-link danger">@L["dns.cloudflare.remove"]</button>
+        </form>
+    }
+</div>
+
+<div class="card">
+    <h2>@L["dns.records.title"]</h2>
+    <p class="hint">@L["dns.records.hint"]</p>
+
+    @if (ErrorFor("records") is { } recordsError)
+    {
+        <div class="alert alert-error">@recordsError</div>
+    }
+
+    <form method="post" asp-page-handler="Records">
+        <div class="checkline">
+            <input type="checkbox" id="dns-every" name="forEverySite" value="true" checked="@Model.Settings.RecordsForSites" disabled="@(!Model.Connected)" />
+            <label for="dns-every">@L["dns.records.forEverySite"]</label>
+        </div>
+        <p class="hint">@L["dns.records.forEverySiteHint"]</p>
+
+        <div class="row">
+            <div class="field">
+                <label for="dns-ipv4">@L["dns.records.ipv4"]</label>
+                <input type="text" id="dns-ipv4" name="ipv4" value="@Model.Ipv4" placeholder="203.0.113.5" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="field">
+                <label for="dns-ipv6">@L["dns.records.ipv6"]</label>
+                <input type="text" id="dns-ipv6" name="ipv6" value="@Model.Ipv6" placeholder="2001:db8::5" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="field">
+                <label for="dns-target">@L["dns.records.target"]</label>
+                <input type="text" id="dns-target" name="target" value="@Model.Target" placeholder="lb.example.com" spellcheck="false" autocomplete="off" />
+            </div>
+        </div>
+        <p class="hint">@L["dns.records.addressHint"]</p>
+
+        <div class="checkline">
+            <input type="checkbox" id="dns-proxied" name="proxied" value="true" checked="@Model.Settings.Proxied" />
+            <label for="dns-proxied">@L["dns.records.proxied"]</label>
+        </div>
+        <p class="hint">@L.Html("dns.records.proxiedHint")</p>
+
+        <div class="row">
+            <button type="submit" class="btn-primary" disabled="@(!Model.Connected)">@L["dns.records.save"]</button>
+            <button type="submit" class="btn" formaction="?handler=Detect" formnovalidate>@L["dns.records.detect"]</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>
+        @L["dns.sites.title"] <span class="badge">@Model.Sites.Count</span>
+        @if (Model.Connected)
+        {
+            <form method="post" asp-page-handler="Refresh" class="inline-form">
+                <button type="submit" class="btn-link">@L["dns.sites.refresh"]</button>
+            </form>
+        }
+    </h2>
+    @if (ErrorFor("site") is { } siteError)
+    {
+        <div class="alert alert-error">@siteError</div>
+    }
+    @if (Model.Sites.Count == 0)
+    {
+        <p class="hint">@L["dns.sites.none"]</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>@L["dns.sites.site"]</th><th>@L["dns.sites.record"]</th><th>@L["dns.sites.state"]</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var site in Model.Sites)
+                    {
+                        <tr>
+                            <td>
+                                <a asp-page="/Sites/Details" asp-route-domain="@site.Domain" class="mono">@site.Domain</a>
+                                @if (site.Zone is { } zone)
+                                {
+                                    <div class="cell-sub">@L.Text("dns.sites.inZone", new { zone })</div>
+                                }
+                            </td>
+                            <td>
+                                @if (site.Records is { Records.Count: > 0 } made)
+                                {
+                                    @foreach (var record in made.Records)
+                                    {
+                                        <div class="mono nowrap">@record.Type @record.Content</div>
+                                    }
+                                    <span class="badge @(made.Proxied ? "badge-ok" : "")">@L[made.Proxied ? "dns.sites.proxied" : "dns.sites.dnsOnly"]</span>
+                                }
+                                else
+                                {
+                                    <span class="muted">—</span>
+                                }
+                            </td>
+                            <td>
+                                @switch (site.State)
+                                {
+                                    case "ok":
+                                        <span class="badge badge-ok">@L["dns.state.ok"]</span>
+                                        break;
+                                    case "conflict":
+                                        <span class="validation">@L.Text("dns.state.conflict", new { records = site.Detail })</span>
+                                        break;
+                                    case "error":
+                                        <span class="validation">@site.Detail</span>
+                                        break;
+                                    case "noZone":
+                                        <span class="muted">@L["dns.state.noZone"]</span>
+                                        break;
+                                    case "noAddress":
+                                        <span class="muted">@L["dns.state.noAddress"]</span>
+                                        break;
+                                    case "excluded":
+                                        <span class="muted">@L["dns.state.excluded"]</span>
+                                        break;
+                                    case "notConnected":
+                                        <span class="muted">@L["dns.state.notConnected"]</span>
+                                        break;
+                                    case "pending":
+                                        <span class="muted">@L["dns.state.pending"]</span>
+                                        break;
+                                    default:
+                                        <span class="muted">@L["dns.state.off"]</span>
+                                        break;
+                                }
+                                @if (ErrorFor(site.Domain) is { } rowError)
+                                {
+                                    <div class="cell-sub validation">@rowError</div>
+                                }
+                            </td>
+                            <td class="actions">
+                                @if (site.Records is { Records.Count: > 0 } current)
+                                {
+                                    <form method="post" asp-page-handler="AddSite">
+                                        <input type="hidden" name="domain" value="@site.Domain" />
+                                        <input type="hidden" name="proxied" value="@((!current.Proxied).ToString().ToLowerInvariant())" />
+                                        <button type="submit" class="btn-link">@L[current.Proxied ? "dns.sites.stopProxy" : "dns.sites.proxy"]</button>
+                                    </form>
+                                    <form method="post" asp-page-handler="RemoveSite" data-confirm="@L.Text("dns.sites.removeConfirm", new { domain = site.Domain })">
+                                        <input type="hidden" name="domain" value="@site.Domain" />
+                                        <button type="submit" class="btn-link danger">@L["dns.sites.remove"]</button>
+                                    </form>
+                                }
+                                else if (Model.Connected && site.State is "off" or "excluded" or "error")
+                                {
+                                    <form method="post" asp-page-handler="AddSite">
+                                        <input type="hidden" name="domain" value="@site.Domain" />
+                                        <button type="submit" class="btn-link">@L["dns.sites.add"]</button>
+                                    </form>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>

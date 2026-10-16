@@ -9,6 +9,7 @@
   "common.menu.functions": "Fonctions",
   "common.menu.proxy": "Proxy",
   "common.menu.https": "HTTPS",
+  "common.menu.dns": "DNS",
   "common.menu.ai": "IA",
   "common.menu.branding": "Image de marque",
   "common.menu.account": "Compte",
@@ -53,6 +54,7 @@
 
   "common.certificateSource.automatic": "automatique",
   "common.certificateSource.letsEncrypt": "Let's Encrypt",
+  "common.certificateSource.cloudflareOrigin": "certificat d'origine Cloudflare",
   "common.certificateSource.selfSigned": "autosigné",
   "common.certificateSource.uploaded": "envoyé",
   "common.certificateSource.shared": "certificat partagé",

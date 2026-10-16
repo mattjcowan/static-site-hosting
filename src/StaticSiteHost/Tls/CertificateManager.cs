@@ -4,8 +4,10 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
+using StaticSiteHost.Services.Dns;
 
 namespace StaticSiteHost.Tls;
 
@@ -45,6 +47,10 @@ public sealed record HostCertificateStatus(
 /// first serves whatever is on disk, then issues what is missing or due, one host at a time. A
 /// failure is retried after 1, 2, 4… up to 24 hours, so a name whose DNS is not ready yet never
 /// runs into Let's Encrypt's limits; Renew now skips the wait.
+///
+/// With a Cloudflare token (<see cref="DnsService"/>), Let's Encrypt checks a name in one of its
+/// zones through DNS (DNS-01) instead of over port 80, which also allows wildcard certificates; and
+/// Cloudflare Origin certificates can be made for sites and as shared certificates.
 /// </summary>
 public sealed class CertificateManager : BackgroundService
 {
@@ -58,6 +64,7 @@ public sealed class CertificateManager : BackgroundService
     private readonly SiteStore _sites;
     private readonly CertificateStore _store;
     private readonly AcmeChallenges _challenges;
+    private readonly DnsService _dns;
     private readonly IHttpClientFactory _http;
     private readonly AuditLog _audit;
     private readonly ILogger<CertificateManager> _logger;
@@ -68,15 +75,17 @@ public sealed class CertificateManager : BackgroundService
     /// <summary>Management hosts already reported as unusable, so the warning is logged once.</summary>
     private readonly ConcurrentDictionary<string, byte> _skippedHosts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _renewNow = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _renewShared = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _wake = new(0, 1);
     private volatile IReadOnlyList<(SharedCertificateInfo Info, ServedCertificate Certificate)> _shared = [];
     private readonly Lazy<ServedCertificate> _fallback;
     private volatile string? _issuing;
 
     public CertificateManager(
-        IOptions<SiteHostingOptions> options, SiteStore sites, CertificateStore store, AcmeChallenges challenges,
+        IOptions<SiteHostingOptions> options, SiteStore sites, CertificateStore store, AcmeChallenges challenges, DnsService dns,
         IHttpClientFactory http, AuditLog audit, ILogger<CertificateManager> logger)
     {
+        _dns = dns;
         _options = options.Value;
         _sites = sites;
         _store = store;
@@ -162,6 +171,10 @@ public sealed class CertificateManager : BackgroundService
                 return IsPublicName(host)
                     ? (wanted, null)
                     : (wanted, "Let's Encrypt only issues for public names, and this is not one. Choose self-signed or upload one.");
+            case CertificateSources.CloudflareOrigin:
+                return IsPublicName(host)
+                    ? (wanted, null)
+                    : (wanted, "Cloudflare only makes Origin certificates for names in your zones, and this is not one.");
             default:
                 return (wanted, null);
         }
@@ -175,6 +188,9 @@ public sealed class CertificateManager : BackgroundService
     private ServedCertificate? SharedFor(string host) =>
         _shared.Where(s => s.Certificate.Covers(host) && s.Certificate.NotAfter > DateTimeOffset.UtcNow)
             .OrderByDescending(s => s.Certificate.Names.Contains(host, StringComparer.OrdinalIgnoreCase)) // an exact name over a wildcard
+            // One browsers trust over a Cloudflare Origin certificate, which only Cloudflare trusts:
+            // right whether or not the site goes through Cloudflare's proxy.
+            .ThenBy(s => s.Info.Source == CertificateSources.CloudflareOrigin)
             .ThenByDescending(s => s.Certificate.NotAfter)
             .Select(s => s.Certificate)
             .FirstOrDefault();
@@ -198,19 +214,29 @@ public sealed class CertificateManager : BackgroundService
     {
         var (effective, problem) = Effective(host, wanted);
         var served = _served.TryGetValue(host, out var s) ? s : default;
-        // The last attempt and its error are Let's Encrypt's; under any other source they are history.
-        var state = effective == CertificateSources.LetsEncrypt ? _store.ReadState(host) : new HostCertificateState();
+        // The last attempt and its error are Let's Encrypt's or Cloudflare's; under any other source they are history.
+        var state = effective is CertificateSources.LetsEncrypt or CertificateSources.CloudflareOrigin ? _store.ReadState(host) : new HostCertificateState();
         if (problem is null && effective == CertificateSources.Uploaded && served.Source != CertificateSources.Uploaded)
             problem = "No certificate has been uploaded for this site.";
         return new HostCertificateStatus(host, isSite, wanted, effective, served.Certificate, served.Source, state, _issuing == host, problem)
         {
-            RenewsAt = served.Certificate is { } certificate && served.Source is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned
+            RenewsAt = served.Certificate is { } certificate && served.Source is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned or CertificateSources.CloudflareOrigin
                 ? RenewAt(certificate, Tls.RenewDaysBefore)
                 : null
         };
     }
 
     public IReadOnlyList<(SharedCertificateInfo Info, ServedCertificate Certificate)> Shared => _shared;
+
+    /// <summary>Every shared certificate, including ones asked for and not got yet, with the one served if any.</summary>
+    public IReadOnlyList<(SharedCertificateInfo Info, ServedCertificate? Certificate, bool Busy)> SharedAll()
+    {
+        var served = _shared.ToDictionary(s => s.Info.Id, s => s.Certificate, StringComparer.Ordinal);
+        return _store.SharedInfos()
+            .Select(info => (info, served.GetValueOrDefault(info.Id), _issuing == "shared:" + info.Id))
+            .OrderBy(s => string.Join(",", s.info.Names), StringComparer.Ordinal)
+            .ToList();
+    }
 
     // ---------------------------------------------------------------- changes
 
@@ -283,10 +309,62 @@ public sealed class CertificateManager : BackgroundService
         return (info, null);
     }
 
+    /// <summary>
+    /// Asks for a shared certificate got and renewed here, such as <c>*.apps.example.com</c>, from
+    /// Let's Encrypt (checked through Cloudflare DNS) or as a Cloudflare Origin certificate. A
+    /// wildcard also covers its bare name. It is got within a minute. Returns it, or why not.
+    /// </summary>
+    public async Task<(SharedCertificateInfo? Info, KeyedText? Error)> RequestSharedAsync(string? names, string? source, string actor, CancellationToken ct)
+    {
+        if (!Enabled) return (null, new KeyedText("https.request.error.off"));
+        source = source?.Trim().ToLowerInvariant();
+        if (source is not (CertificateSources.LetsEncrypt or CertificateSources.CloudflareOrigin))
+            return (null, new KeyedText("https.request.error.source"));
+
+        var list = new List<string>();
+        foreach (var raw in (names ?? "").Split([',', ' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var name = raw.Trim().TrimEnd('.').ToLowerInvariant();
+            var bare = name.StartsWith("*.", StringComparison.Ordinal) ? name[2..] : name;
+            if (!CertificateStore.IsHostName(bare) || !IsPublicName(bare)) return (null, new KeyedText("https.request.error.name", new { name = raw }));
+            if (!list.Contains(name)) list.Add(name);
+            // A wildcard covers one level only: its bare name comes with it.
+            if (bare != name && !list.Contains(bare)) list.Add(bare);
+        }
+
+        if (list.Count == 0) return (null, new KeyedText("https.request.error.noNames"));
+        if (!await _dns.ConnectedAsync(ct)) return (null, new KeyedText("https.request.error.noCloudflare"));
+        foreach (var name in list)
+        {
+            var allowed = source == CertificateSources.LetsEncrypt
+                ? await _dns.CanCheckThroughDnsAsync(name, ct)
+                : await _dns.CanMakeOriginCertificatesAsync(name, ct);
+            if (!allowed)
+                return (null, new KeyedText(source == CertificateSources.LetsEncrypt ? "https.request.error.noZone" : "https.request.error.noOrigin", new { name }));
+        }
+
+        var info = await _store.AddSharedRequestAsync(list, source, actor);
+        await _audit.WriteAsync("tls.shared.request", actor, new { info.Id, names = list, source });
+        _renewShared[info.Id] = 0;
+        Nudge();
+        return (info, null);
+    }
+
+    /// <summary>Gets a shared certificate got here again now, whatever its expiry and however recently the last attempt failed.</summary>
+    public bool RenewSharedNow(string id)
+    {
+        if (_store.SharedInfos().All(i => i.Id != id || i.Source == CertificateSources.Uploaded)) return false;
+        _renewShared[id] = 0;
+        Nudge();
+        return true;
+    }
+
     public async Task<bool> RemoveSharedAsync(string id, string actor)
     {
         var removed = _shared.FirstOrDefault(s => s.Info.Id == id).Certificate?.Thumbprint;
+        var originId = _store.SharedInfos().FirstOrDefault(i => i.Id == id)?.OriginId;
         if (!_store.RemoveShared(id)) return false;
+        if (originId is not null) await _dns.RevokeOriginCertificateAsync(originId, CancellationToken.None);
 
         _shared = _store.LoadShared();
         // Not kept serving until each host's own arrives: it may have been removed because its key leaked.
@@ -376,6 +454,8 @@ public sealed class CertificateManager : BackgroundService
         {
             try
             {
+                if (OriginId(_store.OriginOf(host, CertificateSources.CloudflareOrigin)) is { } originId)
+                    await _dns.RevokeOriginCertificateAsync(originId, ct);
                 _store.DeleteHost(host);
             }
             catch (IOException ex)
@@ -399,17 +479,38 @@ public sealed class CertificateManager : BackgroundService
         }
 
         // Self-signed first: they take a moment, and Let's Encrypt can take a while.
-        foreach (var (host, source) in toIssue.OrderBy(i => i.Source == CertificateSources.LetsEncrypt))
+        foreach (var (host, source) in toIssue.OrderBy(i => i.Source != CertificateSources.SelfSigned))
         {
             ct.ThrowIfCancellationRequested();
             try
             {
                 if (source == CertificateSources.SelfSigned) await CreateSelfSignedAsync(host);
-                else await IssueAsync(host, ct);
+                else await IssueAsync(host, source, ct);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 _logger.LogError(ex, "Could not get a certificate for {Host}", host);
+            }
+        }
+
+        // Shared certificates got here: each when it is missing or due.
+        var now = DateTimeOffset.UtcNow;
+        foreach (var info in _store.SharedInfos().Where(i => i.Source != CertificateSources.Uploaded))
+        {
+            ct.ThrowIfCancellationRequested();
+            var forced = _renewShared.TryRemove(info.Id, out _);
+            var current = _shared.FirstOrDefault(s => s.Info.Id == info.Id).Certificate;
+            var due = current is null || now >= RenewAt(current, Tls.RenewDaysBefore) || forced;
+            var waiting = !forced && info.State.NextAttemptUtc is { } next && next > now;
+            if (!due || waiting) continue;
+
+            try
+            {
+                await IssueSharedAsync(info, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogError(ex, "Could not get the shared certificate for {Names}", string.Join(", ", info.Requested));
             }
         }
     }
@@ -438,13 +539,14 @@ public sealed class CertificateManager : BackgroundService
 
             case CertificateSources.SelfSigned:
             case CertificateSources.LetsEncrypt:
+            case CertificateSources.CloudflareOrigin:
                 var own = Own(host, effective);
                 // Keep serving what it has, even from another source, until the new one is ready.
                 if (own is not null) _served[host] = (own, effective);
 
                 var due = own is null || now >= RenewAt(own, Tls.RenewDaysBefore) || forced;
-                // The wait after a failure is Let's Encrypt's alone: a self-signed one is made at once.
-                var waiting = !forced && effective == CertificateSources.LetsEncrypt &&
+                // The wait after a failure is Let's Encrypt's and Cloudflare's: a self-signed one is made at once.
+                var waiting = !forced && effective != CertificateSources.SelfSigned &&
                               _store.ReadState(host).NextAttemptUtc is { } next && next > now;
                 return due && problem is null && !waiting ? (host, effective) : null;
 
@@ -485,12 +587,91 @@ public sealed class CertificateManager : BackgroundService
         _logger.LogInformation("Made a self-signed certificate for {Host}", host);
     }
 
-    /// <summary>Gets a certificate for the host from the ACME server, and serves it. A failure is recorded, with when to try again.</summary>
-    private async Task IssueAsync(string host, CancellationToken ct)
+    /// <summary>
+    /// Gets a certificate for the host, from the ACME server (checked through DNS when Cloudflare can,
+    /// else over HTTP) or as a Cloudflare Origin certificate, and serves it. A failure is recorded,
+    /// with when to try again.
+    /// </summary>
+    private async Task IssueAsync(string host, string source, CancellationToken ct)
     {
         var state = _store.ReadState(host);
-        var directory = Tls.AcmeDirectoryUrl;
         _issuing = host;
+        try
+        {
+            var (chain, keyPem, origin, check) = source == CertificateSources.CloudflareOrigin
+                ? await OriginCertificateAsync([host], ct)
+                : await LetsEncryptCertificateAsync([host], ct);
+            var certificate = CertificateMaterial.Load(chain, keyPem);
+
+            var previous = source == CertificateSources.CloudflareOrigin ? OriginId(_store.OriginOf(host, source)) : null;
+            await _store.SaveHostAsync(host, source, chain, keyPem, origin);
+            await _store.SaveStateAsync(host, new HostCertificateState { LastAttemptUtc = DateTimeOffset.UtcNow, Check = check });
+            _served[host] = (certificate, source);
+            if (source == CertificateSources.LetsEncrypt) _servedOrigin[host] = origin;
+            if (previous is not null) await _dns.RevokeOriginCertificateAsync(previous, ct);
+
+            _logger.LogInformation("Got a certificate for {Host} ({Source}, {Check}), valid until {NotAfter:u}", host, source, check, certificate.NotAfter);
+            await _audit.WriteAsync("tls.issue", "server", new { host, source, check, notAfter = certificate.NotAfter });
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            await RecordFailureAsync(host, state, ex, s => _store.SaveStateAsync(host, s));
+        }
+        finally
+        {
+            _issuing = null;
+        }
+    }
+
+    /// <summary>Gets a shared certificate asked for here, and serves it for every host it covers.</summary>
+    private async Task IssueSharedAsync(SharedCertificateInfo info, CancellationToken ct)
+    {
+        _issuing = "shared:" + info.Id;
+        try
+        {
+            var (chain, keyPem, origin, check) = info.Source == CertificateSources.CloudflareOrigin
+                ? await OriginCertificateAsync(info.Requested, ct)
+                : await LetsEncryptCertificateAsync(info.Requested, ct);
+            var certificate = CertificateMaterial.Load(chain, keyPem);
+
+            var previous = info.OriginId;
+            info.OriginId = info.Source == CertificateSources.CloudflareOrigin ? OriginId(origin) : null;
+            info.State = new HostCertificateState { LastAttemptUtc = DateTimeOffset.UtcNow, Check = check };
+            await _store.SaveSharedCertificateAsync(info, chain, keyPem, certificate);
+            if (previous is not null && previous != info.OriginId) await _dns.RevokeOriginCertificateAsync(previous, ct);
+
+            _shared = _store.LoadShared();
+            ApplyAll();
+            _logger.LogInformation("Got the shared certificate for {Names} ({Source}), valid until {NotAfter:u}",
+                string.Join(", ", info.Requested), info.Source, certificate.NotAfter);
+            await _audit.WriteAsync("tls.shared.issue", "server", new { info.Id, names = info.Requested, info.Source, notAfter = certificate.NotAfter });
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            await RecordFailureAsync(string.Join(", ", info.Requested), info.State, ex, s =>
+            {
+                info.State = s;
+                return _store.SaveSharedInfoAsync(info);
+            });
+        }
+        finally
+        {
+            _issuing = null;
+        }
+    }
+
+    /// <summary>
+    /// A certificate for the names from the ACME server: checked through DNS (Cloudflare) when every
+    /// name is in a zone the token can edit, as a wildcard must be; otherwise over HTTP on port 80.
+    /// </summary>
+    private async Task<(string Chain, string Key, string Origin, string Check)> LetsEncryptCertificateAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        var directory = Tls.AcmeDirectoryUrl;
+        var throughDns = true;
+        foreach (var name in names) throughDns &= await _dns.CanCheckThroughDnsAsync(name, ct);
+        if (!throughDns && names.Any(n => n.StartsWith("*.", StringComparison.Ordinal)))
+            throw new AcmeException("A wildcard certificate is checked through DNS, and no Cloudflare zone the token can edit holds all its names.");
+
         try
         {
             var (accountKey, accountUrl) = _store.Account(directory);
@@ -500,50 +681,60 @@ public sealed class CertificateManager : BackgroundService
                 var account = await client.EnsureAccountAsync(Tls.AcmeEmail, ct);
                 if (account != accountUrl) _store.SaveAccountUrl(directory, account);
 
-                var (certificateKey, csr) = CertificateRequests.Create([host]);
+                var solver = throughDns ? await _dns.ChallengeSolverAsync(ct) : new HttpChallengeSolver(_challenges);
+                var (certificateKey, csr) = CertificateRequests.Create(names);
                 using (certificateKey)
                 {
-                    var chain = await client.OrderCertificateAsync([host], csr, _challenges.Publish, _challenges.Withdraw, ct);
-                    var keyPem = certificateKey.ExportPkcs8PrivateKeyPem();
-                    var certificate = CertificateMaterial.Load(chain, keyPem);
-
-                    await _store.SaveHostAsync(host, CertificateSources.LetsEncrypt, chain, keyPem, origin: directory);
-                    await _store.SaveStateAsync(host, new HostCertificateState { LastAttemptUtc = DateTimeOffset.UtcNow });
-                    _served[host] = (certificate, CertificateSources.LetsEncrypt);
-                    _servedOrigin[host] = directory;
-
-                    _logger.LogInformation("Got a certificate for {Host} from {Directory}, valid until {NotAfter:u}", host, directory, certificate.NotAfter);
-                    await _audit.WriteAsync("tls.issue", "server", new { host, directory, notAfter = certificate.NotAfter });
+                    var chain = await client.OrderCertificateAsync(names, csr, solver, ct);
+                    return (chain, certificateKey.ExportPkcs8PrivateKeyPem(), directory, solver.Type);
                 }
             }
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        catch (AcmeException ex) when (ex.Type == "urn:ietf:params:acme:error:accountDoesNotExist")
         {
-            if (ex is AcmeException { Type: "urn:ietf:params:acme:error:accountDoesNotExist" }) _store.SaveAccountUrl(directory, "");
-
-            state.Failures++;
-            state.LastAttemptUtc = DateTimeOffset.UtcNow;
-            state.LastError = ex is TaskCanceledException ? "The ACME server did not answer in time." : ex.Message;
-            state.NextAttemptUtc = DateTimeOffset.UtcNow + Backoff(state.Failures);
-            try
-            {
-                await _store.SaveStateAsync(host, state);
-            }
-            catch (Exception saveError) when (saveError is IOException or ArgumentException or UnauthorizedAccessException)
-            {
-                _logger.LogWarning(saveError, "Could not record the failure for {Host}", host);
-            }
-
-            if (ex is AcmeException or HttpRequestException or TaskCanceledException)
-                _logger.LogWarning("Could not get a certificate for {Host}: {Error}. Trying again after {Next:u}", host, state.LastError, state.NextAttemptUtc);
-            else
-                _logger.LogError(ex, "Could not get a certificate for {Host}. Trying again after {Next:u}", host, state.NextAttemptUtc);
-            await _audit.WriteAsync("tls.error", "server", new { host, error = state.LastError, failures = state.Failures });
+            _store.SaveAccountUrl(directory, "");
+            throw;
         }
-        finally
+    }
+
+    /// <summary>A Cloudflare Origin CA certificate for the names, with a key made here. Its id is kept, to revoke it later.</summary>
+    private async Task<(string Chain, string Key, string Origin, string Check)> OriginCertificateAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        var (certificateKey, csr) = CertificateRequests.Create(names);
+        using (certificateKey)
         {
-            _issuing = null;
+            var made = await _dns.CreateOriginCertificateAsync(names, PemEncoding.WriteString("CERTIFICATE REQUEST", csr), ct);
+            return (made.CertificatePem, certificateKey.ExportPkcs8PrivateKeyPem(), OriginPrefix + made.Id, "cloudflare");
         }
+    }
+
+    /// <summary>What the store keeps beside a Cloudflare Origin certificate: this prefix and its id.</summary>
+    private const string OriginPrefix = "cloudflare-origin:";
+
+    private static string? OriginId(string? origin) =>
+        origin is not null && origin.StartsWith(OriginPrefix, StringComparison.Ordinal) ? origin[OriginPrefix.Length..] : null;
+
+    /// <summary>Records a failed attempt, and when to try again: 1, 2, 4… up to 24 hours later.</summary>
+    private async Task RecordFailureAsync(string what, HostCertificateState state, Exception ex, Func<HostCertificateState, Task> save)
+    {
+        state.Failures++;
+        state.LastAttemptUtc = DateTimeOffset.UtcNow;
+        state.LastError = ex is TaskCanceledException ? "The certificate authority did not answer in time." : ex.Message;
+        state.NextAttemptUtc = DateTimeOffset.UtcNow + Backoff(state.Failures);
+        try
+        {
+            await save(state);
+        }
+        catch (Exception saveError) when (saveError is IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(saveError, "Could not record the failure for {What}", what);
+        }
+
+        if (ex is AcmeException or CloudflareException or HttpRequestException or TaskCanceledException)
+            _logger.LogWarning("Could not get a certificate for {What}: {Error}. Trying again after {Next:u}", what, state.LastError, state.NextAttemptUtc);
+        else
+            _logger.LogError(ex, "Could not get a certificate for {What}. Trying again after {Next:u}", what, state.NextAttemptUtc);
+        await _audit.WriteAsync("tls.error", "server", new { what, error = state.LastError, failures = state.Failures });
     }
 
     /// <summary>

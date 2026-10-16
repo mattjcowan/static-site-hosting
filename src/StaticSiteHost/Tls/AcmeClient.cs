@@ -15,8 +15,51 @@ public sealed class AcmeException(string message, string? type = null) : Excepti
 }
 
 /// <summary>
-/// A small ACME client (RFC 8555): an account, an order for some host names, their HTTP-01
-/// challenges, and the certificate. Enough for Let's Encrypt and any server that follows the RFC
+/// How an ACME order proves control of its names: one kind of challenge (<see cref="Type"/>),
+/// prepared for every name before any is answered, then removed.
+/// </summary>
+public interface IAcmeChallengeSolver
+{
+    /// <summary><c>http-01</c> or <c>dns-01</c>.</summary>
+    string Type { get; }
+
+    /// <summary>Puts the proof for one name in place. <paramref name="identifier"/> is the name without any <c>*.</c>.</summary>
+    Task PrepareAsync(string identifier, string token, string keyAuthorization, CancellationToken ct);
+
+    /// <summary>Waits, once every name is prepared, until the ACME server can see the proofs.</summary>
+    Task ReadyAsync(CancellationToken ct);
+
+    /// <summary>Takes every proof away again, whether the order worked or not.</summary>
+    Task CleanupAsync(CancellationToken ct);
+}
+
+/// <summary>HTTP-01: the server answers /.well-known/acme-challenge/{token} on port 80 (<see cref="AcmeChallenges"/>).</summary>
+public sealed class HttpChallengeSolver(AcmeChallenges challenges) : IAcmeChallengeSolver
+{
+    private readonly List<string> _published = [];
+
+    public string Type => "http-01";
+
+    public Task PrepareAsync(string identifier, string token, string keyAuthorization, CancellationToken ct)
+    {
+        challenges.Publish(token, keyAuthorization);
+        _published.Add(token);
+        return Task.CompletedTask;
+    }
+
+    public Task ReadyAsync(CancellationToken ct) => Task.CompletedTask;
+
+    public Task CleanupAsync(CancellationToken ct)
+    {
+        foreach (var token in _published) challenges.Withdraw(token);
+        _published.Clear();
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// A small ACME client (RFC 8555): an account, an order for some host names, their HTTP-01 or
+/// DNS-01 challenges, and the certificate. Enough for Let's Encrypt and any server that follows the RFC
 /// (step-ca, Pebble), with nothing but the framework's own cryptography: every request is a JWS
 /// signed with the account's ECDSA P-256 key (ES256).
 ///
@@ -56,34 +99,38 @@ public sealed class AcmeClient
     // ---------------------------------------------------------------- the whole order
 
     /// <summary>
-    /// Orders a certificate for <paramref name="hosts"/> and returns its chain, as PEM. Each HTTP-01
-    /// challenge is published through <paramref name="publish"/> (token, key authorization) for the
-    /// server to answer on port 80, and withdrawn through <paramref name="withdraw"/> after.
+    /// Orders a certificate for <paramref name="hosts"/> (a wildcard is <c>*.</c> and the name) and
+    /// returns its chain, as PEM. Every name's challenge is put in place through
+    /// <paramref name="solver"/> first, then answered, and taken away again at the end.
     /// </summary>
     /// <param name="csr">The certificate request, DER, for exactly these host names.</param>
-    public async Task<string> OrderCertificateAsync(
-        IReadOnlyList<string> hosts, byte[] csr, Action<string, string> publish, Action<string> withdraw, CancellationToken ct)
+    public async Task<string> OrderCertificateAsync(IReadOnlyList<string> hosts, byte[] csr, IAcmeChallengeSolver solver, CancellationToken ct)
     {
         var (orderUrl, order) = await NewOrderAsync(hosts, ct);
-        var published = new List<string>();
         try
         {
+            var pending = new List<(string Url, Challenge Challenge)>();
             foreach (var authorizationUrl in order.Authorizations)
             {
                 var authorization = await PostAsGetAsync<Authorization>(authorizationUrl, ct);
                 if (authorization.Status == "valid") continue;
 
-                var challenge = authorization.Challenges.FirstOrDefault(c => c.Type == "http-01")
-                                ?? throw new AcmeException($"The ACME server offers no HTTP check for {authorization.Identifier?.Value}.");
+                var challenge = authorization.Challenges.FirstOrDefault(c => c.Type == solver.Type)
+                                ?? throw new AcmeException($"The ACME server offers no {solver.Type} check for {authorization.Identifier?.Value}.");
 
-                publish(challenge.Token, KeyAuthorization(challenge.Token));
-                published.Add(challenge.Token);
-                await PostAsync<Challenge>(challenge.Url, new { }, ct);
+                await solver.PrepareAsync(authorization.Identifier?.Value ?? "", challenge.Token, KeyAuthorization(challenge.Token), ct);
+                pending.Add((authorizationUrl, challenge));
+            }
 
+            if (pending.Count > 0) await solver.ReadyAsync(ct);
+
+            foreach (var (_, challenge) in pending) await PostAsync<Challenge>(challenge.Url, new { }, ct);
+            foreach (var (authorizationUrl, _) in pending)
+            {
                 await PollAsync(authorizationUrl, (Authorization a) => a.Status, "pending", ct, done: a =>
                 {
                     if (a.Status == "valid") return;
-                    var failed = a.Challenges.FirstOrDefault(c => c.Type == "http-01")?.Error;
+                    var failed = a.Challenges.FirstOrDefault(c => c.Type == solver.Type)?.Error;
                     throw new AcmeException(
                         $"{a.Identifier?.Value}: {failed?.Detail ?? "the check did not pass"}", failed?.Type);
                 });
@@ -100,7 +147,7 @@ public sealed class AcmeClient
         }
         finally
         {
-            foreach (var token in published) withdraw(token);
+            await solver.CleanupAsync(CancellationToken.None);
         }
     }
 
@@ -171,6 +218,9 @@ public sealed class AcmeClient
 
     /// <summary>What the server must find at /.well-known/acme-challenge/{token}: the token and the account key's thumbprint.</summary>
     public string KeyAuthorization(string token) => token + "." + Thumbprint(_accountKey);
+
+    /// <summary>What a DNS-01 TXT record at <c>_acme-challenge.{name}</c> holds: the key authorization's SHA-256, base64url.</summary>
+    public static string DnsTxtValue(string keyAuthorization) => Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(keyAuthorization)));
 
     /// <summary>The account key's JWK thumbprint (RFC 7638): SHA-256 of its members in a fixed order.</summary>
     public static string Thumbprint(ECDsa key)

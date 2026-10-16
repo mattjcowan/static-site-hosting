@@ -16,6 +16,7 @@ using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
 using StaticSiteHost.Services.Ai;
 using StaticSiteHost.Services.Realtime;
+using StaticSiteHost.Services.Dns;
 using StaticSiteHost.Tls;
 using StaticSiteHost.Tools;
 using ModelContextProtocol.Server;
@@ -180,6 +181,20 @@ builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpForwarder();
 builder.Services.AddSingleton<ProxyInvokers>();
 builder.Services.AddSingleton<SiteProxy>();
+
+// ---------------------------------------------------------------- DNS (Cloudflare)
+
+builder.Services.AddSingleton<ICloudflareApi, CloudflareApi>();
+builder.Services.AddSingleton<DnsService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<DnsService>());
+builder.Services.AddHttpClient(CloudflareApi.HttpClientName, client =>
+{
+    client.BaseAddress = new Uri(CloudflareApi.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("StaticSiteHost/" + SiteHostTools.ServerVersion);
+});
+// Checking a DNS-01 record through 1.1.1.1, and this server's public address.
+builder.Services.AddHttpClient(DnsService.DohClientName, client => client.Timeout = TimeSpan.FromSeconds(15));
 
 // ---------------------------------------------------------------- HTTPS
 

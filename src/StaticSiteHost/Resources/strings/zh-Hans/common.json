@@ -9,6 +9,7 @@
   "common.menu.functions": "函数",
   "common.menu.proxy": "代理",
   "common.menu.https": "HTTPS",
+  "common.menu.dns": "DNS",
   "common.menu.ai": "AI",
   "common.menu.branding": "品牌",
   "common.menu.account": "账号",
@@ -53,6 +54,7 @@
 
   "common.certificateSource.automatic": "自动",
   "common.certificateSource.letsEncrypt": "Let's Encrypt",
+  "common.certificateSource.cloudflareOrigin": "Cloudflare 源站证书",
   "common.certificateSource.selfSigned": "自签名",
   "common.certificateSource.uploaded": "已上传",
   "common.certificateSource.shared": "共享证书",

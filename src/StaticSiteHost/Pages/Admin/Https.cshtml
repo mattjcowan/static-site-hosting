@@ -75,7 +75,7 @@ else
                                 {
                                     <span class="mono">@host.Host</span> <span class="badge">@L["https.hosts.management"]</span>
                                 }
-                                <div class="cell-sub">@CertificateSourceNames.Of(L, host.Wanted)@(host.Wanted != host.Effective ? " → " + CertificateSourceNames.Of(L, host.Effective) : "")</div>
+                                <div class="cell-sub">@CertificateSourceNames.Of(L, host.Wanted)@(host.Wanted != host.Effective ? " → " + CertificateSourceNames.Of(L, host.Effective) : "")@(host.Effective == CertificateSources.LetsEncrypt && host.State.Check == "dns-01" ? " · " + L["https.hosts.checkedDns"].Value : "")</div>
                             </td>
                             <td>
                                 @if (host.Served is { } served)
@@ -130,7 +130,7 @@ else
                                 }
                             </td>
                             <td class="actions">
-                                @if (host.Effective is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned && host.Problem is null)
+                                @if (host.Effective is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned or CertificateSources.CloudflareOrigin && host.Problem is null)
                                 {
                                     <form method="post" asp-page-handler="Renew">
                                         <input type="hidden" name="host" value="@host.Host" />
@@ -156,14 +156,51 @@ else
             <table>
                 <thead><tr><th>@L["https.shared.names"]</th><th>@L["https.shared.issuer"]</th><th>@L["https.shared.expires"]</th><th></th></tr></thead>
                 <tbody>
-                    @foreach (var (info, certificate) in Model.Shared)
+                    @foreach (var (info, certificate, busy) in Model.Shared)
                     {
-                        var left = HttpsModel.DaysLeft(info.NotAfterUtc);
                         <tr>
                             <td class="mono">@string.Join(", ", info.Names)</td>
-                            <td>@info.Issuer<div class="cell-sub">@L.Text("https.shared.uploadedBy", new { user = info.UploadedBy ?? "—" })</div></td>
-                            <td class="nowrap">@info.NotAfterUtc.ToLocalTime().ToString("yyyy-MM-dd")<div class="cell-sub">@(left < 0 ? L["https.shared.expired"].Value : L.Plural("https.shared.inDays", left))</div></td>
+                            <td>
+                                @(certificate is null ? "—" : info.Issuer)
+                                <div class="cell-sub">@(info.Source == CertificateSources.Uploaded
+                                    ? L.Text("https.shared.uploadedBy", new { user = info.UploadedBy ?? "—" })
+                                    : L.Text("https.shared.gotBy", new { source = CertificateSourceNames.Of(L, info.Source), user = info.UploadedBy ?? "—" }))</div>
+                                @if (busy)
+                                {
+                                    <span class="badge">@L["https.hosts.getting"]</span>
+                                }
+                                else if (info.State.LastError is { } sharedError)
+                                {
+                                    <div class="cell-sub validation">@sharedError</div>
+                                    @if (info.State.NextAttemptUtc is { } retry)
+                                    {
+                                        <div class="cell-sub">@L.Text("https.hosts.retryAfter", new { time = retry.ToLocalTime().ToString("yyyy-MM-dd HH:mm") })</div>
+                                    }
+                                }
+                                else if (certificate is null)
+                                {
+                                    <div class="cell-sub">@L["https.shared.waiting"]</div>
+                                }
+                            </td>
+                            <td class="nowrap">
+                                @if (certificate is not null)
+                                {
+                                    var left = HttpsModel.DaysLeft(info.NotAfterUtc);
+                                    @info.NotAfterUtc.ToLocalTime().ToString("yyyy-MM-dd")<div class="cell-sub">@(left < 0 ? L["https.shared.expired"].Value : L.Plural("https.shared.inDays", left))</div>
+                                }
+                                else
+                                {
+                                    <span class="muted">—</span>
+                                }
+                            </td>
                             <td class="actions">
+                                @if (info.Source != CertificateSources.Uploaded && Model.Enabled)
+                                {
+                                    <form method="post" asp-page-handler="RenewShared">
+                                        <input type="hidden" name="id" value="@info.Id" />
+                                        <button type="submit" class="btn-link">@L["https.hosts.renew"]</button>
+                                    </form>
+                                }
                                 <form method="post" asp-page-handler="RemoveShared" data-confirm="@L.Text("https.shared.removeConfirm", new { names = string.Join(", ", info.Names) })">
                                     <input type="hidden" name="id" value="@info.Id" />
                                     <button type="submit" class="btn-link">@L["common.remove"]</button>
@@ -174,6 +211,39 @@ else
                 </tbody>
             </table>
         </div>
+    }
+
+    @if (Model.Enabled)
+    {
+        <details class="tls-upload" open="@(Model.RequestError is not null)">
+            <summary>@L["https.request.title"]</summary>
+            @if (!Model.CloudflareConnected)
+            {
+                <p class="hint">@L.Html("https.request.needsCloudflare", new { dnsUrl = Url.Page("/Admin/Dns") })</p>
+            }
+            else
+            {
+                <p class="hint">@L.Html("https.request.hint")</p>
+                @if (Model.RequestError is { } requestError)
+                {
+                    <div class="alert alert-error">@requestError</div>
+                }
+                <form method="post" asp-page-handler="RequestShared" class="row">
+                    <div class="field" style="flex: 1 1 18rem">
+                        <label for="request-names">@L["https.request.names"]</label>
+                        <input type="text" id="request-names" name="names" value="@Model.RequestNames" placeholder="*.apps.example.com" spellcheck="false" autocomplete="off" required />
+                    </div>
+                    <div class="field">
+                        <label for="request-source">@L["https.request.source"]</label>
+                        <select id="request-source" name="source">
+                            <option value="letsencrypt" selected="@(Model.RequestSource != CertificateSources.CloudflareOrigin)">@L["https.request.letsEncrypt"]</option>
+                            <option value="cloudflare-origin" selected="@(Model.RequestSource == CertificateSources.CloudflareOrigin)">@L["https.request.cloudflareOrigin"]</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-primary">@L["https.request.submit"]</button>
+                </form>
+            }
+        </details>
     }
 
     <details class="tls-upload" open="@(Model.UploadError is not null)">

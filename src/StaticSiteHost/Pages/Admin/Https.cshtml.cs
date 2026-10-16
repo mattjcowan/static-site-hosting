@@ -4,6 +4,7 @@ using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Localization;
+using StaticSiteHost.Services.Dns;
 using StaticSiteHost.Tls;
 
 namespace StaticSiteHost.Pages.Admin;
@@ -16,11 +17,13 @@ namespace StaticSiteHost.Pages.Admin;
 public class HttpsModel : PageModel
 {
     private readonly CertificateManager _certificates;
+    private readonly DnsService _dns;
     private readonly IStringLocalizer<Strings> _strings;
 
-    public HttpsModel(CertificateManager certificates, IOptions<SiteHostingOptions> options, IStringLocalizer<Strings> strings)
+    public HttpsModel(CertificateManager certificates, DnsService dns, IOptions<SiteHostingOptions> options, IStringLocalizer<Strings> strings)
     {
         _certificates = certificates;
+        _dns = dns;
         _strings = strings;
         Tls = options.Value.Tls;
     }
@@ -31,17 +34,28 @@ public class HttpsModel : PageModel
 
     public IReadOnlyList<HostCertificateStatus> Hosts { get; private set; } = [];
 
-    public IReadOnlyList<(SharedCertificateInfo Info, ServedCertificate Certificate)> Shared { get; private set; } = [];
+    /// <summary>Every shared certificate, including ones asked for and not got yet.</summary>
+    public IReadOnlyList<(SharedCertificateInfo Info, ServedCertificate? Certificate, bool Busy)> Shared { get; private set; } = [];
+
+    /// <summary>Whether Cloudflare is connected (DNS page), so certificates can be got through it.</summary>
+    public bool CloudflareConnected { get; private set; }
 
     /// <summary>Why the last shared upload was refused.</summary>
     public string? UploadError { get; private set; }
 
-    public void OnGet() => Load();
+    /// <summary>Why the last request for a shared certificate was refused, and what was typed.</summary>
+    public string? RequestError { get; private set; }
 
-    private void Load()
+    public string? RequestNames { get; private set; }
+    public string? RequestSource { get; private set; }
+
+    public async Task OnGetAsync(CancellationToken ct) => await LoadAsync(ct);
+
+    private async Task LoadAsync(CancellationToken ct)
     {
         Hosts = _certificates.Enabled ? _certificates.Status() : [];
-        Shared = _certificates.Shared;
+        Shared = _certificates.SharedAll();
+        CloudflareConnected = await _dns.ConnectedAsync(ct);
     }
 
     public IActionResult OnPostRenew(string? host)
@@ -58,17 +72,40 @@ public class HttpsModel : PageModel
         return RedirectToPage();
     }
 
-    public async Task<IActionResult> OnPostAddSharedAsync(string? certificate, string? privateKey)
+    public async Task<IActionResult> OnPostAddSharedAsync(string? certificate, string? privateKey, CancellationToken ct)
     {
         var (info, error) = await _certificates.AddSharedAsync(certificate, privateKey, User.Identity?.Name ?? "unknown");
         if (info is null)
         {
-            Load();
+            await LoadAsync(ct);
             UploadError = error;
             return Page();
         }
 
         TempData["StatusMessage"] = _strings.Text("https.shared.saved", new { names = string.Join(", ", info.Names) });
+        return RedirectToPage();
+    }
+
+    /// <summary>Asks for a shared certificate got and renewed here, such as a wildcard.</summary>
+    public async Task<IActionResult> OnPostRequestSharedAsync(string? names, string? source, CancellationToken ct)
+    {
+        var (info, error) = await _certificates.RequestSharedAsync(names, source, User.Identity?.Name ?? "unknown", ct);
+        if (info is null)
+        {
+            await LoadAsync(ct);
+            RequestError = error!.Text(_strings);
+            (RequestNames, RequestSource) = (names, source);
+            return Page();
+        }
+
+        TempData["StatusMessage"] = _strings.Text("https.request.asked", new { names = string.Join(", ", info.Requested) });
+        return RedirectToPage();
+    }
+
+    public IActionResult OnPostRenewShared(string? id)
+    {
+        if (_certificates.RenewSharedNow(id ?? "")) TempData["StatusMessage"] = _strings.Text("https.shared.renewAsked");
+        else TempData["ErrorMessage"] = _strings.Text("https.shared.notFound");
         return RedirectToPage();
     }
 

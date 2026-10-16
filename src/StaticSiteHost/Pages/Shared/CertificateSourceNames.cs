@@ -11,6 +11,7 @@ public static class CertificateSourceNames
     {
         CertificateSources.Automatic => strings.Text("common.certificateSource.automatic"),
         CertificateSources.LetsEncrypt => strings.Text("common.certificateSource.letsEncrypt"),
+        CertificateSources.CloudflareOrigin => strings.Text("common.certificateSource.cloudflareOrigin"),
         CertificateSources.SelfSigned => strings.Text("common.certificateSource.selfSigned"),
         CertificateSources.Uploaded => strings.Text("common.certificateSource.uploaded"),
         CertificateSources.Shared => strings.Text("common.certificateSource.shared"),

@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
+using StaticSiteHost.Services.Dns;
 using StaticSiteHost.Tls;
 
 namespace StaticSiteHost.Tests;
@@ -38,13 +39,123 @@ public sealed class TlsTests : IDisposable
     private CertificateManager Manager(Action<TlsOptions>? configure = null, params string[] managementHosts) =>
         Manager(true, configure, managementHosts);
 
-    private CertificateManager Manager(bool enabled, Action<TlsOptions>? configure = null, params string[] managementHosts)
+    private CertificateManager Manager(bool enabled, Action<TlsOptions>? configure = null, params string[] managementHosts) =>
+        Manager(enabled, DnsTests.Service(_paths, _sites, new FakeCloudflare(), Options.Create(new SiteHostingOptions { DataRoot = _root })), configure, managementHosts);
+
+    private CertificateManager Manager(bool enabled, DnsService dns, Action<TlsOptions>? configure = null, params string[] managementHosts)
     {
         var options = new SiteHostingOptions { DataRoot = _root, ManagementHosts = managementHosts };
         options.Tls.Enabled = enabled;
         configure?.Invoke(options.Tls);
         return new CertificateManager(Options.Create(options), _sites, new CertificateStore(_paths, _protection), new AcmeChallenges(),
-            new NoHttp(), new AuditLog(_paths, NullLogger<AuditLog>.Instance), NullLogger<CertificateManager>.Instance);
+            dns, new NoHttp(), new AuditLog(_paths, NullLogger<AuditLog>.Instance), NullLogger<CertificateManager>.Instance);
+    }
+
+    /// <summary>A manager with Cloudflare connected, through a fake of its API.</summary>
+    private async Task<(CertificateManager Manager, FakeCloudflare Cloudflare)> WithCloudflare(bool enabled = true)
+    {
+        var cloudflare = new FakeCloudflare();
+        var dns = DnsTests.Service(_paths, _sites, cloudflare, Options.Create(new SiteHostingOptions { DataRoot = _root }));
+        Assert.Null(await dns.SetTokenAsync(FakeCloudflare.Token, "ada", default));
+        return (Manager(enabled, dns), cloudflare);
+    }
+
+    // ---------------------------------------------------------------- Cloudflare
+
+    [Fact]
+    public async Task A_site_can_have_a_cloudflare_origin_certificate_which_is_revoked_with_the_site()
+    {
+        await _sites.SaveAsync(new SiteRecord { Domain = "shop.example.com" });
+        var (manager, cloudflare) = await WithCloudflare();
+
+        Assert.Null(await manager.SetSiteAsync(_sites.TryGet("shop.example.com")!, "cloudflare-origin", null, null, "ada"));
+        await manager.RunOnceAsync(CancellationToken.None);
+
+        Assert.True(manager.Serves("shop.example.com"));
+        var status = manager.StatusOf("shop.example.com");
+        Assert.Equal(CertificateSources.CloudflareOrigin, status.ServedSource);
+        Assert.Equal("CN=Fake Origin CA", status.Served!.Leaf.Issuer);
+        Assert.Equal(["shop.example.com"], Assert.Single(cloudflare.Created));
+
+        // Asked again on the next pass? No: it lasts 15 years.
+        await manager.RunOnceAsync(CancellationToken.None);
+        Assert.Single(cloudflare.Created);
+
+        await _sites.DeleteAsync("shop.example.com");
+        await manager.RunOnceAsync(CancellationToken.None);
+        Assert.Single(cloudflare.Revoked);
+    }
+
+    [Fact]
+    public async Task A_shared_wildcard_from_cloudflare_covers_its_sites_and_its_bare_name_and_is_revoked_when_removed()
+    {
+        await _sites.SaveAsync(new SiteRecord { Domain = "blog.apps.example.com" });
+        var (manager, cloudflare) = await WithCloudflare();
+
+        var (info, error) = await manager.RequestSharedAsync("*.apps.example.com", "cloudflare-origin", "ada", default);
+        Assert.Null(error);
+        Assert.Equal(["*.apps.example.com", "apps.example.com"], info!.Requested);
+
+        await manager.RunOnceAsync(CancellationToken.None);
+        var (shared, certificate, _) = Assert.Single(manager.SharedAll());
+        Assert.NotNull(certificate);
+        Assert.True(certificate.Covers("blog.apps.example.com") && certificate.Covers("apps.example.com"));
+        Assert.Equal(CertificateSources.Shared, manager.StatusOf("blog.apps.example.com").Effective);
+        Assert.True(manager.Serves("blog.apps.example.com"));
+
+        Assert.True(await manager.RemoveSharedAsync(shared.Id, "ada"));
+        Assert.Equal([shared.OriginId!], cloudflare.Revoked);
+    }
+
+    [Fact]
+    public void A_self_signed_certificate_has_a_name_no_other_certificate_has()
+    {
+        // A trusted certificate with the same name (the .NET developer one is CN=localhost) would
+        // otherwise be taken for its issuer, and building its chain would fail.
+        var (first, firstKey) = CertificateMaterial.CreateSelfSigned("localhost");
+        var (second, secondKey) = CertificateMaterial.CreateSelfSigned("localhost");
+        var one = CertificateMaterial.Load(first, firstKey);
+        var other = CertificateMaterial.Load(second, secondKey);
+
+        Assert.StartsWith("CN=localhost, O=Self-signed ", one.Leaf.Subject);
+        Assert.NotEqual(one.Leaf.Subject, other.Leaf.Subject);
+        Assert.Equal(["localhost"], one.Names);
+    }
+
+    [Fact]
+    public async Task Automatic_prefers_a_shared_certificate_browsers_trust_over_a_cloudflare_origin_one()
+    {
+        await _sites.SaveAsync(new SiteRecord { Domain = "blog.apps.example.com" });
+        var (manager, _) = await WithCloudflare();
+
+        // A Cloudflare Origin wildcard, then a browser-trusted one (here uploaded) that expires sooner.
+        Assert.Null((await manager.RequestSharedAsync("*.apps.example.com", "cloudflare-origin", "ada", default)).Error);
+        await manager.RunOnceAsync(CancellationToken.None);
+        var (chain, key) = CertificateMaterial.CreateSelfSigned("*.apps.example.com", TimeSpan.FromDays(90));
+        Assert.Null((await manager.AddSharedAsync(chain, key, "ada")).Error);
+        await manager.RunOnceAsync(CancellationToken.None);
+
+        var served = manager.StatusOf("blog.apps.example.com").Served!;
+        Assert.NotEqual("CN=Fake Origin CA", served.Leaf.Issuer);
+    }
+
+    [Fact]
+    public async Task A_shared_certificate_is_asked_for_only_where_it_can_be_got()
+    {
+        var (manager, cloudflare) = await WithCloudflare();
+
+        Assert.Equal("https.request.error.name", (await manager.RequestSharedAsync("*.*.example.com", "letsencrypt", "ada", default)).Error?.Key);
+        Assert.Equal("https.request.error.name", (await manager.RequestSharedAsync("*.shop.test", "letsencrypt", "ada", default)).Error?.Key);
+        Assert.Equal("https.request.error.noNames", (await manager.RequestSharedAsync(" ", "letsencrypt", "ada", default)).Error?.Key);
+        Assert.Equal("https.request.error.source", (await manager.RequestSharedAsync("*.example.com", "uploaded", "ada", default)).Error?.Key);
+        Assert.Equal("https.request.error.noZone", (await manager.RequestSharedAsync("*.example.org", "letsencrypt", "ada", default)).Error?.Key);
+
+        cloudflare.AllowOrigin = false;
+        Assert.Equal("https.request.error.noOrigin", (await manager.RequestSharedAsync("*.example.com", "cloudflare-origin", "ada", default)).Error?.Key);
+
+        var (off, _) = await WithCloudflare(enabled: false);
+        Assert.Equal("https.request.error.off", (await off.RequestSharedAsync("*.example.com", "letsencrypt", "ada", default)).Error?.Key);
+        Assert.Equal("https.request.error.noCloudflare", (await Manager().RequestSharedAsync("*.example.com", "letsencrypt", "ada", default)).Error?.Key);
     }
 
     private sealed class NoHttp : IHttpClientFactory
@@ -197,9 +308,9 @@ public sealed class TlsTests : IDisposable
         await manager.RunOnceAsync(CancellationToken.None);
         Assert.True(manager.Serves("shop.test"));
         Assert.True(manager.Serves("admin.localhost"));
-        Assert.Equal("CN=shop.test", manager.Select("SHOP.test.").TargetCertificate.Subject);
-        Assert.Equal("CN=static-site-host", manager.Select("nobody.test").TargetCertificate.Subject);
-        Assert.Equal("CN=static-site-host", manager.Select(null).TargetCertificate.Subject);
+        Assert.StartsWith("CN=shop.test,", manager.Select("SHOP.test.").TargetCertificate.Subject);
+        Assert.StartsWith("CN=static-site-host,", manager.Select("nobody.test").TargetCertificate.Subject);
+        Assert.StartsWith("CN=static-site-host,", manager.Select(null).TargetCertificate.Subject);
 
         // A second pass, or a restart, serves the same certificate rather than making another.
         var thumbprint = manager.Select("shop.test").TargetCertificate.Thumbprint;
@@ -479,9 +590,9 @@ public sealed class TlsTests : IDisposable
         var manager = Manager(managementHosts: "127.0.0.1");
         await manager.RunOnceAsync(CancellationToken.None);
 
-        Assert.Equal("CN=127.0.0.1", manager.Select(null, System.Net.IPAddress.Loopback).TargetCertificate.Subject);
-        Assert.Equal("CN=127.0.0.1", manager.Select("", System.Net.IPAddress.Parse("::ffff:127.0.0.1")).TargetCertificate.Subject);
-        Assert.Equal("CN=static-site-host", manager.Select(null, System.Net.IPAddress.Parse("10.1.2.3")).TargetCertificate.Subject);
+        Assert.StartsWith("CN=127.0.0.1,", manager.Select(null, System.Net.IPAddress.Loopback).TargetCertificate.Subject);
+        Assert.StartsWith("CN=127.0.0.1,", manager.Select("", System.Net.IPAddress.Parse("::ffff:127.0.0.1")).TargetCertificate.Subject);
+        Assert.StartsWith("CN=static-site-host,", manager.Select(null, System.Net.IPAddress.Parse("10.1.2.3")).TargetCertificate.Subject);
     }
 
     [Fact]

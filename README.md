@@ -137,7 +137,8 @@ zip.
 | Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Routing → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
 | Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming, HTTP/2, gRPC and gRPC-Web | **Sites → New site** for a site with no files, then **Sites → the domain → Routing → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the menu | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
 | Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → App → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
-| HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → Security → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
+| HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, Cloudflare, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → Security → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
+| DNS | Each site's DNS record made, moved and deleted with it; certificates checked through DNS, wildcards included | A Cloudflare API token under **DNS** | Administrator | [DNS and Cloudflare](#dns-and-cloudflare) |
 | Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Security → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
 | Functions | Answer requests with C# code | A `_functions/` folder in the zip, an upload on the site's **Functions** card, the browser editor, or `PUT /api/v1/sites/{domain}/functions` | Administrator | [Functions](#functions) |
 | Middleware | Run code before every request to the site, files included | A `[Middleware]` method in a function file | Administrator | [Middleware](#middleware) |
@@ -2493,6 +2494,15 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `POST`   | `/api/v1/tls/renew/{host}`                  | a new certificate now for any host, a management host included; administrators only |
 | `POST`   | `/api/v1/tls/shared`                        | `{"certificate":"…","privateKey":"…"}`: a certificate for every host it covers; administrators only |
 | `DELETE` | `/api/v1/tls/shared/{id}`                   | remove a shared certificate; administrators only |
+| `POST`   | `/api/v1/tls/shared/request`                | `{"names":["*.apps.example.com"],"source":"letsencrypt"}` (or `cloudflare-origin`): get a shared certificate here, renewed by itself; needs Cloudflare ([more](#dns-and-cloudflare)) |
+| `POST`   | `/api/v1/tls/shared/{id}/renew`             | get a shared certificate got here again now |
+| `GET`    | `/api/v1/dns`                               | Cloudflare: connected or not, its zones, the record settings and each site's record |
+| `PUT`    | `/api/v1/dns/cloudflare`                    | `{"token":"…"}` — connect Cloudflare; the token is checked, stored encrypted and never shown |
+| `DELETE` | `/api/v1/dns/cloudflare`                    | forget the token |
+| `PUT`    | `/api/v1/dns/records`                       | `{"recordsForSites":true,"ipv4":"…","ipv6":"…","target":"…","proxied":true}` — what records point at, and whether every site gets one |
+| `POST`   | `/api/v1/dns/refresh`                       | bring every site's record up to date now |
+| `POST`   | `/api/v1/sites/{domain}/dns`                | `{"proxied":true}` — give the site its record now |
+| `DELETE` | `/api/v1/sites/{domain}/dns`                | delete the records this server made for the site |
 | `GET`    | `/api/v1/branding`                          | the server's [branding](#branding), the font library, whether Google Fonts are allowed, and colour pairs that are hard to read; administrators only |
 | `PUT`    | `/api/v1/branding`                          | `{"name":"Acme","light":{"accent":"#0b7285"},"radius":10}`: replace the server's branding; administrators only |
 | `DELETE` | `/api/v1/branding`                          | the built-in look again; administrators only |
@@ -2770,7 +2780,8 @@ log entries.
 | Proxy routes | `get_proxy_routes`, `set_proxy_route`, `remove_proxy_route`, `test_proxy_route`, `get_server_proxy_routes`, `set_server_proxy_route`, `remove_server_proxy_route`, `set_server_route_for_site` |
 | Functions | `get_functions`, `read_function_files`, `edit_function_file`, `check_functions`, `test_functions`, `deploy_functions`, `remove_function_file`, `remove_functions` |
 | AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `update_ai_provider`, `remove_ai_provider`, `test_ai_provider`, `set_site_ai`, `remove_site_ai`, `get_assistant_settings`, `set_assistant_settings` |
-| HTTPS | `get_tls`, `set_site_tls`, `renew_certificate` |
+| HTTPS | `get_tls`, `set_site_tls`, `renew_certificate`, `request_shared_certificate` |
+| DNS | `get_dns`, `set_cloudflare_token`, `set_dns_records`, `add_site_dns_record`, `remove_site_dns_record` |
 | Branding | `get_branding`, `set_branding`, `reset_branding`, `upload_branding_image`, `set_google_fonts`, `add_google_font`, `remove_font` |
 | Realtime | `get_realtime`, `publish_realtime_event` |
 | Users | `list_users`, `create_user`, `invite_user`, `set_user_role`, `disable_user`, `delete_user` |
@@ -2948,6 +2959,7 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 │   ├── assistant-conversations/   the assistant's open conversations (encrypted; gone 2 hours after their last use)
 │   ├── proxy-routes.json          server-wide proxy routes
 │   ├── certs/                     HTTPS certificates, per host and source, and shared ones; keys encrypted
+│   ├── dns.json                   the Cloudflare token (encrypted), record settings, the records this server made
 │   ├── branding/                  branding.json (the server's branding, Google Fonts on or off, the font library),
 │   │                              assets/ (logos and icons, named for their content) and fonts/<id>/ (font files)
 │   ├── audit.log                  JSON lines: deploys, logins, user and key changes
@@ -3012,10 +3024,11 @@ Then set `production`, and every host gets a trusted one.
 | Source | What it is |
 | ------ | ---------- |
 | Automatic (the default) | A shared certificate that covers the host, if one was uploaded; otherwise Let's Encrypt (`SiteHosting:Tls:DefaultSource`). Names Let's Encrypt cannot issue for, such as `*.localhost`, `*.test` and addresses, get a self-signed one |
-| Let's Encrypt | Checked over HTTP on port 80, renewed 30 days before it expires (a third of the lifetime, for shorter ones) |
+| Let's Encrypt | Checked through DNS when [Cloudflare is connected](#dns-and-cloudflare) and holds the domain, otherwise over HTTP on port 80. Renewed 30 days before it expires (a third of the lifetime, for shorter ones) |
+| Cloudflare Origin certificate | Made through Cloudflare's API for 15 years, for a site Cloudflare proxies with SSL set to **Full (strict)**. Trusted by Cloudflare only, not by browsers. Needs Cloudflare connected, with the token's **SSL and Certificates: Edit** |
 | Self-signed | Made here, valid a year, renewed by itself. Browsers warn about it; it suits Cloudflare's **Full** mode and private networks |
 | Uploaded | A certificate and key you paste for this site (PEM, intermediates after the certificate). Not renewed here |
-| A shared certificate | One uploaded under **HTTPS** for many hosts, such as a Cloudflare Origin certificate for `*.example.com` (for Cloudflare's **Full (strict)**), or a company wildcard |
+| A shared certificate | One for many hosts under **HTTPS**, such as a wildcard for `*.apps.example.com`: got there from Let's Encrypt or Cloudflare and renewed by itself, or uploaded (a company wildcard, say) |
 | None | Plain HTTP only |
 
 Each site's card also has **Send HTTP visitors to HTTPS** (on by default) and **HSTS** (off by
@@ -3028,16 +3041,21 @@ host keeps serving the certificate it had, or a stand-in self-signed one.
 
 **Rules and limits.**
 
-* Let's Encrypt needs port 80 to reach the server for every domain, and DNS that points at it. It
-  issues one name at a time here; a wildcard certificate needs a DNS check, which this server
-  does not do yet. Upload one as a shared certificate instead.
+* Without Cloudflare, Let's Encrypt needs port 80 to reach the server for every domain, and DNS
+  that points at it. With Cloudflare connected, names in its zones are checked through DNS, so
+  port 80 does not matter for them, and wildcards can be had.
+* **A wildcard certificate:** under **HTTPS → Shared certificates → Get a certificate**, type
+  `*.apps.example.com` and choose Let's Encrypt (checked through DNS) or a Cloudflare Origin
+  certificate. Its bare name `apps.example.com` comes with it, since a wildcard covers one level
+  only. Every site under it on automatic uses it, and it is renewed by itself.
 * Let's Encrypt's limits, among others: 50 certificates per registered domain per week, and 5
   failed checks per host name per hour. Switching a site between sources keeps each source's
   certificate, so switching back does not ask for another.
-* Behind Cloudflare's proxy (orange cloud), Let's Encrypt's check goes through Cloudflare to the
-  server. If Cloudflare sends it to HTTPS first and is set to **Full (strict)**, the first check
-  can fail, since the host has no trusted certificate yet: use **Full** until the certificates
-  are issued, then **Full (strict)**. Or upload a Cloudflare Origin certificate as a shared one.
+* Behind Cloudflare's proxy (orange cloud), connect Cloudflare and the checks go through DNS,
+  which the proxy does not touch; or choose Cloudflare Origin certificates. Without that, Let's
+  Encrypt's HTTP check goes through Cloudflare to the server, and with **Full (strict)** the first
+  one can fail, since the host has no trusted certificate yet: use **Full** until the certificates
+  are issued, then **Full (strict)**.
 * HSTS tells browsers to refuse plain HTTP for the domain for a year (`max-age=31536000`). A
   browser that has seen it keeps it even after it is turned off here. It is also sent when HTTPS
   is ended in front of the server.
@@ -3049,6 +3067,50 @@ host keeps serving the certificate it had, or a stand-in self-signed one.
 * The HTTPS port also offers HTTP/2. HTTP/3 is not offered.
 * At start, Kestrel logs that it is *overriding address(es) 'http://+:8080'*: with HTTPS on, the
   server sets its two ports itself, in place of the image's `ASPNETCORE_URLS`. It is expected.
+
+## DNS and Cloudflare
+
+**What it is.** Connect Cloudflare with an API token, and this server:
+
+* gives each site a DNS record pointing at it, made when the site is created, moved when it is
+  renamed and deleted with it;
+* gets Let's Encrypt certificates checked through DNS (DNS-01) for names in Cloudflare's zones,
+  wildcards included, with nothing reaching port 80;
+* makes Cloudflare Origin certificates, for sites Cloudflare proxies.
+
+All three are optional, and nothing changes until a token is saved. Other DNS providers may follow.
+
+**How to use it.**
+
+1. In Cloudflare, under **My Profile → API Tokens → Create Token → Create Custom Token**, give the
+   token **Zone: Read** and **DNS: Edit** on the zones this server handles, and **SSL and
+   Certificates: Edit** for Origin certificates.
+2. Under **DNS** in the menu, paste it and **Save token**. It is checked with Cloudflare, then
+   stored encrypted and never shown again. The page lists the zones it can edit.
+3. For records: set what they point at, this server's IPv4 and/or IPv6 address (**Use this
+   server's public address** fills it in) or a host name for a CNAME, choose **Proxied by
+   Cloudflare** or not, and either turn on **Give every site a DNS record** or use **Create
+   record** on single sites in the table below.
+
+**What happens.**
+
+* Records are brought up to date at once after a change, whenever a site is added, renamed or
+  deleted, and every hour. **Check again** does it now.
+* Only records this server made are ever changed or deleted: it keeps their ids, and each says in
+  Cloudflare's comment that this server made it. A site whose name already has a record made
+  elsewhere is left alone and shown as such.
+* **Delete record** on a site deletes the records this server made for it, and it gets none again
+  until **Create record**. Removing the token leaves the records in Cloudflare, no longer changed.
+* A site outside every zone the token can edit is shown as such and left alone.
+* Proxied records: visitors go through Cloudflare and see its certificate. Set Cloudflare's SSL
+  mode to **Full (strict)**, and give the sites a certificate Cloudflare trusts: Let's Encrypt or a
+  Cloudflare Origin certificate ([HTTPS in the server](#https-in-the-server)).
+
+**Over the API and MCP:** `GET /api/v1/dns`, `PUT`/`DELETE /api/v1/dns/cloudflare` (the token),
+`PUT /api/v1/dns/records`, `POST /api/v1/dns/refresh`, `POST`/`DELETE /api/v1/sites/{domain}/dns`,
+and `POST /api/v1/tls/shared/request` for a shared certificate; the tools `get_dns`,
+`set_cloudflare_token`, `set_dns_records`, `add_site_dns_record`, `remove_site_dns_record` and
+`request_shared_certificate`. Administrators only.
 
 ## Production notes
 

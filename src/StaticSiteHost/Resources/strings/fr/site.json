@@ -105,6 +105,7 @@
   "site.https.sourceField": "Origine du certificat",
   "site.https.option.automatic": "Automatique",
   "site.https.option.letsEncrypt": "Let's Encrypt",
+  "site.https.option.cloudflareOrigin": "Certificat d'origine Cloudflare (pour un site que Cloudflare proxifie)",
   "site.https.option.selfSigned": "Autosigné",
   "site.https.option.shared": "Un certificat partagé",
   "site.https.option.uploaded": "Le certificat envoyé pour ce site",

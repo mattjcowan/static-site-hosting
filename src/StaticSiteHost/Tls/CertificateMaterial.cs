@@ -94,7 +94,11 @@ public static class CertificateMaterial
     public static (string ChainPem, string KeyPem) CreateSelfSigned(string host, TimeSpan? lifetime = null)
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var request = new CertificateRequest(new X500DistinguishedName($"CN={host}"), key, HashAlgorithmName.SHA256);
+        // A name no other certificate has: one the system trusts with the same name (such as the
+        // .NET developer certificate, CN=localhost) would be taken for its issuer, and the chain
+        // would fail to build.
+        var subject = new X500DistinguishedName($"CN={host}, O=Self-signed {Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4))}");
+        var request = new CertificateRequest(subject, key, HashAlgorithmName.SHA256);
         var names = new SubjectAlternativeNameBuilder();
         if (System.Net.IPAddress.TryParse(host, out var address)) names.AddIpAddress(address);
         else names.AddDnsName(host);

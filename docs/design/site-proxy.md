@@ -931,6 +931,24 @@ already), and a `-text` body counts as its base64; the README says so.
 **Not done:** CORS for gRPC-Web from other origins (a site's own pages need none); gRPC-Web through
 a Cloudflare Tunnel, and on Railway itself, not tried.
 
-## Phase 4: planned
+## Phase 4: built (Cloudflare)
 
-As sketched above. DNS-01 through Cloudflare's API fits the client as a second challenge type.
+* **Token:** one Cloudflare API token under **DNS** (Zone: Read, DNS: Edit; SSL and Certificates:
+  Edit for Origin certificates), checked with `/user/tokens/verify` and the zone list, stored
+  encrypted with Data Protection in `config/dns.json` (`Services/Dns/DnsService.cs`).
+* **Records follow sites** by reconciling, not by hooks: on every `SiteStore.Changed`, after each
+  settings change, and hourly, each site that should have a record gets an `A`/`AAAA` (or a
+  `CNAME`) at the address set, proxied as chosen, and the records of sites that are gone are
+  deleted. A rename carries the site's choices to the new name. Only records whose ids this
+  server keeps are touched; a name with a record made elsewhere is reported as a conflict.
+* **DNS-01:** `AcmeClient` takes an `IAcmeChallengeSolver` (`http-01` or `dns-01`). Every name's
+  proof is put in place first, then all are answered; the Cloudflare solver writes TXT records at
+  `_acme-challenge.<name>` and waits (up to two minutes) until 1.1.1.1 sees them. Automatic
+  Let's Encrypt certificates use DNS-01 whenever a zone the token can edit holds the name.
+* **Shared certificates got here:** `*.apps.example.com` (with its bare name) from Let's Encrypt
+  by DNS-01, or as a Cloudflare Origin certificate, renewed by the certificate loop like a host's.
+* **Cloudflare Origin certificates** per site (`cloudflare-origin` source) or shared: ECDSA key
+  made here, 15-year certificate from `POST /certificates`, revoked when replaced or when its site
+  or shared entry goes.
+* **Other providers later:** the provider is behind `ICloudflareApi`; a second one means a second
+  API client and solver.

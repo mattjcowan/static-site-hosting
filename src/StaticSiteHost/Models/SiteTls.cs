@@ -6,8 +6,17 @@ public static class CertificateSources
     /// <summary>The server's default (<c>SiteHosting:Tls:DefaultSource</c>), after any shared certificate that covers the host.</summary>
     public const string Automatic = "automatic";
 
-    /// <summary>Let's Encrypt (or the configured ACME server), checked over HTTP on port 80, renewed by itself.</summary>
+    /// <summary>
+    /// Let's Encrypt (or the configured ACME server), renewed by itself. Checked through DNS when a
+    /// Cloudflare zone the server's token can edit holds the name, otherwise over HTTP on port 80.
+    /// </summary>
     public const string LetsEncrypt = "letsencrypt";
+
+    /// <summary>
+    /// A Cloudflare Origin CA certificate, made through Cloudflare's API for 15 years. Trusted by
+    /// Cloudflare only: for a site Cloudflare proxies, with SSL set to Full (strict).
+    /// </summary>
+    public const string CloudflareOrigin = "cloudflare-origin";
 
     /// <summary>Made by this server, valid for a year and renewed by itself. Browsers warn about it.</summary>
     public const string SelfSigned = "selfsigned";
@@ -22,7 +31,10 @@ public static class CertificateSources
     public const string None = "none";
 
     /// <summary>What a site may choose.</summary>
-    public static readonly string[] ForSites = [Automatic, LetsEncrypt, SelfSigned, Uploaded, Shared, None];
+    public static readonly string[] ForSites = [Automatic, LetsEncrypt, CloudflareOrigin, SelfSigned, Uploaded, Shared, None];
+
+    /// <summary>What a shared certificate may come from: uploaded, or got and renewed here.</summary>
+    public static readonly string[] ForShared = [Uploaded, LetsEncrypt, CloudflareOrigin];
 
     /// <summary>What <c>SiteHosting:Tls:DefaultSource</c> may be.</summary>
     public static readonly string[] Defaults = [LetsEncrypt, SelfSigned, None];

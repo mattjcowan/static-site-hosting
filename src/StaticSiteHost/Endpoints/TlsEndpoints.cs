@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 using StaticSiteHost.Tls;
@@ -37,6 +38,24 @@ public static class TlsEndpoints
             var (info, error) = await certificates.AddSharedAsync(body?.Certificate, body?.PrivateKey, ApiEndpoints.Actor(principal));
             return info is null ? Results.BadRequest(new { error }) : Results.Ok(info);
         }).RequireAuthorization(Policies.ApiAdministrator);
+
+        // A shared certificate got and renewed here: from Let's Encrypt, checked through Cloudflare
+        // DNS (wildcards included), or a Cloudflare Origin certificate. Needs Cloudflare (/dns).
+        api.MapPost("/tls/shared/request", async (
+            SharedCertificateRequest? body, ClaimsPrincipal principal, CertificateManager certificates, StringCatalog catalog, CancellationToken ct) =>
+        {
+            var (info, error) = await certificates.RequestSharedAsync(
+                body?.Names is { } names ? string.Join(",", names) : null, body?.Source, ApiEndpoints.Actor(principal), ct);
+            return info is null
+                ? Results.BadRequest(new { error = error!.English(catalog) })
+                : Results.Accepted(value: new { ok = true, id = info.Id, names = info.Requested, source = info.Source, note = Renewing });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPost("/tls/shared/{id}/renew", (string id, CertificateManager certificates) =>
+            certificates.RenewSharedNow(id)
+                ? Results.Accepted(value: new { ok = true, id, note = Renewing })
+                : Results.NotFound(new { error = "No shared certificate got here has that id." }))
+            .RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapDelete("/tls/shared/{id}", async (string id, ClaimsPrincipal principal, CertificateManager certificates) =>
             await certificates.RemoveSharedAsync(id, ApiEndpoints.Actor(principal))
@@ -98,14 +117,18 @@ public static class TlsEndpoints
         acmeEmail = tls.AcmeEmail,
         renewDaysBefore = tls.RenewDaysBefore,
         hosts = tls.Enabled ? certificates.Status().Select(DescribeHost) : [],
-        shared = certificates.Shared.Select(s => new
+        shared = certificates.SharedAll().Select(s => new
         {
             id = s.Info.Id,
             names = s.Info.Names,
-            issuer = s.Info.Issuer,
-            notAfter = s.Info.NotAfterUtc,
+            source = s.Info.Source,
+            issuer = s.Certificate is null ? null : s.Info.Issuer,
+            notAfter = s.Certificate is null ? (DateTimeOffset?)null : s.Info.NotAfterUtc,
             uploadedBy = s.Info.UploadedBy,
-            uploadedUtc = s.Info.UploadedUtc
+            uploadedUtc = s.Info.UploadedUtc,
+            issuing = s.Busy,
+            lastError = s.Info.State.LastError,
+            nextAttemptUtc = s.Info.State.NextAttemptUtc
         })
     };
 
@@ -139,6 +162,7 @@ public static class TlsEndpoints
             }
             : null,
         renewsAt = status.RenewsAt,
+        check = status.State.Check,
         lastError = status.State.LastError,
         lastAttemptUtc = status.State.LastAttemptUtc,
         nextAttemptUtc = status.State.NextAttemptUtc,
@@ -162,6 +186,9 @@ public static class TlsEndpoints
 
 /// <summary>Body of PUT /api/v1/sites/{domain}/tls. Each field left out is left as it is.</summary>
 public sealed record SiteTlsRequest(string? Source, bool? RedirectToHttps, bool? Hsts);
+
+/// <summary>Body of POST /api/v1/tls/shared/request: the names (a wildcard is <c>*.</c> and the name) and <c>letsencrypt</c> or <c>cloudflare-origin</c>.</summary>
+public sealed record SharedCertificateRequest(List<string>? Names, string? Source);
 
 /// <summary>Body of the certificate uploads: the certificate (with any intermediates after it) and its private key, both PEM.</summary>
 public sealed record CertificateUploadRequest(string? Certificate, string? PrivateKey);
