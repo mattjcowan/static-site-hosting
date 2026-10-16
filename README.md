@@ -2497,8 +2497,10 @@ curl -sS -X PUT  -H "X-Api-Key: $SSH_KEY" -H "Content-Type: application/json" \
 
 **What it is.** An [MCP](https://modelcontextprotocol.io) endpoint at `/mcp` on the management
 host. An agent that speaks MCP, such as Claude Code, Claude Desktop or Cursor, connects to it
-and can then create sites, deploy files, set rules, variables and proxy routes, write, check and
-test functions, and read the manual, by conversation.
+and can then create sites, deploy and edit files, set rules, variables and proxy routes, write,
+read, edit, check and test functions, set up AI, manage accounts, send realtime events, and read
+the manual, by conversation. Everything the API does has a tool, except API keys and release
+downloads.
 
 **How to use it.** Connect with an API key. The agent can do what the key's owner can do.
 
@@ -2522,18 +2524,25 @@ log entries.
 | Visibility and rules | `set_passcode`, `remove_passcode`, `get_rules`, `set_header_rules`, `set_redirect_rules` |
 | Variables | `get_variables`, `set_variable`, `remove_variable` |
 | Proxy routes | `get_proxy_routes`, `set_proxy_route`, `remove_proxy_route`, `test_proxy_route`, `get_server_proxy_routes`, `set_server_proxy_route`, `remove_server_proxy_route`, `set_server_route_for_site` |
-| Functions | `get_functions`, `check_functions`, `test_functions`, `deploy_functions`, `remove_functions` |
-| AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `test_ai_provider`, `set_site_ai` |
-| Users | `list_users`, `create_user` |
+| Functions | `get_functions`, `read_function_files`, `edit_function_file`, `check_functions`, `test_functions`, `deploy_functions`, `remove_function_file`, `remove_functions` |
+| AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `update_ai_provider`, `remove_ai_provider`, `test_ai_provider`, `set_site_ai`, `remove_site_ai`, `get_assistant_settings`, `set_assistant_settings` |
+| Realtime | `get_realtime`, `publish_realtime_event` |
+| Users | `list_users`, `create_user`, `invite_user`, `set_user_role`, `disable_user`, `delete_user` |
 
 * `deploy_files` takes the files themselves (`[{path, content}]`, binary as base64), not a zip.
   They make a new release, which replaces the whole previous one, as a zip deploy does.
 * The file tools change some files and keep the rest ([more](#changing-files-without-a-zip)).
   `edit_site_file` takes `[{find, replace}]`, and each `find` must occur exactly once.
+* `edit_function_file` works the same way on one function file, then compiles and deploys the
+  set. Nothing changes if it does not compile, and the errors come back with file and line.
+* Tools that name a user or an AI provider take its id or its name.
+* API keys have no tools, on purpose: a conversation cannot create or revoke credentials. Use
+  **Account → API keys** or `/api/v1/keys`.
 * The rule tools take the `_headers` and `_redirects` text formats.
 * Each tool says whether it only reads, changes something, or is destructive (`delete_site`,
-  `remove_functions`, `remove_proxy_route`, `remove_variable`, `remove_passcode`,
-  `delete_site_files`, `remove_server_proxy_route`), so an agent
+  `remove_functions`, `remove_function_file`, `remove_proxy_route`, `remove_server_proxy_route`,
+  `remove_variable`, `remove_passcode`, `delete_site_files`, `remove_site_ai`, `remove_ai_provider`,
+  `disable_user`, `delete_user`), so an agent
   that asks before acting knows when to ask.
 * A tool that cannot do what was asked answers `{ "error": "…" }`, or `{ "errors": [...] }`, with
   the reason, so the agent can correct the call.
@@ -2562,8 +2571,9 @@ What you see:
 
 * Its answer, as it writes it.
 * Each step as it runs, with ✓ or ✗ and the reason when a step fails.
-* **Run** and **Cancel** before it removes anything (a site, functions, a proxy route, a
-  variable's value) or makes a private site public. Nothing of that kind runs until you choose
+* **Run** and **Cancel** before it removes anything (a site, files, functions, a proxy route, a
+  variable's value, AI settings or a provider, an account) or disables an account or makes a
+  private site public. Nothing of that kind runs until you choose
   **Run**.
 * The page under the panel brings itself up to date after a change: it cross-fades to the new
   content in place, with no reload, keeping your scroll position and the sections you opened.
@@ -2582,7 +2592,7 @@ What you see:
 * Setting a proxy route also checks that the target answers, so no separate test step is needed.
 * `set_proxy_route` and `deploy_files` create the site when it does not exist, so there is no
   separate step for that.
-* With an Anthropic provider, the instructions and tools (about 8,000 tokens) are cached between
+* With an Anthropic provider, the instructions and tools (about 10,000 tokens) are cached between
   calls, so each call after the first sends only a few hundred new tokens.
 
 A typical setup takes two model calls: one that makes the changes, one that says what happened.

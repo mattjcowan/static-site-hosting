@@ -257,6 +257,13 @@ public sealed class ReviewFixTests : IDisposable
     [InlineData("remove_proxy_route")]
     [InlineData("remove_variable")]
     [InlineData("remove_passcode")]
+    [InlineData("delete_site_files")]
+    [InlineData("remove_server_proxy_route")]
+    [InlineData("remove_function_file")]
+    [InlineData("remove_site_ai")]
+    [InlineData("remove_ai_provider")]
+    [InlineData("disable_user")]
+    [InlineData("delete_user")]
     public void Removing_anything_asks_first(string tool) =>
         Assert.Equal(ToolEffect.Destructive, SiteHostTools.All.Single(t => t.Function.Name == tool).Effect);
 

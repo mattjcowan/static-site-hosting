@@ -10,6 +10,7 @@ using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
 using StaticSiteHost.Services.Ai;
+using StaticSiteHost.Services.Assistant;
 using StaticSiteHost.Services.Realtime;
 
 namespace StaticSiteHost.Tools;
@@ -117,6 +118,8 @@ public static class SiteHostTools
           write_site_files for new files. Both keep every other file. Never deploy_files for a small change.
         - Private site: set_passcode. Caching or security headers: set_header_rules. Moved pages: set_redirect_rules.
         - Server code: check_functions, then test_functions, then deploy_functions.
+        - Change an existing function: read_function_files, then edit_function_file, which compiles and deploys it
+          and keeps the other files. Then test_functions with target "live" if it needs checking.
 
         Work fast:
         - Act on what you are told. Do not list or read things you already know from the context given.
@@ -312,16 +315,8 @@ public static class SiteHostTools
             var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, release, path, ct);
             if (bytes is null) return new { error = $"{site.Domain} has no file '{path}'. Use write_site_files to add it." };
 
-            var text = Encoding.UTF8.GetString(bytes);
-            for (var i = 0; i < edits.Count; i++)
-            {
-                var find = edits[i].Find ?? "";
-                var first = find.Length == 0 ? -1 : text.IndexOf(find, StringComparison.Ordinal);
-                if (first < 0) return new { error = $"Edit {i + 1}: its find text is not in {path}. read_site_file shows the text as it is now." };
-                if (text.IndexOf(find, first + 1, StringComparison.Ordinal) >= 0)
-                    return new { error = $"Edit {i + 1}: its find text appears more than once in {path}. Include more of the text around it." };
-                text = string.Concat(text.AsSpan(0, first), edits[i].Replace ?? "", text.AsSpan(first + find.Length));
-            }
+            var (text, editError) = ApplyEdits(Encoding.UTF8.GetString(bytes), edits, path, "read_site_file");
+            if (text is null) return new { error = editError };
 
             var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(
                 site.Domain, [new(path, Encoding.UTF8.GetBytes(text))], [], caller.Actor, "tools", caller.IsAdministrator, ct);
@@ -710,6 +705,98 @@ public static class SiteHostTools
             new { domain = site.Domain, functions = site.CurrentFunctions, status = await host.StatusAsync(site.Domain) });
     }
 
+    [SiteHostTool("read_function_files", ToolEffect.Read)]
+    [Description("The source of a site's live functions (or the global ones, with no domain), file by file, exactly as deployed. Read it before changing a function, then change it with edit_function_file.")]
+    public static async Task<JsonElement> ReadFunctionFiles(
+        IServiceProvider services,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null,
+        [Description("One file's name, such as Weather.cs. Leave out for every file.")] string? name = null)
+    {
+        var (scope, scopeError) = FunctionScope(services.GetRequiredService<SiteStore>(), domain);
+        if (scopeError is not null) return Error(scopeError);
+
+        var files = await services.GetRequiredService<FunctionDeploymentService>().LiveFilesAsync(scope);
+        if (files.Count == 0) return Error(scope is null ? "No global functions are deployed." : $"{scope} has no functions.");
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            files = files.Where(f => f.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+            if (files.Count == 0) return Error($"No function file is called '{name}'. read_function_files with no name shows them all.");
+        }
+
+        // The same budget as read_site_file: past it, a file comes back cut short and is changed
+        // with edit_function_file, which needs only the parts it changes.
+        const int Shown = 60_000;
+        var left = Shown;
+        var shown = new List<object>();
+        foreach (var file in files)
+        {
+            if (file.Text.Length <= left)
+            {
+                shown.Add(new { name = file.Name, text = file.Text });
+                left -= file.Text.Length;
+            }
+            else
+            {
+                shown.Add(new { name = file.Name, text = file.Text[..Math.Max(left, 0)], cutShort = $"Only the first {Math.Max(left, 0):N0} of {file.Text.Length:N0} characters are shown. Read it alone with name, or change it with edit_function_file." });
+                left = 0;
+            }
+        }
+
+        return ToJson(new { domain = scope, files = shown });
+    }
+
+    [SiteHostTool("edit_function_file", ToolEffect.Change)]
+    [Description("Changes parts of one function file and deploys it, keeping every other function file: each edit replaces text that appears exactly once in the file. read_function_files shows the text first. Nothing changes if the result does not compile; the errors come back with file and line. Administrators only.")]
+    public static async Task<JsonElement> EditFunctionFile(
+        IServiceProvider services,
+        [Description("The file's name, such as Weather.cs.")] string name,
+        [Description("The edits, applied in order: find (text exactly as it is in the file, appearing once) and replace (what it becomes; empty removes it).")] IReadOnlyList<FileEdit> edits,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        if (edits is not { Count: > 0 }) return Error("Give at least one edit.");
+
+        var (scope, scopeError) = FunctionScope(services.GetRequiredService<SiteStore>(), domain);
+        if (scopeError is not null) return Error(scopeError);
+
+        var functions = services.GetRequiredService<FunctionDeploymentService>();
+        var file = (await functions.LiveFilesAsync(scope)).FirstOrDefault(f => f.Name.Equals((name ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+        if (file is null) return Error($"No function file is called '{name}'. read_function_files shows them; deploy_functions adds a new one.");
+
+        var (text, editError) = ApplyEdits(file.Text, edits, file.Name, "read_function_files");
+        if (text is null) return Error(editError);
+
+        // The live files are kept as deployed, so the edited one goes back as it is, like
+        // FunctionDeploymentService.RemoveFileAsync does with the rest.
+        var result = await functions.DeployAsync(scope, [new FunctionFile(file.Name, text)], caller.Actor, "mcp", replace: false, ct);
+        return result.Ok
+            ? ToJson(new { ok = true, name = file.Name, edits = edits.Count, functions = result.Bundle, diagnostics = result.Diagnostics })
+            : ToJson(new { error = result.Error, diagnostics = result.Diagnostics });
+    }
+
+    [SiteHostTool("remove_function_file", ToolEffect.Destructive)]
+    [Description("Removes one function file and deploys the rest, which must still compile. To stop all of a site's functions, use remove_functions. Administrators only.")]
+    public static async Task<JsonElement> RemoveFunctionFile(
+        IServiceProvider services,
+        [Description("The file's name, such as Weather.cs.")] string name,
+        [Description("The site's domain, or empty for the global functions.")] string? domain = null,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var (scope, scopeError) = FunctionScope(services.GetRequiredService<SiteStore>(), domain);
+        if (scopeError is not null) return Error(scopeError);
+
+        var result = await services.GetRequiredService<FunctionDeploymentService>().RemoveFileAsync(scope, name ?? "", caller.Actor, "mcp", ct);
+        return result.Ok
+            ? ToJson(new { ok = true, domain = scope, removed = name, functions = result.Bundle })
+            : ToJson(new { error = result.Error, diagnostics = result.Diagnostics });
+    }
+
     [SiteHostTool("check_functions", ToolEffect.Read)]
     [Description("Compiles function files exactly as a deploy would, without making them live. Returns a draft id for test_functions, the routes found, and compiler errors with file and line. Files are written as deploy_functions describes. Administrators only.")]
     public static Task<JsonElement> CheckFunctions(
@@ -861,6 +948,99 @@ public static class SiteHostTools
         });
     }
 
+    [SiteHostTool("remove_site_ai", ToolEffect.Destructive)]
+    [Description("Removes a site's AI settings: its functions and pages can no longer chat until set_site_ai is called again. Administrators only.")]
+    public static async Task<JsonElement> RemoveSiteAi(IServiceProvider services, [Description("The site's domain.")] string domain)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            await services.GetRequiredService<SiteAiSettingsService>().RemoveAsync(site, caller.Actor);
+            return ApiEndpoints.DescribeAi(site, services.GetRequiredService<SiteAiChatFactory>(), saved: true);
+        });
+    }
+
+    [SiteHostTool("update_ai_provider", ToolEffect.Change)]
+    [Description("Changes an AI provider: its name, default model, base URL or API key, such as to replace a key. Anything left out stays as it is; the kind cannot change. Sites using it pick up the change at once. Administrators only.")]
+    public static async Task<JsonElement> UpdateAiProvider(
+        IServiceProvider services,
+        [Description("The provider's id or name, from list_ai_providers.")] string provider,
+        [Description("A new name.")] string? name = null,
+        [Description("A new default model.")] string? defaultModel = null,
+        [Description("A new base URL; empty for OpenAI's or Anthropic's own.")] string? baseUrl = null,
+        [Description("A new API key.")] string? apiKey = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var store = services.GetRequiredService<AiProviderStore>();
+        if (await FindProviderAsync(store, provider) is not { } found) return Error($"No AI provider is called '{provider}'. list_ai_providers shows them.");
+
+        var (updated, error) = await store.UpdateAsync(
+            found.Id, name ?? found.Name, baseUrl ?? found.BaseUrl, apiKey, defaultModel ?? found.DefaultModel, caller.Actor);
+        return updated is null ? Error(error) : ToJson(AdminEndpoints.DescribeProvider(updated));
+    }
+
+    [SiteHostTool("remove_ai_provider", ToolEffect.Destructive)]
+    [Description("Deletes an AI provider and its stored key. Sites that used it can no longer chat until another is chosen with set_site_ai. Administrators only.")]
+    public static async Task<JsonElement> RemoveAiProvider(
+        IServiceProvider services, [Description("The provider's id or name, from list_ai_providers.")] string provider)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var store = services.GetRequiredService<AiProviderStore>();
+        if (await FindProviderAsync(store, provider) is not { } found) return Error($"No AI provider is called '{provider}'. list_ai_providers shows them.");
+
+        var usedBy = services.GetRequiredService<SiteStore>().List().Where(site => site.Ai?.ProviderId == found.Id).Select(site => site.Domain).ToList();
+        var assistantUsedIt = (await services.GetRequiredService<AssistantSettingsStore>().ReadAsync()).ProviderId == found.Id;
+        var removed = await store.DeleteAsync(found.Id, caller.Actor);
+        return removed is null
+            ? Error("That provider no longer exists.")
+            : ToJson(new
+            {
+                ok = true,
+                id = removed.Id,
+                name = removed.Name,
+                sitesLeftWithoutAi = usedBy,
+                assistantLeftWithoutAi = assistantUsedIt ? "The management assistant used it: choose another provider with set_assistant_settings." : null
+            });
+    }
+
+    [SiteHostTool("get_assistant_settings", ToolEffect.Read)]
+    [Description("The management assistant's settings: which AI provider and model it uses, and whether members may use it. Administrators only.")]
+    public static async Task<JsonElement> GetAssistantSettings(IServiceProvider services)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        return ToJson(await services.GetRequiredService<AssistantSettingsStore>().ReadAsync());
+    }
+
+    [SiteHostTool("set_assistant_settings", ToolEffect.Change)]
+    [Description("Sets the management assistant's AI provider and model, and whether members may use it. No provider turns the assistant off. Administrators only.")]
+    public static async Task<JsonElement> SetAssistantSettings(
+        IServiceProvider services,
+        [Description("The provider's id or name; empty turns the assistant off.")] string? provider = null,
+        [Description("The model. Leave out for the provider's default.")] string? model = null,
+        [Description("True lets members use the assistant too, as themselves.")] bool membersMayUse = false)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        string? providerId = null;
+        if (!string.IsNullOrWhiteSpace(provider))
+        {
+            if (await FindProviderAsync(services.GetRequiredService<AiProviderStore>(), provider) is not { } found)
+                return Error($"No AI provider is called '{provider}'. list_ai_providers shows them.");
+            providerId = found.Id;
+        }
+
+        var settings = services.GetRequiredService<AssistantSettingsStore>();
+        var error = await settings.SaveAsync(providerId, model, membersMayUse, caller.Actor);
+        return error is null ? ToJson(await settings.ReadAsync()) : Error(error);
+    }
+
     // ================================================================ users
 
     [SiteHostTool("list_users", ToolEffect.Read)]
@@ -884,7 +1064,7 @@ public static class SiteHostTools
         if (caller.AdministratorsOnly() is { } refused) return refused;
 
         var (created, error) = await services.GetRequiredService<UserAdminService>()
-            .CreateAsync(username, displayName, role, temporaryPassword, caller.Actor);
+            .CreateAsync(username, displayName, RoleName(role), temporaryPassword, caller.Actor);
         if (created is null) return Error(error);
 
         var links = services.GetRequiredService<LinkGenerator>();
@@ -896,6 +1076,112 @@ public static class SiteHostTools
         });
     }
 
+    [SiteHostTool("invite_user", ToolEffect.Change)]
+    [Description("Makes a new private sign-in link for an account, such as for someone who lost theirs or never used it, and returns it once. Any earlier link stops working. Send it to them yourself. Administrators only.")]
+    public static async Task<JsonElement> InviteUser(IServiceProvider services, [Description("The user's id or user name, from list_users.")] string user)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var users = services.GetRequiredService<UserStore>();
+        if (await FindUserAsync(users, user) is not { } found) return Error($"No account is called '{user}'. list_users shows them.");
+
+        var (token, error) = await services.GetRequiredService<UserAdminService>().InviteAsync(found.Id, caller.Actor);
+        if (token is null) return Error(error);
+
+        return ToJson(new
+        {
+            user = AdminEndpoints.DescribeUser((await users.FindByIdAsync(found.Id))!),
+            inviteLink = services.GetRequiredService<LinkGenerator>().GetUriByPage(caller.Http, "/Activate", null, new { token })
+        });
+    }
+
+    [SiteHostTool("set_user_role", ToolEffect.Change)]
+    [Description("Makes an account a Member or an Administrator. The last administrator cannot be made a member, and you cannot change your own role. Administrators only.")]
+    public static async Task<JsonElement> SetUserRole(
+        IServiceProvider services,
+        [Description("The user's id or user name, from list_users.")] string user,
+        [Description("'Member' or 'Administrator'.")] string role)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var users = services.GetRequiredService<UserStore>();
+        if (await FindUserAsync(users, user) is not { } found) return Error($"No account is called '{user}'. list_users shows them.");
+
+        var error = await services.GetRequiredService<UserAdminService>().SetRoleAsync(found.Id, RoleName(role), caller.UserId, caller.Actor);
+        return error is null ? ToJson(AdminEndpoints.DescribeUser((await users.FindByIdAsync(found.Id))!)) : Error(error);
+    }
+
+    [SiteHostTool("disable_user", ToolEffect.Destructive)]
+    [Description("Disables an account, which signs them out and stops their API keys, or enables it again with disabled false. You cannot disable yourself. Administrators only.")]
+    public static async Task<JsonElement> DisableUser(
+        IServiceProvider services,
+        [Description("The user's id or user name, from list_users.")] string user,
+        [Description("True disables the account; false enables it again.")] bool disabled = true)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var users = services.GetRequiredService<UserStore>();
+        if (await FindUserAsync(users, user) is not { } found) return Error($"No account is called '{user}'. list_users shows them.");
+
+        var error = await services.GetRequiredService<UserAdminService>().SetDisabledAsync(found.Id, disabled, caller.UserId, caller.Actor);
+        return error is null ? ToJson(AdminEndpoints.DescribeUser((await users.FindByIdAsync(found.Id))!)) : Error(error);
+    }
+
+    [SiteHostTool("delete_user", ToolEffect.Destructive)]
+    [Description("Deletes an account and its API keys. Sites it deployed stay. You cannot delete yourself or the last administrator. Administrators only.")]
+    public static async Task<JsonElement> DeleteUser(IServiceProvider services, [Description("The user's id or user name, from list_users.")] string user)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        if (await FindUserAsync(services.GetRequiredService<UserStore>(), user) is not { } found)
+            return Error($"No account is called '{user}'. list_users shows them.");
+
+        var (username, error) = await services.GetRequiredService<UserAdminService>().DeleteAsync(found.Id, caller.UserId, caller.Actor);
+        return username is null ? Error(error) : ToJson(new { ok = true, id = found.Id, username });
+    }
+
+    // ================================================================ realtime
+
+    [SiteHostTool("get_realtime", ToolEffect.Read)]
+    [Description("How many pages are connected to a site's realtime channel now, and its groups with their member counts.")]
+    public static JsonElement GetRealtime(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        WithSite(services, domain, site =>
+        {
+            var registry = services.GetRequiredService<RealtimeRegistry>();
+            return new
+            {
+                domain = site.Domain,
+                connections = registry.ConnectionCount(site.Domain),
+                groups = registry.GroupSizes(site.Domain).Select(group => new { name = group.Name, members = group.Members })
+            };
+        });
+
+    [SiteHostTool("publish_realtime_event", ToolEffect.Change)]
+    [Description("Sends an event to the pages open on a site, which receive it with site.realtime.on('name', handler) from /_host/site.js: every page, or only one group, one user or one connection. Returns how many connections it went to.")]
+    public static async Task<JsonElement> PublishRealtimeEvent(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The event's name, such as site.deployed or orders.updated.")] string @event,
+        [Description("Any JSON the pages need with it, up to 256 KB.")] JsonElement? payload = null,
+        [Description("Only the pages in this group.")] string? group = null,
+        [Description("Only the pages of this signed-in user.")] string? user = null,
+        [Description("Only this one connection.")] string? connection = null,
+        CancellationToken ct = default) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            var (delivered, error) = await ApiEndpoints.PublishToSiteAsync(
+                site,
+                new RealtimePublishRequest(@event, payload is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } ? payload : null, group, user, connection),
+                services.GetRequiredService<RealtimeRegistry>(),
+                services.GetRequiredService<SiteRealtimeFactory>(),
+                ct);
+            return error is null ? new { ok = true, domain = site.Domain, delivered } : new { error };
+        });
+
     // ================================================================ helpers
 
     private static object DescribeSite(IServiceProvider services, SiteRecord site) => ApiEndpoints.Describe(
@@ -903,6 +1189,25 @@ public static class SiteHostTools
         services.GetRequiredService<SiteVariableService>(),
         services.GetRequiredService<SiteAiChatFactory>(),
         services.GetRequiredService<RealtimeRegistry>());
+
+    /// <summary>
+    /// Applies find-and-replace edits in order. Each find must appear exactly once in the text as it
+    /// stands when that edit runs, so an edit never lands somewhere the model did not mean.
+    /// </summary>
+    private static (string? Text, string? Error) ApplyEdits(string text, IReadOnlyList<FileEdit> edits, string name, string readTool)
+    {
+        for (var i = 0; i < edits.Count; i++)
+        {
+            var find = edits[i].Find ?? "";
+            var first = find.Length == 0 ? -1 : text.IndexOf(find, StringComparison.Ordinal);
+            if (first < 0) return (null, $"Edit {i + 1}: its find text is not in {name}. {readTool} shows the text as it is now.");
+            if (text.IndexOf(find, first + 1, StringComparison.Ordinal) >= 0)
+                return (null, $"Edit {i + 1}: its find text appears more than once in {name}. Include more of the text around it.");
+            text = string.Concat(text.AsSpan(0, first), edits[i].Replace ?? "", text.AsSpan(first + find.Length));
+        }
+
+        return (text, null);
+    }
 
     private static async Task<JsonElement> BuildFunctionsAsync(
         IServiceProvider services, IReadOnlyList<FunctionFileInput> files, string? domain, bool replace, bool deploy, CancellationToken ct)
@@ -968,6 +1273,25 @@ public static class SiteHostTools
         return site is null ? (null, $"No site is published at '{normalized}'. create_site makes one.") : (site, null);
     }
 
+    /// <summary>A provider by id or, failing that, by name.</summary>
+    private static async Task<AiProviderRecord?> FindProviderAsync(AiProviderStore store, string? idOrName)
+    {
+        var key = (idOrName ?? "").Trim();
+        return await store.FindAsync(key)
+               ?? (await store.ListAsync()).FirstOrDefault(p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>A role as the server spells it, whatever the case a model sent it in.</summary>
+    private static string? RoleName(string? role) =>
+        Roles.All.FirstOrDefault(r => r.Equals(role?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? role;
+
+    /// <summary>An account by id or, failing that, by user name.</summary>
+    private static async Task<UserRecord?> FindUserAsync(UserStore users, string? idOrName)
+    {
+        var key = (idOrName ?? "").Trim();
+        return await users.FindByIdAsync(key) ?? await users.FindByUsernameAsync(key);
+    }
+
     private static JsonElement ToJson(object? value) => JsonSerializer.SerializeToElement(value, Json);
 
     private static JsonElement Error(string? message) => ToJson(new { error = message });
@@ -985,6 +1309,9 @@ public static class SiteHostTools
         public bool IsAdministrator => Principal.IsInRole(Roles.Administrator);
 
         public string Actor => ApiEndpoints.Actor(Principal);
+
+        /// <summary>The account's id, so a tool can refuse to disable, demote or delete the caller.</summary>
+        public string? UserId => Principal.FindFirstValue(ClaimTypes.NameIdentifier);
 
         /// <summary>Null for an administrator; otherwise the refusal to return.</summary>
         public JsonElement? AdministratorsOnly() =>

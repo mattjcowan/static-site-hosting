@@ -333,7 +333,9 @@ first, so the page, the API and MCP cannot drift apart.
     The server zips them and deploys as usual. Functions likewise take `[{name, content}]`.
   * **Rules take their text formats** (`_headers`, `_redirects`), the same as the UI's editors,
     which agents write well.
-* **Not offered as tools:** changing your own password, and anything the API does not do either.
+* **Not offered as tools:** changing your own password, API keys (so a conversation cannot
+  create or revoke credentials), release downloads (the file tools cover what an agent needs),
+  and anything the API does not do either. Everything else the API does has a tool since 0.6.1.
 
 ## Order of work
 
@@ -751,6 +753,33 @@ for 0.6.0:
   seconds and four tool calls, with every other file, rule and variable kept. A weather page on
   a site with no files (a page plus a `/api/weather/{zip}` function) took 28 seconds and two
   model calls.
+
+## 0.6.1: a tool for everything the API does
+
+A check after 0.6.0 found API features with no tool. They were added, each calling the service
+its endpoint calls:
+
+* **Functions:** `read_function_files` (the source as deployed, up to 60,000 characters, like
+  `read_site_file`), `edit_function_file` (find and replace, then compile and deploy, keeping the
+  other files), `remove_function_file` (destructive). Before this, changing a function meant
+  rewriting it without seeing it.
+* **AI:** `update_ai_provider`, `remove_ai_provider` (destructive; it reports the sites and the
+  assistant left without a provider), `remove_site_ai` (destructive), `get_assistant_settings`,
+  `set_assistant_settings`.
+* **Users:** `invite_user`, `set_user_role`, `disable_user` (destructive), `delete_user`
+  (destructive). The service's own rules apply: nobody can demote, disable or delete themselves,
+  and the last administrator stays.
+* **Realtime:** `get_realtime`, `publish_realtime_event`. The endpoint's checks moved to
+  `ApiEndpoints.PublishToSiteAsync`, which both use.
+* Users and providers are named by id or name, and roles in any case, since models send
+  "member" as often as "Member".
+
+**Measured with Haiku 5.5.** "Change the hello function so it returns JSON with a message and
+the current UTC time" took 7.5 seconds: `read_function_files`, `edit_function_file`,
+`test_functions`, with the other function file left as it was. Removing a function file and
+disabling an account each stopped for confirmation within two seconds. Publishing an event
+reached a page open in Chrome. The tool catalog is now 57 tools, about 10,000 tokens with the
+instructions, and still cached.
 
 ## Phases 3 and 4: planned
 

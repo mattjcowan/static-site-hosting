@@ -623,23 +623,36 @@ public static class ApiEndpoints
         var (site, failure) = Find(domain, sites);
         if (site is null) return failure!;
 
-        if (body?.Event is null)
-            return Results.BadRequest(new { error = "Name the event: send { \"event\": \"site.deployed\" }, with a \"payload\" if the pages need one." });
+        var (delivered, error) = await PublishToSiteAsync(site, body, registry, realtime, ct);
+        return error is null
+            ? Results.Ok(new { ok = true, domain = site.Domain, delivered })
+            : Results.BadRequest(new { error });
+    }
 
-        if (RealtimeNames.EventError(body.Event) is { } eventError) return Results.BadRequest(new { error = eventError });
+    /// <summary>
+    /// Checks a publish request and sends it: what the API endpoint and the publish tool share.
+    /// Returns how many connections it went to, or why it was refused.
+    /// </summary>
+    internal static async Task<(int Delivered, string? Error)> PublishToSiteAsync(
+        SiteRecord site, RealtimePublishRequest? body, RealtimeRegistry registry, SiteRealtimeFactory realtime, CancellationToken ct)
+    {
+        if (body?.Event is null)
+            return (0, "Name the event: send { \"event\": \"site.deployed\" }, with a \"payload\" if the pages need one.");
+
+        if (RealtimeNames.EventError(body.Event) is { } eventError) return (0, eventError);
 
         if (new[] { body.Group, body.User, body.Connection }.Count(target => target is not null) > 1)
-            return Results.BadRequest(new { error = "Send at most one of group, user and connection. With none, every page on the site gets the event." });
+            return (0, "Send at most one of group, user and connection. With none, every page on the site gets the event.");
 
         if (body.Group is not null && RealtimeNames.GroupError(body.Group) is { } groupError)
-            return Results.BadRequest(new { error = groupError });
+            return (0, groupError);
 
-        if (body.User is "") return Results.BadRequest(new { error = "\"user\" is empty. Name a user, or leave it out to send to every page." });
+        if (body.User is "") return (0, "\"user\" is empty. Name a user, or leave it out to send to every page.");
         if (body.Connection is "")
-            return Results.BadRequest(new { error = "\"connection\" is empty. Name a connection, or leave it out to send to every page." });
+            return (0, "\"connection\" is empty. Name a connection, or leave it out to send to every page.");
 
         if (body.Payload is { } payload && RealtimeNames.PayloadError(payload) is { } payloadError)
-            return Results.BadRequest(new { error = payloadError });
+            return (0, payloadError);
 
         var channel = realtime.Create(site);
         int delivered;
@@ -665,7 +678,7 @@ public static class ApiEndpoints
             await channel.PublishAsync(body.Event, body.Payload, ct);
         }
 
-        return Results.Ok(new { ok = true, domain = site.Domain, delivered });
+        return (delivered, null);
     }
 
     /// <summary>

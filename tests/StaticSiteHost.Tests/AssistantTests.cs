@@ -276,6 +276,10 @@ public class AssistantTests
     [InlineData("set_proxy_route", """{"domain":"shop.test","route":{"path":"/api","target":"http://api:8080"}}""", "set_proxy_route shop.test /api → http://api:8080")]
     [InlineData("deploy_files", """{"domain":"a.test","files":[{"path":"index.html","content":"x"}]}""", "deploy_files a.test 1 file")]
     [InlineData("who_am_i", "{}", "who_am_i")]
+    [InlineData("delete_user", """{"user":"ci-bot"}""", "delete_user ci-bot")]
+    [InlineData("remove_ai_provider", """{"provider":"OpenAI"}""", "remove_ai_provider OpenAI")]
+    [InlineData("edit_function_file", """{"domain":"a.test","name":"Weather.cs","edits":[{"find":"a","replace":"b"}]}""", "edit_function_file a.test Weather.cs 1 edit")]
+    [InlineData("publish_realtime_event", """{"domain":"a.test","event":"site.deployed"}""", "publish_realtime_event a.test site.deployed")]
     public void Tool_steps_are_summed_up_in_a_line(string name, string arguments, string expected) =>
         Assert.Equal(expected, AssistantService.Summarize(new AiToolCall("c", name, JsonDocument.Parse(arguments).RootElement)));
 }

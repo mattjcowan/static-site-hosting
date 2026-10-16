@@ -377,7 +377,7 @@ public sealed class AssistantService
         if (call.Arguments.ValueKind != JsonValueKind.Object) return call.Name;
 
         var parts = new List<string>();
-        foreach (var key in new[] { "domain", "path", "name", "newDomain", "releaseId", "username" })
+        foreach (var key in new[] { "domain", "path", "name", "newDomain", "releaseId", "username", "user", "provider", "event" })
         {
             if (call.Arguments.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text)
                 parts.Add(text);
@@ -440,13 +440,13 @@ public sealed class AssistantService
     /// </summary>
     private static string Trim(string result, string tool)
     {
-        var limit = tool == "read_site_file" ? MaxFileReadChars : MaxToolResultChars;
+        var limit = tool is "read_site_file" or "read_function_files" ? MaxFileReadChars : MaxToolResultChars;
         return result.Length <= limit
             ? result
             : result[..limit] + $"… (cut at {limit} of {result.Length} characters)";
     }
 
-    /// <summary>The longest read_site_file result passed back, a little over the text it returns at most.</summary>
+    /// <summary>The longest read_site_file or read_function_files result passed back, a little over the text they return at most.</summary>
     public const int MaxFileReadChars = 64_000;
 
     /// <summary>Drops conversations nobody has used for <see cref="IdleLifetime"/>.</summary>
