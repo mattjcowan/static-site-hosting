@@ -60,6 +60,12 @@ public sealed class SiteRecord
     /// </summary>
     public List<ProxyRoute> Proxy { get; set; } = [];
 
+    /// <summary>
+    /// The paths of server-wide proxy routes (<see cref="ServerProxyRoute"/>) this site has turned
+    /// off, so their requests are the site's own again. Replaced as a whole on every change.
+    /// </summary>
+    public List<string> DisabledServerRoutes { get; set; } = [];
+
     /// <summary>Every function bundle some retained release still runs.</summary>
     public List<FunctionBundle> FunctionBundles { get; set; } = [];
 

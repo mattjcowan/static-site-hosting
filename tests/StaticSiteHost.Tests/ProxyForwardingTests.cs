@@ -275,6 +275,49 @@ public class ProxyForwardingTests : IClassFixture<ProxyServers>
     }
 
     [Fact]
+    public async Task Server_wide_routes_forward_for_the_sites_they_name_unless_the_site_overrides_or_turns_them_off()
+    {
+        var proxy = _servers.FrontServices.GetRequiredService<SiteProxyService>();
+        var (ok, errors) = await proxy.SetServerRoutesAsync(
+        [
+            new ServerProxyRoute
+            {
+                Sites = "*.test", Path = "/shared", Target = _servers.BackendUrl,
+                RequestHeaders = [new ProxyHeader { Name = "X-Which", Value = "server-wide" }]
+            },
+            new ServerProxyRoute { Sites = "other.example.com", Path = "/elsewhere", Target = _servers.BackendUrl }
+        ], "test");
+        Assert.True(ok, string.Join("; ", errors));
+
+        try
+        {
+            Use();
+            var echo = await EchoAsync("/shared/thing");
+            Assert.Equal("/thing", echo.Path);
+            Assert.Equal("server-wide", echo.Header("X-Which"));
+
+            // Not for this site: the files answer.
+            using (var response = await _client.GetAsync("/elsewhere"))
+                Assert.Equal(ProxyServers.FilesStatus, (int)response.StatusCode);
+
+            // The site's own route at the same path wins.
+            Use(Route("/shared", configure: r => r.RequestHeaders = [new ProxyHeader { Name = "X-Which", Value = "own" }]));
+            Assert.Equal("own", (await EchoAsync("/shared/thing")).Header("X-Which"));
+
+            // Turned off for the site: the files answer again.
+            Use();
+            _servers.Site.DisabledServerRoutes = ["/shared"];
+            using (var response = await _client.GetAsync("/shared/thing"))
+                Assert.Equal(ProxyServers.FilesStatus, (int)response.StatusCode);
+        }
+        finally
+        {
+            _servers.Site.DisabledServerRoutes = [];
+            await proxy.SetServerRoutesAsync([], "test");
+        }
+    }
+
+    [Fact]
     public async Task A_disabled_route_leaves_its_paths_to_the_files()
     {
         Use(Route(configure: r => r.Enabled = false));

@@ -34,6 +34,28 @@ public static class VariableFileText
         AllowTrailingCommas = true
     };
 
+    /// <summary>
+    /// Declarations written back as the file, for a release's download. A secret's default is left
+    /// out: it is stored encrypted, and a download is no place for it. Deploying the file again
+    /// declares the secret with no default, and the value the site holds still applies.
+    /// </summary>
+    public static string Format(IEnumerable<VariableDefinition> definitions)
+    {
+        var root = new System.Text.Json.Nodes.JsonObject();
+        foreach (var d in definitions)
+        {
+            var entry = new System.Text.Json.Nodes.JsonObject();
+            if (d.Description.Length > 0) entry["description"] = d.Description;
+            if (d.Default is not null && !d.Secret) entry["default"] = d.Default;
+            if (d.Public) entry["public"] = true;
+            if (d.Secret) entry["secret"] = true;
+            if (d.Required) entry["required"] = true;
+            root[d.Name] = entry;
+        }
+
+        return root.Count == 0 ? "" : root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n";
+    }
+
     public static bool TryParse(string? text, out List<VariableDefinition> definitions, out IReadOnlyList<string> errors)
     {
         definitions = [];

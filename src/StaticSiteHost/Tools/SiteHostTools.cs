@@ -46,6 +46,11 @@ public sealed record SiteHostTool(AIFunction Function, ToolEffect Effect);
 /// <param name="Content">The file's text, or its bytes in base64 when <paramref name="Base64"/> is true.</param>
 public sealed record SiteFileInput(string Path, string Content, bool Base64 = false);
 
+/// <summary>One change for <see cref="SiteHostTools.EditSiteFile"/>.</summary>
+/// <param name="Find">Text exactly as it is in the file, appearing exactly once.</param>
+/// <param name="Replace">What it becomes; empty removes it.</param>
+public sealed record FileEdit(string Find, string Replace);
+
 /// <summary>A function source file for the function tools.</summary>
 /// <param name="Name">The file name: .cs for C#, .linq for a LINQPad file.</param>
 /// <param name="Content">The file's text.</param>
@@ -105,7 +110,11 @@ public static class SiteHostTools
         - Site in front of other servers (containers, Railway, a private network): one set_proxy_route per
           path ("/" for the app, "/api" for the API...), all in one turn. It creates the site if needed, and each
           result already reports whether the target answered.
-        - Site from files: deploy_files (creates the site if needed).
+        - The same path forwarded for many sites (such as /api for every site under a domain): one
+          set_server_proxy_route with sites "*.that-domain"; a site's own route at that path overrides it.
+        - Site from files: deploy_files (creates the site if needed; it replaces every file).
+        - Change an existing site's files: read_site_file, then edit_site_file for each change, or
+          write_site_files for new files. Both keep every other file. Never deploy_files for a small change.
         - Private site: set_passcode. Caching or security headers: set_header_rules. Moved pages: set_redirect_rules.
         - Server code: check_functions, then test_functions, then deploy_functions.
 
@@ -126,6 +135,7 @@ public static class SiteHostTools
         "private static readonly System.Text.Json.JsonSerializerOptions Json = new(); }'. " +
         "Rules: handlers are public static methods of a public class with [HttpGet], [HttpPost], [HttpPut], [HttpDelete] or [Route] naming the full path ({x} one segment, {x?} optional). " +
         "Parameters are filled by type: HttpContext, HttpRequest, HttpResponse, CancellationToken, ILogger, DirectoryInfo (the site's data folder, for SQLite or files), " +
+        "IHttpClientFactory (for HTTP calls: take it as a parameter and call CreateClient(); do not keep an HttpClient of your own, which outlives the function when it is replaced), " +
         "or by name from the route then the query string for strings, numbers, bool, Guid and dates. " +
         "Return IResult (Results.Json with a static JsonSerializerOptions field, Results.Text, Results.File...), string (text/plain), int (a status code), or nothing (204). " +
         "For site types add '#:package StaticSiteHost.Abstractions@*' and 'using StaticSiteHost.Functions;': ISite, ISiteVariables (the site's variables), IAiChat, IRealtime as parameters; " +
@@ -200,7 +210,7 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("deploy_files", ToolEffect.Change)]
-    [Description("Publishes a new release of a site from the files given, creating the site if it does not exist. The files replace the whole previous release, which stays available to roll back to. Put index.html at the root; a path with no file falls back to the nearest index.html, so a single-page app works as is; a link to /about is answered by about.html. Optional files read from the release: _headers and _redirects (the formats of set_header_rules and set_redirect_rules), _variables.json (declares variables), and C# function files in a top-level _functions/ folder (administrators only).")]
+    [Description("Publishes a new release of a site from the files given, creating the site if it does not exist. The files REPLACE THE WHOLE previous release: any file not given is gone from the live site (the old release stays available to roll back to). Use it for a new site or a full rebuild; to change some files of an existing site, use edit_site_file or write_site_files, which keep the rest. Put index.html at the root; a path with no file falls back to the nearest index.html, so a single-page app works as is; a link to /about is answered by about.html. Optional files read from the release: _headers and _redirects (the formats of set_header_rules and set_redirect_rules), _variables.json (declares variables), and C# function files in a top-level _functions/ folder (administrators only).")]
     public static async Task<JsonElement> DeployFiles(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
@@ -244,6 +254,128 @@ public static class SiteHostTools
                 warnings = result.Warnings ?? []
             })
             : ToJson(new { error = result.Error, diagnostics = result.Diagnostics?.Select(d => d.ToString()) });
+    }
+
+    // ================================================================ a site's files, one at a time
+
+    [SiteHostTool("list_site_files", ToolEffect.Read)]
+    [Description("The files of a site's live release, with their sizes. Includes _headers, _redirects and _variables.json when the site has rules or variable declarations from its files.")]
+    public static async Task<JsonElement> ListSiteFiles(IServiceProvider services, [Description("The site's domain.")] string domain) =>
+        await WithSiteAsync(services, domain, site => Task.FromResult<object>(SiteFiles.ReleaseOf(site, null) is { } release
+            ? new { domain = site.Domain, release = release.Id, files = services.GetRequiredService<SiteFiles>().List(site, release).Take(500) }
+            : new { error = $"{site.Domain} has no files yet. deploy_files or write_site_files adds some." }));
+
+    [SiteHostTool("read_site_file", ToolEffect.Read)]
+    [Description("One file of a site's live release, as text. For a large file the text may be cut short (the result says so): then change it with edit_site_file, which needs only the parts it changes, never with write_site_files, which would drop the part not read.")]
+    public static async Task<JsonElement> ReadSiteFile(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The file's path in the site, such as index.html or css/site.css.")] string path,
+        CancellationToken ct = default) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            if (SiteFiles.ReleaseOf(site, null) is not { } release) return new { error = $"{site.Domain} has no files yet." };
+            var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, release, path, ct);
+            if (bytes is null) return new { error = $"{site.Domain} has no file '{path}'. list_site_files shows what it has." };
+
+            string text;
+            try
+            {
+                text = new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+            }
+            catch (DecoderFallbackException)
+            {
+                return (object)new { path, size = bytes.Length, binary = true, note = "A binary file: it cannot be shown as text. Replace it whole with write_site_files (base64) if needed." };
+            }
+
+            const int Shown = 60_000;
+            return text.Length <= Shown
+                ? new { path, size = bytes.Length, text }
+                : new { path, size = bytes.Length, text = text[..Shown], cutShort = $"Only the first {Shown:N0} of {text.Length:N0} characters are shown. Change this file with edit_site_file." };
+        });
+
+    [SiteHostTool("edit_site_file", ToolEffect.Change)]
+    [Description("Changes parts of one file of a site, and keeps every other file: each edit replaces text that appears exactly once in the file. The safe way to change an existing page, script or stylesheet; read_site_file shows its text first. Makes a new release, so it can be rolled back.")]
+    public static async Task<JsonElement> EditSiteFile(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The file's path in the site, such as index.html.")] string path,
+        [Description("The edits, applied in order: find (text exactly as it is in the file, appearing once) and replace (what it becomes; empty removes it).")] IReadOnlyList<FileEdit> edits,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (edits is not { Count: > 0 }) return Error("Give at least one edit.");
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            if (SiteFiles.ReleaseOf(site, null) is not { } release) return new { error = $"{site.Domain} has no files yet." };
+            var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, release, path, ct);
+            if (bytes is null) return new { error = $"{site.Domain} has no file '{path}'. Use write_site_files to add it." };
+
+            var text = Encoding.UTF8.GetString(bytes);
+            for (var i = 0; i < edits.Count; i++)
+            {
+                var find = edits[i].Find ?? "";
+                var first = find.Length == 0 ? -1 : text.IndexOf(find, StringComparison.Ordinal);
+                if (first < 0) return new { error = $"Edit {i + 1}: its find text is not in {path}. read_site_file shows the text as it is now." };
+                if (text.IndexOf(find, first + 1, StringComparison.Ordinal) >= 0)
+                    return new { error = $"Edit {i + 1}: its find text appears more than once in {path}. Include more of the text around it." };
+                text = string.Concat(text.AsSpan(0, first), edits[i].Replace ?? "", text.AsSpan(first + find.Length));
+            }
+
+            var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(
+                site.Domain, [new(path, Encoding.UTF8.GetBytes(text))], [], caller.Actor, "tools", caller.IsAdministrator, ct);
+            return result.Ok
+                ? new { ok = true, path, release = result.Release!.Id, edits = edits.Count, warnings = result.Warnings ?? [] }
+                : (object)new { error = result.Error };
+        });
+    }
+
+    [SiteHostTool("write_site_files", ToolEffect.Change)]
+    [Description("Adds files to a site, or replaces them whole, and keeps every other file. For new files, or to rewrite a file you have read in full; to change part of a file, use edit_site_file. Creates the site's first release when it has none. Makes a new release, so it can be rolled back.")]
+    public static async Task<JsonElement> WriteSiteFiles(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The files: path, and the text as content (binary: base64 content with base64 true).")] IReadOnlyList<SiteFileInput> files,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (files is not { Count: > 0 }) return Error("Give at least one file.");
+
+        var writes = new List<ZipDeploymentService.FileChange>();
+        foreach (var file in files)
+        {
+            try
+            {
+                writes.Add(new(file.Path ?? "", file.Base64 ? Convert.FromBase64String(file.Content ?? "") : Encoding.UTF8.GetBytes(file.Content ?? "")));
+            }
+            catch (FormatException)
+            {
+                return Error($"{file.Path}: base64 is true but the content is not base64.");
+            }
+        }
+
+        var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(domain, writes, [], caller.Actor, "tools", caller.IsAdministrator, ct);
+        return result.Ok
+            ? ToJson(new { ok = true, domain = result.Domain, release = result.Release!.Id, fileCount = result.Release.FileCount, warnings = result.Warnings ?? [] })
+            : Error(result.Error);
+    }
+
+    [SiteHostTool("delete_site_files", ToolEffect.Destructive)]
+    [Description("Deletes files from a site and keeps the rest. Makes a new release, so the old one can be rolled back to.")]
+    public static async Task<JsonElement> DeleteSiteFiles(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The paths of the files to delete.")] IReadOnlyList<string> paths,
+        CancellationToken ct = default)
+    {
+        var caller = Caller.Of(services);
+        if (paths is not { Count: > 0 }) return Error("Give at least one path.");
+
+        var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(domain, [], paths, caller.Actor, "tools", caller.IsAdministrator, ct);
+        return result.Ok
+            ? ToJson(new { ok = true, domain = result.Domain, release = result.Release!.Id, fileCount = result.Release.FileCount, warnings = result.Warnings ?? [] })
+            : Error(result.Error);
     }
 
     [SiteHostTool("rollback_site", ToolEffect.Change)]
@@ -407,9 +539,12 @@ public static class SiteHostTools
     // ================================================================ proxy routes
 
     [SiteHostTool("get_proxy_routes", ToolEffect.Read)]
-    [Description("A site's proxy routes: the paths it forwards to other servers, and each route's settings.")]
-    public static JsonElement GetProxyRoutes(IServiceProvider services, [Description("The site's domain.")] string domain) =>
-        WithSite(services, domain, site => ApiEndpoints.DescribeProxy(site, Caller.Of(services).IsAdministrator));
+    [Description("A site's proxy routes: the paths it forwards to other servers, each route's settings, and the server-wide routes that apply to it (serverRoutes, each with whether it is in effect here).")]
+    public static async Task<JsonElement> GetProxyRoutes(IServiceProvider services, [Description("The site's domain.")] string domain)
+    {
+        var serverRoutes = await services.GetRequiredService<SiteProxyService>().ServerRoutesAsync();
+        return WithSite(services, domain, site => ApiEndpoints.DescribeProxy(site, Caller.Of(services).IsAdministrator, serverRoutes));
+    }
 
     [SiteHostTool("set_proxy_route", ToolEffect.Change)]
     [Description("Adds a proxy route to a site, or changes the one at the same path: every request under the path is forwarded to the target server and its answer sent back. Path '/' forwards everything; '/api' forwards /api and everything under it (not /apis), and by default removes '/api' first, so /api/users goes to {target}/users. The longest matching path wins, so '/' and '/api' can be set together. Settings left out take their defaults. Creates the site first when it does not exist, so no create_site is needed. Call it once per route; several calls can go in one turn. The result includes 'check': a GET sent to the target just now, with its status, so there is no need to call test_proxy_route after it. Administrators only.")]
@@ -468,8 +603,71 @@ public static class SiteHostTools
 
         return await WithSiteAsync(services, domain, async site =>
             await services.GetRequiredService<SiteProxyService>().RemoveRouteAsync(site, path, caller.Actor)
-                ? ApiEndpoints.DescribeProxy(site, administrator: true)
+                ? ApiEndpoints.DescribeProxy(site, administrator: true, await services.GetRequiredService<SiteProxyService>().ServerRoutesAsync())
                 : new { error = $"{site.Domain} has no proxy route at {ProxyRouteRules.NormalizePath(path)}." });
+    }
+
+    // ================================================================ server-wide proxy routes
+
+    [SiteHostTool("get_server_proxy_routes", ToolEffect.Read)]
+    [Description("The server-wide proxy routes: routes that apply to every site whose domain matches their 'sites' pattern, each with its id.")]
+    public static async Task<JsonElement> GetServerProxyRoutes(IServiceProvider services)
+    {
+        var administrator = Caller.Of(services).IsAdministrator;
+        var routes = await services.GetRequiredService<SiteProxyService>().ServerRoutesAsync();
+        return ToJson(new { routes = routes.Select(r => ApiEndpoints.Redacted(r, administrator)) });
+    }
+
+    [SiteHostTool("set_server_proxy_route", ToolEffect.Change)]
+    [Description("Adds a server-wide proxy route, or changes the one with the same id: like set_proxy_route, but for every site whose domain matches 'sites': '*' for every site, '*.apps.example.com' for every site under that domain, or a domain; several separated by commas. Use it when many sites need the same path forwarded, such as /api to one API for every site under a domain. A site's own route at the same path wins over it, and a site can turn it off with set_server_route_for_site. When two server-wide routes share a path, the one whose sites names a site most closely wins (a domain, then the longest *. pattern, then *). The result includes 'check', a GET sent to the target just now. Administrators only.")]
+    public static async Task<JsonElement> SetServerProxyRoute(
+        IServiceProvider services,
+        [Description("The route: 'sites', 'path' and 'target' are required; the other settings are those of set_proxy_route. Give 'id' to change an existing route; leave it out to add one.")] ServerProxyRoute route)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var proxy = services.GetRequiredService<SiteProxyService>();
+        var (ok, errors, saved) = await proxy.SaveServerRouteAsync(route, caller.Actor);
+        if (!ok) return ToJson(new { errors });
+
+        var check = saved!.Enabled ? await proxy.TestAsync(saved, CancellationToken.None, TimeSpan.FromSeconds(3)) : null;
+        return ToJson(new
+        {
+            saved = new { saved.Id, saved.Sites, saved.Path, saved.Target },
+            check = check is null ? null : new { answered = check.Answered, status = check.Status, error = check.Error, summary = check.Describe() },
+            routes = (await proxy.ServerRoutesAsync()).Select(r => new { r.Id, r.Sites, r.Path, r.Target, r.Enabled })
+        });
+    }
+
+    [SiteHostTool("remove_server_proxy_route", ToolEffect.Destructive)]
+    [Description("Removes a server-wide proxy route, by id, from every site it applies to. Its paths go back to each site's own files and routes. Administrators only.")]
+    public static async Task<JsonElement> RemoveServerProxyRoute(IServiceProvider services, [Description("The route's id, from get_server_proxy_routes.")] string id)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        return await services.GetRequiredService<SiteProxyService>().RemoveServerRouteAsync(id, caller.Actor)
+            ? ToJson(new { ok = true, id })
+            : Error("No server-wide proxy route has that id.");
+    }
+
+    [SiteHostTool("set_server_route_for_site", ToolEffect.Change)]
+    [Description("Turns the server-wide proxy routes at a path off for one site, so that path is the site's own again, or back on. To send one site's path somewhere else instead, give the site its own route at that path with set_proxy_route. Administrators only.")]
+    public static async Task<JsonElement> SetServerRouteForSite(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The path of the server-wide route, such as /api.")] string path,
+        [Description("False turns it off for this site; true turns it back on.")] bool enabled)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var proxy = services.GetRequiredService<SiteProxyService>();
+        return await WithSiteAsync(services, domain, async site =>
+            await proxy.SetServerRouteForSiteAsync(site, path, enabled, caller.Actor) is { } error
+                ? new { error }
+                : ApiEndpoints.DescribeProxy(site, administrator: true, await proxy.ServerRoutesAsync()));
     }
 
     [SiteHostTool("test_proxy_route", ToolEffect.Read)]

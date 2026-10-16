@@ -25,7 +25,7 @@ plus static sites, functions, realtime and AI on the same domains.
 | 1 | Sites with no files; per-site proxy routes with per-route settings; API and UI | Full design |
 | 1b | Everything over the API, and an MCP endpoint, so an agent or a CI job can set up a server and its sites without the UI | Design |
 | 1c | An assistant in the management UI that sets things up by conversation, with the same tools | Built |
-| 2 | Server-wide routes for a set of sites; replaces `tmp/ApiProxy.cs` | Design |
+| 2 | Server-wide routes for a set of sites; replaces `tmp/ApiProxy.cs` | Built |
 | 3 | TLS in the server: Let's Encrypt, self-signed, uploaded certificates (Cloudflare Origin CA included) | Sketch |
 | 4 | Cloudflare: DNS records on site create/rename/delete, DNS-01 challenges, wildcard certificates | Sketch |
 
@@ -683,11 +683,74 @@ What the runs changed:
 * Keep conversations across restarts, if that proves wanted.
 * Let a member's assistant be capped per day.
 
-## Phase 2: next
+## Phase 2: built
 
-Server-wide routes, as designed above. Then retire `tmp/ApiProxy.cs`: a phase 2 route on
-`*.apps.example.com` (or `*`) with path `/api`, a parent cookie domain, and a per-site
-override replaces it.
+Built on 2026-10-15, after 0.5.0. Server-wide routes, as designed above, with these decisions:
+
+* **Model.** `ServerProxyRoute` is a `ProxyRoute` with an `Id` and a `Sites` pattern, kept in
+  `config/proxy-routes.json` (`SiteProxyService`). Each site has `DisabledServerRoutes`, a list
+  of paths.
+* **Merging** (`Serving/ProxySites.cs`, `Effective`). A site's own enabled routes come first. Then
+  each enabled server-wide route that matches the site, at a path none of its own enabled routes
+  has, and not turned off for it. Between server-wide routes at the same path, the closest
+  pattern wins (a domain, then the longest `*.` suffix, then `*`). `SiteProxy` caches each site's
+  table against the three lists it came from, and compiles it again when any of them is replaced.
+* **Identity.** Server-wide routes are known by id, not path, since two may share a path for
+  different sites. Validation refuses two at the same path with the same Sites.
+* **Cookies.** A parent cookie domain must cover every pattern but `*`. Under `*`, sites it does
+  not cover get host-only cookies, as after a rename.
+* **UI.** **Admin → Proxy** reuses the site route form, with the Sites field added, and lists the
+  sites each route matches with its state on each. A site's Proxy card lists the server-wide
+  routes that match it, with **Turn off here**.
+* **API.** `GET/PUT/DELETE /api/v1/proxy`, `POST /api/v1/proxy/test`, and
+  `PUT /api/v1/sites/{domain}/proxy/server-routes`. `GET …/sites/{domain}/proxy` gains
+  `serverRoutes`.
+* **Tools.** `get_server_proxy_routes`, `set_server_proxy_route` (which checks its target, like
+  `set_proxy_route`), `remove_server_proxy_route` (destructive), and `set_server_route_for_site`.
+  The assistant's context lists the server-wide routes, and how each applies to the page's site.
+* **Tests.** `ServerProxyRouteTests.cs` covers patterns, specificity, merging, states and
+  validation. `ProxyForwardingTests` forwards through a server-wide route, then through a site
+  override, then with the route turned off.
+
+**Found while testing phase 2 with a real model (Haiku 5.5).** Asked to "create an API at
+/api/weather/{zip} that returns the current weather as JSON" on a site with no files, the
+assistant first hit its 2,048-token answer limit: a function's source goes inside the tool call,
+and the call was cut off. `AssistantService.MaxAnswerTokens` is now 8,192, and only what is
+written is billed. After that it wrote, compiled, tested and deployed a working function. It used
+zippopotam.us and Open-Meteo, which need no key, with input checks and 400/404/502 errors, in
+about 25 seconds. It kept an `HttpClient` of its own, so the functions guide in the tool
+descriptions now says to take `IHttpClientFactory`, and the next run did.
+
+**Retiring `tmp/ApiProxy.cs`:** add a server-wide route with Sites `*.apps.example.com` (or `*`),
+path `/api`, the API as target, and cookie mode "a parent domain" if the sites share cookies.
+Then remove the global function. While both exist, the function's middleware answers `/api`
+first: it runs before any proxy route.
+
+## Alongside phase 2: changing some files, and downloading releases
+
+Also found while testing with a real model: asked to change one heading, the assistant could only
+`deploy_files`, which replaces the whole release, so the other files would have been lost. Built
+for 0.6.0:
+
+* **Updating.** `ZipDeploymentService.UpdateFilesAsync` copies the live release, writes and
+  deletes the named files, and makes the copy a new release, under the same deploy gate and
+  limits. `_headers`, `_redirects` and `_variables.json` are replaced when written, removed when
+  deleted, and otherwise carried over, as are the functions. `_functions/` is refused. Audit
+  action `site.files`.
+* **Reading.** `Services/SiteFiles.cs` lists a release, reads one file, and writes the release as
+  a zip that deploys back as it was: the configuration files are written out again from the
+  release's rules (`VariableFileText.Format` leaves out secret defaults). The zip is built in a
+  temporary file first, since a zip writes its directory synchronously as it closes.
+* **API.** `GET …/files`, `GET …/files/{path}`, `PATCH …/files`, and
+  `GET …/releases/{release}/download`. The UI has **Download** on each release.
+* **Tools.** `list_site_files`, `read_site_file` (up to 60,000 characters), `edit_site_file`
+  (find and replace, each find exactly once), `write_site_files`, `delete_site_files`
+  (destructive). `deploy_files` now says it replaces the whole release, and the assistant's
+  instructions say to read and edit to change a site.
+* **Measured with Haiku 5.5.** Changing a heading and a colour on a three-file site took 4.7
+  seconds and four tool calls, with every other file, rule and variable kept. A weather page on
+  a site with no files (a page plus a `/api/weather/{zip}` function) took 28 seconds and two
+  model calls.
 
 ## Phases 3 and 4: planned
 

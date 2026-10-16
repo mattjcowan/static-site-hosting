@@ -126,10 +126,10 @@ zip.
 
 | Capability | What it is for | How you turn it on | Who may | Read more |
 | ---------- | -------------- | ------------------ | ------- | --------- |
-| Static files | Serve HTML, CSS, scripts and images from a zip | Upload the zip on the **Deploy** page, or `POST /api/v1/sites/{domain}/deploy` | Member or administrator | [How hosting works](#how-hosting-works) |
+| Static files | Serve HTML, CSS, scripts and images from a zip | Upload the zip on the **Deploy** page, or `POST /api/v1/sites/{domain}/deploy`. Change some files with `PATCH /api/v1/sites/{domain}/files` or the [assistant](#the-assistant) | Member or administrator | [How hosting works](#how-hosting-works) |
 | Header rules | Set response headers, such as `Cache-Control`, per path | A `_headers` file in the zip, **Sites → the domain → Header rules**, or `PUT /api/v1/sites/{domain}/headers` | Member or administrator | [Header rules](#header-rules) |
 | Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
-| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming and HTTP/2 | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy` | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
+| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming and HTTP/2 | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the top bar | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
 | Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
 | Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
 | Functions | Answer requests with C# code | A `_functions/` folder in the zip, an upload on the site's **Functions** card, the browser editor, or `PUT /api/v1/sites/{domain}/functions` | Administrator | [Functions](#functions) |
@@ -274,7 +274,9 @@ otherwise a short "Not found" page from the server.
 **Releases.** Each upload becomes a new release directory, which never changes afterwards. The
 server switches the site to the new release only after the whole zip has been extracted. So a
 failed or partial upload never reaches a visitor. The server keeps the last three releases on disk
-(`SiteHosting:ReleasesToKeep`). You can make any of them live again from the site's page.
+(`SiteHosting:ReleasesToKeep`). You can make any of them live again from the site's page, and
+**Download** any of them as a zip that deploys back as it was (see
+[Changing files without a zip](#changing-files-without-a-zip)).
 
 **Rules and limits.**
 
@@ -287,6 +289,40 @@ failed or partial upload never reaches a visitor. The server keeps the last thre
 
 **Errors.** A zip over a limit, or with no usable files, is refused, and nothing is deployed. A
 deploy with no `index.html` at the root still goes live, with a warning.
+
+### Changing files without a zip
+
+**What it is.** A way to change some of a site's files and leave the rest alone. The server copies
+the live release, writes and deletes what you name, and makes the copy a new release. Nothing
+else changes: the other files, the release's `_headers`, `_redirects` and `_variables.json`, and
+its functions all carry over. It is a release like any other, so a rollback undoes it.
+
+**How to use it.**
+
+* **The API:** `PATCH /api/v1/sites/{domain}/files` with
+  `{"files":[{"path":"index.html","content":"…"}],"delete":["old.html"]}`. Binary content is sent
+  as base64 with `"base64": true`. `GET /api/v1/sites/{domain}/files` lists the files and
+  `GET /api/v1/sites/{domain}/files/{path}` returns one; add `?release=` to read an older release.
+* **MCP and the assistant:** `read_site_file` then `edit_site_file` (find and replace) for a small
+  change, `write_site_files` for whole files, `delete_site_files` to remove some. Ask the
+  [assistant](#the-assistant), for example: *"Make the heading on shop.example.com say Spring
+  sale."*
+* **Download:** each release on the site's page has a **Download** link, and
+  `GET /api/v1/sites/{domain}/releases/{release}/download` (`current` for the live one) returns the
+  same zip. It holds the files and the release's `_headers`, `_redirects` and `_variables.json`, so
+  deploying it again gives the same site.
+
+**Rules and limits.**
+
+* Writing `_headers`, `_redirects` or `_variables.json` replaces that release's rules or
+  declarations; deleting one removes them.
+* Files under `_functions/` cannot be written this way. Use the site's **Functions** card,
+  `PUT /api/v1/sites/{domain}/functions` or `deploy_functions`.
+* The deploy limits apply to the new release as a whole.
+* A download leaves out the functions, which download from the **Functions** card, and the
+  default value of a secret variable.
+* Members and administrators may do it, as with a deploy. A `_variables.json` written by a member
+  is checked as one in a member's zip is.
 
 ### Header rules
 
@@ -540,6 +576,51 @@ Every change is written to the audit log.
   hop into this server is the catch: on port 8080, which is plain HTTP, the server refuses HTTP/2
   (it answers `HTTP_1_1_REQUIRED`), so a TLS proxy in front cannot pass gRPC through it yet.
   WebSockets, streaming and everything else work over HTTP/1.1.
+
+### Server-wide routes
+
+**What it is.** A proxy route for many sites at once. It applies to every site whose domain
+matches its **Sites** pattern, so a path like `/api` can be forwarded to one API for every site
+under a domain, without setting the route on each site.
+
+**How to use it.** **Proxy** in the top bar, then **Add a server-wide route**. It has a route's
+usual settings (see [Proxy routes](#proxy-routes)), plus **Sites**:
+
+| Sites | Applies to |
+| ----- | ---------- |
+| `*` | every site on the server |
+| `*.apps.example.com` | every site under `apps.example.com`, at any depth (`shop.apps.example.com`, `a.b.apps.example.com`), but not `apps.example.com` itself |
+| `shop.example.com` | that one site |
+| `*.apps.example.com, shop.example.com` | several patterns, separated by commas |
+
+Under each route, the page lists the sites it matches and whether it is in effect on each.
+
+**How it combines with a site's own routes.**
+
+* **A site's own route at the same path wins.** To point one site's `/api` at a staging API, give
+  that site its own `/api` route.
+* **A site can turn a server-wide route off.** Its Proxy card lists the server-wide routes that
+  match it, and an administrator can choose **Turn off here** on any of them. The path is then the
+  site's own again: its files, functions or own routes answer.
+* **The closest pattern wins when two server-wide routes share a path.** A domain beats
+  `*.something`, a longer `*.` pattern beats a shorter one, and all of them beat `*`. So `/api` can
+  go to one API for `*` and to another for `*.apps.example.com`.
+* **A route that is switched off takes no part.** That holds for a site's own route too: it
+  neither overrides nor blocks another route.
+* **Order in a request:** server-wide routes run where a site's own routes do, after the passcode,
+  middleware and functions.
+* **Cookies:** with **A parent domain**, the parent must cover every site the pattern names, such
+  as `example.com` for `*.apps.example.com`. With `*`, sites the parent does not cover get cookies
+  for their own host.
+
+**Who may set them.** Administrators, in the UI, with `PUT /api/v1/proxy`, or with the
+`set_server_proxy_route` tool. Members see each site's server-wide routes on its Proxy card,
+without request header values. The routes are kept in `config/proxy-routes.json`, and every change
+is written to the audit log.
+
+**Rules and limits.** At most 50 server-wide routes. Two of them may share a path only for
+different Sites. Everything else is as for a site's own routes: the same blocked addresses, the
+same checks and the same errors.
 
 ### Variables
 
@@ -1426,6 +1507,7 @@ two roles: **Member** and **Administrator**.
 | Deploy to any domain                         |   ✅   |      ✅       |
 | Create a site with no files                  |   ✅   |      ✅       |
 | Roll back a release                          |   ✅   |      ✅       |
+| Change some files, or download a release     |   ✅   |      ✅       |
 | Set or clear a site passcode                 |   ✅   |      ✅       |
 | Set plain variables                          |   ✅   |      ✅       |
 | Publish realtime events over the API         |   ✅   |      ✅       |
@@ -2162,6 +2244,10 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `POST`   | `/api/v1/sites/{domain}`                    | create a site with no files; `409` if it exists |
 | `POST`   | `/api/v1/sites/{domain}/deploy`             | upload a zip                |
 | `POST`   | `/api/v1/sites/{domain}/rollback/{release}` | make an earlier release live |
+| `GET`    | `/api/v1/sites/{domain}/releases/{release}/download` | the release as a zip that deploys back as it was; `current` for the live one |
+| `GET`    | `/api/v1/sites/{domain}/files`              | the live release's files; `?release=` for another |
+| `GET`    | `/api/v1/sites/{domain}/files/{path}`       | one file; `?release=` for another release |
+| `PATCH`  | `/api/v1/sites/{domain}/files`              | `{"files":[{"path":"…","content":"…"}],"delete":["…"]}` — write and delete some files; the rest carry over ([more](#changing-files-without-a-zip)) |
 | `PUT`    | `/api/v1/sites/{domain}/passcode`           | `{"passcode":"…"}` — make it private |
 | `DELETE` | `/api/v1/sites/{domain}/passcode`           | make it public again        |
 | `GET`    | `/api/v1/sites/{domain}/headers`            | header rules, site and release |
@@ -2173,6 +2259,11 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `GET`    | `/api/v1/sites/{domain}/proxy`              | the site's [proxy routes](#proxy-routes); request header values for administrators only |
 | `PUT`    | `/api/v1/sites/{domain}/proxy`              | `{"routes":[{"path":"/api","target":"http://orders:8080"}]}` — replace them; administrators only |
 | `DELETE` | `/api/v1/sites/{domain}/proxy`              | remove them; administrators only |
+| `PUT`    | `/api/v1/sites/{domain}/proxy/server-routes` | `{"path":"/api","enabled":false}` — turn the [server-wide routes](#server-wide-routes) at a path off for this site, or back on; administrators only |
+| `GET`    | `/api/v1/proxy`                             | the [server-wide routes](#server-wide-routes); request header values for administrators only |
+| `PUT`    | `/api/v1/proxy`                             | `{"routes":[{"sites":"*.apps.example.com","path":"/api","target":"http://api:8080"}]}` — replace them all; a route with an `id` keeps it, one without gets one; administrators only |
+| `DELETE` | `/api/v1/proxy`                             | remove them all; administrators only |
+| `POST`   | `/api/v1/proxy/test`                        | `{"id":"…"}` — send a `GET` to that route's target and report what came back; administrators only |
 | `POST`   | `/api/v1/sites/{domain}/proxy/test`         | `{"path":"/api"}` — send a `GET` to that route's target and report what came back; administrators only |
 | `GET`    | `/api/v1/sites/{domain}/variables`          | variables, their values and where each comes from |
 | `PUT`    | `/api/v1/sites/{domain}/variables`          | replace every value the site sets |
@@ -2427,18 +2518,22 @@ log entries.
 | ---- | ----- |
 | You and the server | `who_am_i`, `read_docs` (this manual, section by section), `read_audit_log` |
 | Sites | `list_sites`, `get_site`, `create_site`, `deploy_files`, `rollback_site`, `rename_site`, `delete_site` |
+| Files | `list_site_files`, `read_site_file`, `edit_site_file`, `write_site_files`, `delete_site_files` |
 | Visibility and rules | `set_passcode`, `remove_passcode`, `get_rules`, `set_header_rules`, `set_redirect_rules` |
 | Variables | `get_variables`, `set_variable`, `remove_variable` |
-| Proxy routes | `get_proxy_routes`, `set_proxy_route`, `remove_proxy_route`, `test_proxy_route` |
+| Proxy routes | `get_proxy_routes`, `set_proxy_route`, `remove_proxy_route`, `test_proxy_route`, `get_server_proxy_routes`, `set_server_proxy_route`, `remove_server_proxy_route`, `set_server_route_for_site` |
 | Functions | `get_functions`, `check_functions`, `test_functions`, `deploy_functions`, `remove_functions` |
 | AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `test_ai_provider`, `set_site_ai` |
 | Users | `list_users`, `create_user` |
 
 * `deploy_files` takes the files themselves (`[{path, content}]`, binary as base64), not a zip.
   They make a new release, which replaces the whole previous one, as a zip deploy does.
+* The file tools change some files and keep the rest ([more](#changing-files-without-a-zip)).
+  `edit_site_file` takes `[{find, replace}]`, and each `find` must occur exactly once.
 * The rule tools take the `_headers` and `_redirects` text formats.
 * Each tool says whether it only reads, changes something, or is destructive (`delete_site`,
-  `remove_functions`, `remove_proxy_route`, `remove_variable`, `remove_passcode`), so an agent
+  `remove_functions`, `remove_proxy_route`, `remove_variable`, `remove_passcode`,
+  `delete_site_files`, `remove_server_proxy_route`), so an agent
   that asks before acting knows when to ask.
 * A tool that cannot do what was asked answers `{ "error": "…" }`, or `{ "errors": [...] }`, with
   the reason, so the agent can correct the call.
@@ -2572,6 +2667,8 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 │   ├── users.json                 accounts (PBKDF2-hashed passwords, hashed invite tokens)
 │   ├── apikeys.json               API keys (hashed secrets)
 │   ├── ai-providers.json          AI providers (keys encrypted)
+│   ├── assistant.json             the assistant's provider, model and who may use it
+│   ├── proxy-routes.json          server-wide proxy routes
 │   ├── audit.log                  JSON lines: deploys, logins, user and key changes
 │   ├── keys/                      data-protection keys: sessions, secret variables and AI keys need them
 │   ├── functions.json             which global functions are live
@@ -2581,7 +2678,7 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 ├── sites/
 │   └── abc.def.com/
 │       ├── site.json              which release is live, plus history, rules, variable values
-│       │                          (secrets encrypted), AI settings and any passcode hash
+│       │                          (secrets encrypted), proxy routes, AI settings and any passcode hash
 │       ├── data/                  functions' own data (SQLite, uploads…); never served
 │       ├── releases/
 │       │   └── 20260803-041429-5ab6/   the files being served

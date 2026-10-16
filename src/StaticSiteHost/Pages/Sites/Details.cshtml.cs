@@ -30,9 +30,14 @@ public sealed record DeploySnippet(string Id, string Title, string Hint, string 
 /// <param name="HeadersText">The request headers, in the text form the box shows.</param>
 /// <param name="Errors">Why the last save of this form was refused.</param>
 /// <param name="TestResult">What the last test of this route found, and whether it got an answer.</param>
+/// <param name="Domain">The site the route is for, or null for a server-wide route (Admin → Proxy).</param>
+/// <param name="OriginalPath">
+/// What the saved route is known by: its path for a site's route, its id for a server-wide one.
+/// Null for a new route.
+/// </param>
 public sealed record ProxyRouteEditor(
     string Id,
-    string Domain,
+    string? Domain,
     ProxyRoute Route,
     string? OriginalPath,
     string HeadersText,
@@ -40,6 +45,9 @@ public sealed record ProxyRouteEditor(
     (string Message, bool Answered)? TestResult = null)
 {
     public bool IsNew => OriginalPath is null;
+
+    /// <summary>A server-wide route, which has a Sites pattern and is known by its id.</summary>
+    public bool IsServer => Route is ServerProxyRoute;
 
     /// <summary>What was typed into the body limit when a save was refused, shown back as it was.</summary>
     public string? BodyLimitText { get; init; }
@@ -54,6 +62,9 @@ public sealed class ProxyRouteInput
 {
     public string? Path { get; set; }
     public string? Target { get; set; }
+
+    /// <summary>A server-wide route's Sites pattern; unused for a site's own route.</summary>
+    public string? Sites { get; set; }
     public bool Enabled { get; set; }
     public bool StripPath { get; set; }
     public bool WebSockets { get; set; }
@@ -92,27 +103,39 @@ public sealed class ProxyRouteInput
             ? (long)Math.Round(mb * Megabyte)
             : null;
 
-    public ProxyRoute ToRoute(List<ProxyHeader> headers) => new()
+    /// <summary>The route as a server-wide one, keeping <paramref name="id"/> (null for a new route).</summary>
+    public ServerProxyRoute ToServerRoute(List<ProxyHeader> headers, string? id)
     {
-        Path = Path ?? "",
-        Target = Target ?? "",
-        Enabled = Enabled,
-        StripPath = StripPath,
-        WebSockets = WebSockets,
-        CrossSiteWebSockets = CrossSiteWebSockets,
-        Streaming = Streaming,
-        HttpVersion = HttpVersion ?? ProxyHttpVersions.Auto,
-        TimeoutSeconds = TimeoutSeconds,
-        MaxRequestBodyBytes = BytesOf(MaxRequestBodyMegabytes),
-        KeepHost = KeepHost,
-        ForwardedHeaders = ForwardedHeaders,
-        RequestHeaders = headers,
-        CookieMode = CookieMode ?? ProxyCookieModes.Host,
-        CookieParentDomain = CookieParentDomain,
-        RewriteRedirects = RewriteRedirects,
-        FilesFirst = FilesFirst,
-        AcceptAnyCertificate = AcceptAnyCertificate
-    };
+        var route = Fill(new ServerProxyRoute(), headers);
+        route.Id = id ?? "";
+        route.Sites = Sites ?? "";
+        return route;
+    }
+
+    public ProxyRoute ToRoute(List<ProxyHeader> headers) => Fill(new ProxyRoute(), headers);
+
+    private T Fill<T>(T route, List<ProxyHeader> headers) where T : ProxyRoute
+    {
+        route.Path = Path ?? "";
+        route.Target = Target ?? "";
+        route.Enabled = Enabled;
+        route.StripPath = StripPath;
+        route.WebSockets = WebSockets;
+        route.CrossSiteWebSockets = CrossSiteWebSockets;
+        route.Streaming = Streaming;
+        route.HttpVersion = HttpVersion ?? ProxyHttpVersions.Auto;
+        route.TimeoutSeconds = TimeoutSeconds;
+        route.MaxRequestBodyBytes = BytesOf(MaxRequestBodyMegabytes);
+        route.KeepHost = KeepHost;
+        route.ForwardedHeaders = ForwardedHeaders;
+        route.RequestHeaders = headers;
+        route.CookieMode = CookieMode ?? ProxyCookieModes.Host;
+        route.CookieParentDomain = CookieParentDomain;
+        route.RewriteRedirects = RewriteRedirects;
+        route.FilesFirst = FilesFirst;
+        route.AcceptAnyCertificate = AcceptAnyCertificate;
+        return route;
+    }
 }
 
 public class DetailsModel : PageModel
@@ -213,6 +236,9 @@ public class DetailsModel : PageModel
 
     /// <summary>The Proxy card's forms: one per saved route, in path order, then the one for adding.</summary>
     public IReadOnlyList<ProxyRouteEditor> ProxyEditors { get; private set; } = [];
+
+    /// <summary>The server-wide routes whose Sites match this site, and whether each is in effect here or why not.</summary>
+    public IReadOnlyList<(ServerProxyRoute Route, string State)> ServerRoutes { get; private set; } = [];
 
     /// <summary>Environment variables a route names with <c>${env:…}</c> that the server does not have.</summary>
     public IReadOnlyList<string> ProxyUnsetEnvironment { get; private set; } = [];
@@ -377,6 +403,7 @@ public class DetailsModel : PageModel
         HeaderRules = HeaderRuleText.Format(site.Headers);
         RedirectRules = RedirectRuleText.Format(site.Redirects);
         LoadProxy(site);
+        ServerRoutes = ProxySites.ForSite(site.Domain, site.Proxy, await _proxy.ServerRoutesAsync(), site.DisabledServerRoutes).ToList();
 
         FunctionsStatus = site.CurrentFunctions is null ? null : await _functions.StatusAsync(site.Domain);
         Variables = _variables.Describe(site);
@@ -652,6 +679,24 @@ public class DetailsModel : PageModel
         return Page();
     }
 
+    /// <summary>Turns a server-wide route off for this site, or back on. Administrators only, like the site's own routes.</summary>
+    public async Task<IActionResult> OnPostServerRouteAsync(string domain, string? path, bool enabled)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        if (await _proxy.SetServerRouteForSiteAsync(site, path, enabled, User.Identity?.Name ?? "unknown") is { } error)
+            TempData["ErrorMessage"] = error;
+        else
+            TempData["StatusMessage"] = enabled
+                ? $"The server-wide route at {ProxyRouteRules.NormalizePath(path)} applies to {site.Domain} again."
+                : $"The server-wide route at {ProxyRouteRules.NormalizePath(path)} is off for {site.Domain}.";
+
+        return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
+    }
+
     public async Task<IActionResult> OnPostRemoveProxyRouteAsync(string domain, string? path)
     {
         if (!IsAdministrator) return Forbid();
@@ -866,6 +911,17 @@ public class DetailsModel : PageModel
         else TempData["ErrorMessage"] = error;
 
         return RedirectToPage(new { domain = site.Domain });
+    }
+
+    /// <summary>A release as a zip that deploys back as it was: its files, rules and variable declarations, no secrets.</summary>
+    public async Task<IActionResult> OnGetDownloadReleaseAsync(string domain, string? releaseId, CancellationToken ct)
+    {
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+        if (SiteFiles.ReleaseOf(site, releaseId) is not { } release) return NotFound();
+
+        var files = HttpContext.RequestServices.GetRequiredService<SiteFiles>();
+        return File(await files.CreateZipAsync(site, release, ct), "application/zip", SiteFiles.ZipName(site, release));
     }
 
     public async Task<IActionResult> OnGetFunctionSourceAsync(string domain)

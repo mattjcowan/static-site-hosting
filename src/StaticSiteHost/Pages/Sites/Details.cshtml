@@ -169,6 +169,60 @@
         </div>
     }
 
+    @if (Model.ServerRoutes.Count > 0)
+    {
+        <div class="proxy-inherited">
+            <p class="hint">
+                Server-wide routes that name this site, set under <strong>Proxy</strong> in the top bar. A route of this site's own at the
+                same path wins over them.
+            </p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Target</th>
+                            <th>Sites</th>
+                            <th>Here</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var (route, state) in Model.ServerRoutes)
+                        {
+                            var off = Model.Site.DisabledServerRoutes.Contains(route.Path, StringComparer.OrdinalIgnoreCase);
+                            <tr>
+                                <td class="mono">@route.Path</td>
+                                <td class="mono">@route.Target</td>
+                                <td class="mono muted">@route.Sites</td>
+                                <td>
+                                    @if (state == "on")
+                                    {
+                                        <span class="badge badge-ok">on</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">@state</span>
+                                    }
+                                </td>
+                                <td class="actions">
+                                    @if (Model.IsAdministrator)
+                                    {
+                                        <form method="post" asp-page-handler="ServerRoute" asp-route-domain="@Model.Site.Domain">
+                                            <input type="hidden" name="path" value="@route.Path" />
+                                            <input type="hidden" name="enabled" value="@(off ? "true" : "false")" />
+                                            <button type="submit" class="btn btn-sm">@(off ? "Turn on here" : "Turn off here")</button>
+                                        </form>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
     @if (Model.IsAdministrator)
     {
         @foreach (var editor in Model.ProxyEditors.Where(e => !e.IsNew))
@@ -941,6 +995,11 @@
                         <td class="muted">@(release.IsFunctionsOnly ? "functions only, no files" : release.ArchiveName ?? "—")</td>
                         <td class="mono muted">@(release.Functions is null ? "—" : Model.BundleLabel(release.Functions))</td>
                         <td class="actions">
+                            @if (!release.IsFunctionsOnly)
+                            {
+                                <a class="btn-link" asp-page-handler="DownloadRelease" asp-route-domain="@Model.Site.Domain"
+                                   asp-route-releaseId="@release.Id" title="A zip of this release, rules and variable declarations included, ready to deploy again">Download</a>
+                            }
                             @if (release.Id != Model.Site.CurrentRelease)
                             {
                                 <form method="post" asp-page-handler="Rollback" asp-route-domain="@Model.Site.Domain">

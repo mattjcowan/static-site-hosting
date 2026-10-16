@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
@@ -68,6 +69,69 @@ public static class ApiEndpoints
         });
 
         api.MapPost("/sites/{domain}/deploy", DeployAsync);
+
+        // ---- a site's files, one at a time
+
+        api.MapGet("/sites/{domain}/files", (string domain, string? release, SiteStore sites, SiteFiles files) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+            if (SiteFiles.ReleaseOf(site, release) is not { } chosen)
+                return Results.NotFound(new { error = release is null ? $"{site.Domain} has no release yet." : $"{site.Domain} has no release {release}." });
+
+            return Results.Ok(new { domain = site.Domain, release = chosen.Id, files = files.List(site, chosen) });
+        });
+
+        api.MapGet("/sites/{domain}/files/{**path}", async (string domain, string path, string? release, SiteStore sites, SiteFiles files, CancellationToken ct) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+            if (SiteFiles.ReleaseOf(site, release) is not { } chosen) return Results.NotFound(new { error = $"{site.Domain} has no such release." });
+
+            return await files.ReadAsync(site, chosen, path, ct) is { } bytes
+                ? Results.File(bytes, "application/octet-stream", Path.GetFileName(path))
+                : Results.NotFound(new { error = $"Release {chosen.Id} of {site.Domain} has no file '{path}'." });
+        });
+
+        api.MapPatch("/sites/{domain}/files", async (
+            string domain, SiteFilesRequest? body, ClaimsPrincipal principal, ZipDeploymentService deployer, HttpContext http, CancellationToken ct) =>
+        {
+            var writes = new List<ZipDeploymentService.FileChange>();
+            foreach (var file in body?.Files ?? [])
+            {
+                try
+                {
+                    writes.Add(new(file.Path ?? "", file.Base64 == true ? Convert.FromBase64String(file.Content ?? "") : Encoding.UTF8.GetBytes(file.Content ?? "")));
+                }
+                catch (FormatException)
+                {
+                    return Results.BadRequest(new { error = $"{file.Path}: base64 is true but the content is not base64." });
+                }
+            }
+
+            var result = await deployer.UpdateFilesAsync(domain, writes, body?.Delete ?? [], Actor(principal), "api", IsAdministrator(principal), ct);
+            return result.Ok
+                ? Results.Ok(new
+                {
+                    ok = true,
+                    domain = result.Domain,
+                    url = SiteLinks.For(http.Request, result.Domain!),
+                    release = result.Release!.Id,
+                    fileCount = result.Release.FileCount,
+                    warnings = result.Warnings ?? []
+                })
+                : Results.BadRequest(new { error = result.Error });
+        });
+
+        api.MapGet("/sites/{domain}/releases/{releaseId}/download", async (string domain, string releaseId, SiteStore sites, SiteFiles files, CancellationToken ct) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+            if (SiteFiles.ReleaseOf(site, releaseId) is not { } chosen)
+                return Results.NotFound(new { error = $"{site.Domain} has no release {releaseId}." });
+
+            return Results.File(await files.CreateZipAsync(site, chosen, ct), "application/zip", SiteFiles.ZipName(site, chosen));
+        });
 
         api.MapPost("/sites/{domain}/rollback/{releaseId}", async (
             string domain,
@@ -205,12 +269,12 @@ public static class ApiEndpoints
             return Results.Ok(new { ok = true, domain = site.Domain, rules = 0 });
         });
 
-        api.MapGet("/sites/{domain}/proxy", (string domain, ClaimsPrincipal principal, SiteStore sites) =>
+        api.MapGet("/sites/{domain}/proxy", async (string domain, ClaimsPrincipal principal, SiteStore sites, SiteProxyService proxy) =>
         {
             var (site, failure) = Find(domain, sites);
             if (site is null) return failure!;
 
-            return Results.Ok(DescribeProxy(site, IsAdministrator(principal)));
+            return Results.Ok(DescribeProxy(site, IsAdministrator(principal), await proxy.ServerRoutesAsync()));
         });
 
         api.MapPut("/sites/{domain}/proxy", async (
@@ -225,7 +289,7 @@ public static class ApiEndpoints
 
             var (ok, errors) = await proxy.SetRoutesAsync(site, body?.Routes ?? [], Actor(principal));
             return ok
-                ? Results.Ok(DescribeProxy(site, administrator: true))
+                ? Results.Ok(DescribeProxy(site, administrator: true, await proxy.ServerRoutesAsync()))
                 : Results.BadRequest(new { error = errors[0], errors });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
@@ -239,7 +303,60 @@ public static class ApiEndpoints
             if (site is null) return failure!;
 
             await proxy.SetRoutesAsync(site, [], Actor(principal));
-            return Results.Ok(DescribeProxy(site, administrator: true));
+            return Results.Ok(DescribeProxy(site, administrator: true, await proxy.ServerRoutesAsync()));
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPut("/sites/{domain}/proxy/server-routes", async (
+            string domain,
+            ServerRouteForSiteRequest? body,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            SiteProxyService proxy) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var error = await proxy.SetServerRouteForSiteAsync(site, body?.Path, body?.Enabled ?? true, Actor(principal));
+            return error is null
+                ? Results.Ok(DescribeProxy(site, administrator: true, await proxy.ServerRoutesAsync()))
+                : Results.BadRequest(new { error });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        // ---- server-wide proxy routes
+
+        api.MapGet("/proxy", async (ClaimsPrincipal principal, SiteProxyService proxy) =>
+            Results.Ok(new { routes = (await proxy.ServerRoutesAsync()).Select(r => Redacted(r, IsAdministrator(principal))) }));
+
+        api.MapPut("/proxy", async (ServerProxyRoutesRequest? body, ClaimsPrincipal principal, SiteProxyService proxy) =>
+        {
+            var (ok, errors) = await proxy.SetServerRoutesAsync(body?.Routes ?? [], Actor(principal));
+            return ok
+                ? Results.Ok(new { routes = await proxy.ServerRoutesAsync() })
+                : Results.BadRequest(new { error = errors[0], errors });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapDelete("/proxy", async (ClaimsPrincipal principal, SiteProxyService proxy) =>
+        {
+            await proxy.SetServerRoutesAsync([], Actor(principal));
+            return Results.Ok(new { routes = Array.Empty<ServerProxyRoute>() });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
+        api.MapPost("/proxy/test", async (ServerProxyTestRequest? body, SiteProxyService proxy, CancellationToken ct) =>
+        {
+            var route = (await proxy.ServerRoutesAsync()).FirstOrDefault(r => r.Id == body?.Id);
+            if (route is null) return Results.NotFound(new { error = "No server-wide proxy route has that id." });
+
+            var result = await proxy.TestAsync(route, ct);
+            return Results.Ok(new
+            {
+                id = route.Id,
+                url = result.Url,
+                answered = result.Answered,
+                status = result.Status,
+                version = result.Version,
+                milliseconds = (int)result.Elapsed.TotalMilliseconds,
+                error = result.Error
+            });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapPost("/sites/{domain}/proxy/test", async (
@@ -555,31 +672,31 @@ public static class ApiEndpoints
     /// A site's proxy routes. Request header values go to administrators only: one may carry a key
     /// for the backend, typed in rather than read from <c>${env:…}</c>.
     /// </summary>
-    internal static object DescribeProxy(SiteRecord site, bool administrator) => new
+    internal static object DescribeProxy(SiteRecord site, bool administrator, IReadOnlyList<ServerProxyRoute> serverRoutes) => new
     {
         domain = site.Domain,
-        routes = site.Proxy.Select(route => administrator ? route : new ProxyRoute
-        {
-            Path = route.Path,
-            Target = route.Target,
-            StripPath = route.StripPath,
-            Enabled = route.Enabled,
-            WebSockets = route.WebSockets,
-            CrossSiteWebSockets = route.CrossSiteWebSockets,
-            Streaming = route.Streaming,
-            HttpVersion = route.HttpVersion,
-            TimeoutSeconds = route.TimeoutSeconds,
-            MaxRequestBodyBytes = route.MaxRequestBodyBytes,
-            KeepHost = route.KeepHost,
-            ForwardedHeaders = route.ForwardedHeaders,
-            RequestHeaders = route.RequestHeaders.Select(h => new ProxyHeader { Name = h.Name, Value = "" }).ToList(),
-            CookieMode = route.CookieMode,
-            CookieParentDomain = route.CookieParentDomain,
-            RewriteRedirects = route.RewriteRedirects,
-            FilesFirst = route.FilesFirst,
-            AcceptAnyCertificate = route.AcceptAnyCertificate
-        })
+        routes = site.Proxy.Select(route => Redacted(route, administrator)),
+        // The server-wide routes that name this site, and whether each is in effect here or why not.
+        serverRoutes = ProxySites.ForSite(site.Domain, site.Proxy, serverRoutes, site.DisabledServerRoutes)
+            .Select(r => new { id = r.Route.Id, sites = r.Route.Sites, path = r.Route.Path, target = r.Route.Target, state = r.State }),
+        disabledServerRoutes = site.DisabledServerRoutes
     };
+
+    /// <summary>
+    /// A route as a caller may see it: in full for an administrator; for anyone else without the
+    /// values of its request headers, since one may be a key typed in rather than read from
+    /// <c>${env:…}</c>.
+    /// </summary>
+    internal static T Redacted<T>(T route, bool administrator) where T : ProxyRoute
+    {
+        if (administrator) return route;
+
+        var copy = JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(route, RouteJson), RouteJson)!;
+        copy.RequestHeaders = route.RequestHeaders.Select(h => new ProxyHeader { Name = h.Name, Value = "" }).ToList();
+        return copy;
+    }
+
+    private static readonly JsonSerializerOptions RouteJson = new(JsonSerializerDefaults.Web);
 
     /// <summary>Resolves a domain to a site, or the response to return instead.</summary>
     private static (SiteRecord? Site, IResult? Failure) Find(string domain, SiteStore sites)
@@ -728,6 +845,21 @@ public sealed record RedirectRulesRequest(List<RedirectRule>? Redirects);
 
 /// <summary>Body of PUT /api/v1/sites/{domain}/proxy. Replaces the site's whole route list.</summary>
 public sealed record ProxyRoutesRequest(List<ProxyRoute>? Routes);
+
+/// <summary>Body of PATCH /api/v1/sites/{domain}/files: files to write, and paths to delete; the rest of the site stays.</summary>
+public sealed record SiteFilesRequest(List<SiteFileWrite>? Files, List<string>? Delete);
+
+/// <summary>One file to write: its path in the site, and its text, or its bytes in base64 when <see cref="Base64"/> is true.</summary>
+public sealed record SiteFileWrite(string? Path, string? Content, bool? Base64);
+
+/// <summary>Body of PUT /api/v1/proxy. Replaces every server-wide route; one without an id gets one.</summary>
+public sealed record ServerProxyRoutesRequest(List<ServerProxyRoute>? Routes);
+
+/// <summary>Body of POST /api/v1/proxy/test: the id of the server-wide route to test.</summary>
+public sealed record ServerProxyTestRequest(string? Id);
+
+/// <summary>Body of PUT /api/v1/sites/{domain}/proxy/server-routes: turn the server-wide routes at a path off or on for the site.</summary>
+public sealed record ServerRouteForSiteRequest(string? Path, bool? Enabled);
 
 /// <summary>Body of POST /api/v1/sites/{domain}/proxy/test: the path of the route to test.</summary>
 public sealed record ProxyTestRequest(string? Path);

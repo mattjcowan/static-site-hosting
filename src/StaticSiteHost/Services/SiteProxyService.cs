@@ -31,6 +31,7 @@ public sealed class SiteProxyService
     private readonly SiteStore _sites;
     private readonly ProxyInvokers _invokers;
     private readonly AuditLog _audit;
+    private readonly JsonFileStore<ServerProxyRoutes> _serverRoutes;
 
     /// <summary>
     /// One change at a time, so two people saving different routes at once both keep theirs: each
@@ -38,12 +39,131 @@ public sealed class SiteProxyService
     /// </summary>
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public SiteProxyService(SiteStore sites, ProxyInvokers invokers, AuditLog audit)
+    public SiteProxyService(SiteStore sites, ProxyInvokers invokers, AuditLog audit, DataPaths paths)
     {
         _sites = sites;
         _invokers = invokers;
         _audit = audit;
+        _serverRoutes = new JsonFileStore<ServerProxyRoutes>(Path.Combine(paths.ConfigDir, "proxy-routes.json"));
     }
+
+    // ================================================================ server-wide routes
+
+    /// <summary>
+    /// Every server-wide route, in path order. The list is replaced on every change and never
+    /// edited in place, so <see cref="SiteProxy"/> can tell a changed list by its identity.
+    /// </summary>
+    public async Task<IReadOnlyList<ServerProxyRoute>> ServerRoutesAsync() => (await _serverRoutes.ReadAsync()).Routes;
+
+    /// <summary>Replaces every server-wide route. Routes without an id get one.</summary>
+    public async Task<(bool Ok, IReadOnlyList<string> Errors)> SetServerRoutesAsync(IReadOnlyList<ServerProxyRoute> routes, string actor)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            return await SaveServerAsync(routes.Select(NormalizeServer).ToList(), actor);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Adds a server-wide route, or replaces the one with the same id.</summary>
+    public async Task<(bool Ok, IReadOnlyList<string> Errors, ServerProxyRoute? Saved)> SaveServerRouteAsync(ServerProxyRoute route, string actor)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            var routes = (await ServerRoutesAsync()).ToList();
+            var normalized = NormalizeServer(route);
+
+            var index = routes.FindIndex(r => r.Id == normalized.Id);
+            if (index >= 0) routes[index] = normalized;
+            else routes.Add(normalized);
+
+            var (ok, errors) = await SaveServerAsync(routes, actor);
+            return (ok, errors, ok ? normalized : null);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Removes a server-wide route. False when there is none with that id.</summary>
+    public async Task<bool> RemoveServerRouteAsync(string? id, string actor)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            var routes = (await ServerRoutesAsync()).Where(r => r.Id != id).ToList();
+            if (routes.Count == (await ServerRoutesAsync()).Count) return false;
+
+            await SaveServerAsync(routes, actor);
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Turns the server-wide routes at a path off for one site, so its requests are the site's own
+    /// again, or back on. Returns why not, or null.
+    /// </summary>
+    public async Task<string?> SetServerRouteForSiteAsync(SiteRecord site, string? path, bool enabled, string actor)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            var normalized = ProxyRouteRules.NormalizePath(path);
+            if (!enabled && !(await ServerRoutesAsync()).Any(r => r.Path.Equals(normalized, StringComparison.OrdinalIgnoreCase) && ProxySites.Match(r.Sites, site.Domain) is not null))
+                return $"No server-wide proxy route at {normalized} applies to {site.Domain}.";
+
+            // A new list, never the old one edited (see SiteRecord.DisabledServerRoutes).
+            var disabled = site.DisabledServerRoutes.Where(p => !p.Equals(normalized, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!enabled) disabled.Add(normalized);
+            site.DisabledServerRoutes = disabled.Order(StringComparer.OrdinalIgnoreCase).ToList();
+            await _sites.SaveAsync(site);
+
+            await _audit.WriteAsync("site.proxy.server-route", actor, new { domain = site.Domain, path = normalized, enabled });
+            return null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<(bool Ok, IReadOnlyList<string> Errors)> SaveServerAsync(List<ServerProxyRoute> routes, string actor)
+    {
+        var errors = ProxyRouteRules.Validate(null, routes);
+        if (errors.Count > 0) return (false, errors);
+
+        await _serverRoutes.UpdateAsync(store =>
+        {
+            store.Routes = routes.OrderBy(r => r.Path, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Sites, StringComparer.Ordinal).ToList();
+            return (true, true);
+        });
+
+        await _audit.WriteAsync("server.proxy", actor, new
+        {
+            routes = routes.Select(r => new { id = r.Id, sites = r.Sites, path = r.Path, target = r.Target, enabled = r.Enabled })
+        });
+        return (true, []);
+    }
+
+    private static ServerProxyRoute NormalizeServer(ServerProxyRoute route)
+    {
+        var normalized = Normalize<ServerProxyRoute>(route);
+        normalized.Id = string.IsNullOrWhiteSpace(route.Id) ? Security.Tokens.NewAlphanumeric(10) : route.Id.Trim();
+        normalized.Sites = ProxySites.Normalize(route.Sites);
+        return normalized;
+    }
+
+    // ================================================================ a site's own routes
 
     /// <summary>Replaces every route the site has.</summary>
     public async Task<(bool Ok, IReadOnlyList<string> Errors)> SetRoutesAsync(SiteRecord site, IReadOnlyList<ProxyRoute> routes, string actor)
@@ -128,14 +248,16 @@ public sealed class SiteProxyService
     /// empty when it could. For checking before the site is created.
     /// </summary>
     public static IReadOnlyList<string> CheckNewSiteRoute(string domain, ProxyRoute route) =>
-        ProxyRouteRules.Validate(domain, [Normalize(route)]);
+        ProxyRouteRules.Validate(domain, [Normalize<ProxyRoute>(route)]);
 
     /// <summary>A copy of a route in the form it is stored: path normalized, text trimmed, nulls filled in.</summary>
-    private static ProxyRoute Normalize(ProxyRoute route)
+    private static ProxyRoute Normalize(ProxyRoute route) => Normalize<ProxyRoute>(route);
+
+    private static T Normalize<T>(ProxyRoute route) where T : ProxyRoute, new()
     {
         var cookieMode = (route.CookieMode ?? ProxyCookieModes.Host).Trim().ToLowerInvariant();
 
-        return new ProxyRoute
+        return new T
         {
             Path = ProxyRouteRules.NormalizePath(route.Path),
             Target = (route.Target ?? "").Trim(),

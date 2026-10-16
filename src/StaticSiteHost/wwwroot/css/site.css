@@ -527,6 +527,9 @@ td.actions .validation { white-space: normal; text-align: left; max-width: 24rem
 
 .proxy-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
 .proxy-test { margin-top: 0.75rem; overflow-wrap: anywhere; }
+.proxy-route > .proxy-reach { margin-top: 0.75rem; margin-bottom: 0; }
+.proxy-inherited { margin-top: 1rem; }
+.proxy-inherited td { vertical-align: middle; }
 
 /* ---------------------------------------------------------------- assistant */
 

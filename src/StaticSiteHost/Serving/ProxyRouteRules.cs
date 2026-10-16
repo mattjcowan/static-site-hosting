@@ -71,13 +71,16 @@ public static class ProxyRouteRules
     }
 
     /// <summary>Human-readable reasons a site's routes cannot be saved. Empty means they can.</summary>
-    public static IReadOnlyList<string> Validate(string domain, IReadOnlyList<ProxyRoute> routes)
+    /// <param name="domain">The site the routes are for, or null for server-wide routes (<see cref="ServerProxyRoute"/>).</param>
+    public static IReadOnlyList<string> Validate(string? domain, IReadOnlyList<ProxyRoute> routes)
     {
         var errors = new List<string>();
 
         if (routes.Count > MaxRoutes)
         {
-            errors.Add($"A site can have at most {MaxRoutes} proxy routes; this is {routes.Count}.");
+            errors.Add(domain is null
+                ? $"There can be at most {MaxRoutes} server-wide proxy routes; this is {routes.Count}."
+                : $"A site can have at most {MaxRoutes} proxy routes; this is {routes.Count}.");
             return errors;
         }
 
@@ -88,8 +91,13 @@ public static class ProxyRouteRules
             var route = routes[i];
             var label = $"Route {i + 1} ({route.Path})";
 
+            var server = route as ServerProxyRoute;
+            if (server is not null && ProxySites.Check(server.Sites) is { } sitesError) errors.Add($"{label}: {sitesError}.");
+
+            // Two server-wide routes may share a path when they are for different sites.
             if (CheckPath(route.Path) is { } pathError) errors.Add($"{label}: {pathError}.");
-            else if (!seen.Add(route.Path)) errors.Add($"{label}: another route already has this path.");
+            else if (!seen.Add(server is null ? route.Path : $"{ProxySites.Normalize(server.Sites)}|{route.Path}"))
+                errors.Add($"{label}: another route already has this path{(server is null ? "" : " for the same sites")}.");
 
             if (string.IsNullOrWhiteSpace(route.Target))
                 errors.Add($"{label}: a target URL is required.");
@@ -109,7 +117,9 @@ public static class ProxyRouteRules
 
             if (!ProxyCookieModes.All.Contains(route.CookieMode))
                 errors.Add($"{label}: the cookie mode must be one of {string.Join(", ", ProxyCookieModes.All)}.");
-            else if (route.CookieMode == ProxyCookieModes.Parent && CheckParentDomain(domain, route.CookieParentDomain) is { } parentError)
+            else if (route.CookieMode == ProxyCookieModes.Parent &&
+                     (server is not null ? ProxySites.CheckParentDomain(server.Sites, route.CookieParentDomain)
+                         : CheckParentDomain(domain ?? "", route.CookieParentDomain)) is { } parentError)
                 errors.Add($"{label}: {parentError}.");
 
             var headers = route.RequestHeaders ?? [];

@@ -6,7 +6,7 @@ namespace StaticSiteHost.Models;
 /// deploy never brings any: a route makes the server send requests to wherever it points.
 /// See <c>Serving/SiteProxy.cs</c> for how a request is matched and forwarded.
 /// </summary>
-public sealed class ProxyRoute
+public class ProxyRoute
 {
     /// <summary>
     /// The path prefix, matched by whole segments and case-insensitively: <c>/api</c> matches
@@ -83,6 +83,30 @@ public sealed class ProxyRoute
 
     /// <summary>Accept any certificate from an <c>https://</c> target, a self-signed one included.</summary>
     public bool AcceptAnyCertificate { get; set; }
+}
+
+/// <summary>
+/// A proxy route for many sites at once, set by administrators under Admin → Proxy and kept in
+/// config/proxy-routes.json. It applies to every site whose domain <see cref="Sites"/> matches,
+/// unless the site has a route of its own at the same path (the site's wins) or has turned it off
+/// (<see cref="SiteRecord.DisabledServerRoutes"/>). See <c>Serving/ProxySites.cs</c>.
+/// </summary>
+public sealed class ServerProxyRoute : ProxyRoute
+{
+    /// <summary>Its own id: two server-wide routes may share a path for different sites.</summary>
+    public string Id { get; set; } = "";
+
+    /// <summary>
+    /// Which sites it applies to: <c>*</c> for every site, <c>*.apps.example.com</c> for every site
+    /// under that domain, or a domain for one site; several separated by commas.
+    /// </summary>
+    public string Sites { get; set; } = "*";
+}
+
+/// <summary>Every server-wide proxy route. Replaced as a whole on every change, like a site's routes.</summary>
+public sealed class ServerProxyRoutes
+{
+    public List<ServerProxyRoute> Routes { get; set; } = [];
 }
 
 public sealed class ProxyHeader

@@ -67,8 +67,11 @@ public sealed class AssistantService
     /// <summary>The longest tool result passed back to the model.</summary>
     public const int MaxToolResultChars = 6000;
 
-    /// <summary>The longest one answer may be, in tokens.</summary>
-    public const int MaxAnswerTokens = 2048;
+    /// <summary>
+    /// The longest one answer may be, in tokens. Generous, because writing a function puts its whole
+    /// source in a tool call, and a call cut off part way is lost; only what is written is billed.
+    /// </summary>
+    public const int MaxAnswerTokens = 8192;
 
     /// <summary>How long an idle conversation is kept.</summary>
     public static readonly TimeSpan IdleLifetime = TimeSpan.FromHours(2);
@@ -291,7 +294,7 @@ public sealed class AssistantService
                 await emit(new { type = "tool", id = call.Id, name = call.Name, summary, status = failed ? "failed" : "done", detail = failed ? ErrorOf(result) : null });
             }
 
-            conversation.Messages.Add(AiMessage.ToolResult(call.Id, Trim(result), failed));
+            conversation.Messages.Add(AiMessage.ToolResult(call.Id, Trim(result, call.Name), failed));
             conversation.Waiting.RemoveAt(0);
             decision = null;
         }
@@ -390,6 +393,12 @@ public sealed class AssistantService
         if (call.Arguments.TryGetProperty("files", out var files) && files.ValueKind == JsonValueKind.Array)
             parts.Add($"{files.GetArrayLength()} file{(files.GetArrayLength() == 1 ? "" : "s")}");
 
+        if (call.Arguments.TryGetProperty("paths", out var paths) && paths.ValueKind == JsonValueKind.Array)
+            parts.Add(string.Join(", ", paths.EnumerateArray().Take(5).Select(p => p.GetString())));
+
+        if (call.Arguments.TryGetProperty("edits", out var edits) && edits.ValueKind == JsonValueKind.Array)
+            parts.Add($"{edits.GetArrayLength()} edit{(edits.GetArrayLength() == 1 ? "" : "s")}");
+
         return parts.Count == 0 ? call.Name : $"{call.Name} {string.Join(" ", parts)}";
     }
 
@@ -425,10 +434,20 @@ public sealed class AssistantService
         return null;
     }
 
-    private static string Trim(string result) =>
-        result.Length <= MaxToolResultChars
+    /// <summary>
+    /// A result cut to its tool's limit. Reading a file has a far higher one: a model that saw half a
+    /// file could write the half back. read_site_file caps its own text and says when it has.
+    /// </summary>
+    private static string Trim(string result, string tool)
+    {
+        var limit = tool == "read_site_file" ? MaxFileReadChars : MaxToolResultChars;
+        return result.Length <= limit
             ? result
-            : result[..MaxToolResultChars] + $"… (cut at {MaxToolResultChars} of {result.Length} characters)";
+            : result[..limit] + $"… (cut at {limit} of {result.Length} characters)";
+    }
+
+    /// <summary>The longest read_site_file result passed back, a little over the text it returns at most.</summary>
+    public const int MaxFileReadChars = 64_000;
 
     /// <summary>Drops conversations nobody has used for <see cref="IdleLifetime"/>.</summary>
     private void Sweep()

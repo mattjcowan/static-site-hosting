@@ -100,7 +100,8 @@ public static class AssistantEndpoints
         }
 
         await assistant.RunAsync(
-            UserId(http.User), request, Context(http.User, isAdministrator, sites, request.Domain),
+            UserId(http.User), request,
+            Context(http.User, isAdministrator, sites, await http.RequestServices.GetRequiredService<SiteProxyService>().ServerRoutesAsync(), request.Domain),
             new ProviderAssistantModel(chat, provider, settings.Model), http.RequestServices, Emit, ct);
     }
 
@@ -108,7 +109,8 @@ public static class AssistantEndpoints
     /// What the model is told on every call about where the user is: who they are, the sites on the
     /// server, and the one the page shows, in full. It spares the model a lookup before most tasks.
     /// </summary>
-    internal static string Context(ClaimsPrincipal user, bool isAdministrator, SiteStore sites, string? domain)
+    internal static string Context(
+        ClaimsPrincipal user, bool isAdministrator, SiteStore sites, IReadOnlyList<ServerProxyRoute> serverRoutes, string? domain)
     {
         var text = new StringBuilder();
         text.Append("Signed in as ").Append(user.Identity?.Name).Append(isAdministrator ? " (administrator)." : " (member: no functions, proxy routes, AI, users, rename or delete).")
@@ -119,12 +121,23 @@ public static class AssistantEndpoints
         foreach (var site in all.Take(MaxSitesInContext)) text.Append("- ").AppendLine(Line(site));
         if (all.Count > MaxSitesInContext) text.AppendLine($"- … and {all.Count - MaxSitesInContext} more (list_sites).");
 
+        if (serverRoutes.Count > 0)
+        {
+            text.AppendLine("Server-wide proxy routes (get_server_proxy_routes for their ids and settings):");
+            foreach (var route in serverRoutes)
+                text.Append("- ").Append(route.Path).Append(" → ").Append(route.Target).Append(" for ").Append(route.Sites)
+                    .AppendLine(route.Enabled ? "" : " (off)");
+        }
+
         var (normalized, _) = SiteStore.NormalizeDomain(domain);
         if (normalized is not null && sites.TryGet(normalized) is { } current)
         {
             text.Append("The page shows ").Append(current.Domain).Append(". \"This site\" means it.");
+            var inherited = ProxySites.ForSite(current.Domain, current.Proxy, serverRoutes, current.DisabledServerRoutes)
+                .Select(r => $"{r.Route.Path} → {r.Route.Target} ({r.State})").ToList();
+            if (inherited.Count > 0) text.Append(" Server-wide routes for it: ").Append(string.Join("; ", inherited)).Append('.');
             if (current.Proxy.Count > 0)
-                text.Append(" Its proxy routes: ").Append(string.Join("; ", current.Proxy.Select(r =>
+                text.Append(" Its own proxy routes: ").Append(string.Join("; ", current.Proxy.Select(r =>
                     $"{r.Path} → {r.Target}{(r.Enabled ? "" : " (off)")}{(r.WebSockets ? " (WebSockets)" : "")}{(r.Streaming ? " (streaming)" : "")}"))).Append('.');
             // The rules themselves when they are short, so changing them needs no get_rules first.
             text.Append(' ').Append(Rules("Header rules", HeaderRuleText.Format(current.Headers)));

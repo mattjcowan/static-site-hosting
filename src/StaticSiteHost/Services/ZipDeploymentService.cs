@@ -526,6 +526,205 @@ public sealed class ZipDeploymentService
         }
     }
 
+    /// <summary>A file for <see cref="UpdateFilesAsync"/>: where it goes in the site, and its bytes.</summary>
+    public sealed record FileChange(string Path, byte[] Content);
+
+    /// <summary>
+    /// Changes some of a site's files and keeps the rest: a new release is made from the live one
+    /// with <paramref name="writes"/> added or replaced and <paramref name="deletes"/> taken out,
+    /// and made live as a deploy is. So an edit to one page never drops the site's other files,
+    /// and the release before it stays there to roll back to.
+    ///
+    /// <c>_headers</c>, <c>_redirects</c> and <c>_variables.json</c> are written or deleted like
+    /// any file and read as a deploy reads them; left alone, the live release's rules and
+    /// declarations carry over. Functions carry over too; <c>_functions/</c> cannot be written
+    /// here (use the functions upload). A site with no release starts from nothing.
+    /// </summary>
+    public async Task<DeployResult> UpdateFilesAsync(
+        string? domainInput, IReadOnlyList<FileChange> writes, IReadOnlyList<string> deletes,
+        string actor, string source, bool isAdministrator, CancellationToken ct = default)
+    {
+        var result = await UpdateFilesUnderGateAsync(domainInput, writes, deletes, actor, source, isAdministrator, ct);
+        if (result.Ok)
+        {
+            await _functions.RefreshAsync(result.Domain!);
+            _deployed.Announce(result.Domain!, SiteDeployedNotifier.FromDeploy);
+        }
+
+        return result;
+    }
+
+    private async Task<DeployResult> UpdateFilesUnderGateAsync(
+        string? domainInput, IReadOnlyList<FileChange> writes, IReadOnlyList<string> deletes,
+        string actor, string source, bool isAdministrator, CancellationToken ct)
+    {
+        var (domain, domainError) = SiteStore.NormalizeDomain(domainInput);
+        if (domain is null) return DeployResult.Failed(domainError!);
+        if (writes.Count == 0 && deletes.Count == 0) return DeployResult.Failed("Give at least one file to write or delete.");
+
+        // Every path checked as a zip entry's would be, before anything is touched.
+        var toWrite = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var change in writes)
+        {
+            var segments = SplitEntryPath(change.Path ?? "");
+            if (segments is null || segments.Length == 0) return DeployResult.Failed($"'{change.Path}' is not a path a site can hold.");
+            if (segments[0].Equals(FunctionsFolder, StringComparison.OrdinalIgnoreCase))
+                return DeployResult.Failed($"{FunctionsFolder}/ cannot be written here. Upload functions on the site's Functions card, or with deploy_functions.");
+            if (change.Content.LongLength > _options.MaxEntryBytes)
+                return DeployResult.Failed($"'{change.Path}' is larger than the {Format.Bytes(_options.MaxEntryBytes)} per-file limit.");
+            toWrite[string.Join('/', segments)] = change.Content;
+        }
+
+        var toDelete = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in deletes)
+        {
+            var segments = SplitEntryPath(path ?? "");
+            if (segments is null || segments.Length == 0) return DeployResult.Failed($"'{path}' is not a path a site can hold.");
+            toDelete.Add(string.Join('/', segments));
+        }
+
+        await _deployGate.WaitAsync(ct);
+        string? stagingDir = null;
+        try
+        {
+            var site = _sites.TryGet(domain);
+            if (site is null) return DeployResult.Failed($"No site is published at '{domain}'. Deploy files or create the site first.");
+
+            var current = site.Current;
+            var currentDir = _sites.GetCurrentReleasePath(domain);
+            var warnings = new List<string>();
+
+            // The configuration files: written, deleted, or carried over from the live release.
+            var headerRules = current?.Headers ?? [];
+            var redirectRules = current?.Redirects ?? [];
+            var variables = current?.Variables ?? [];
+            var variablesChanged = false;
+
+            foreach (var name in new[] { HeaderRuleText.FileName, RedirectRuleText.FileName, VariableFileText.FileName })
+            {
+                if (toDelete.Remove(name))
+                {
+                    if (name == HeaderRuleText.FileName) headerRules = [];
+                    else if (name == RedirectRuleText.FileName) redirectRules = [];
+                    else (variables, variablesChanged) = ([], true);
+                }
+
+                if (!toWrite.Remove(name, out var bytes)) continue;
+                if (bytes.Length > MaxRuleFileBytes)
+                {
+                    warnings.Add($"'{name}' is larger than {Format.Bytes(MaxRuleFileBytes)} and was ignored.");
+                    continue;
+                }
+
+                var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+                if (name == HeaderRuleText.FileName) headerRules = ParseRules<HeaderRule>(text, name, warnings, HeaderRuleText.TryParse);
+                else if (name == RedirectRuleText.FileName) redirectRules = ParseRules<RedirectRule>(text, name, warnings, RedirectRuleText.TryParse);
+                else (variables, variablesChanged) = (ParseRules<VariableDefinition>(text, name, warnings, VariableFileText.TryParse), true);
+            }
+
+            var releaseId = NewReleaseId();
+            stagingDir = Path.Combine(_paths.StagingDir(domain), releaseId);
+            Directory.CreateDirectory(stagingDir);
+
+            long totalBytes = 0;
+            var fileCount = 0;
+            var deleted = new HashSet<string>(StringComparer.Ordinal);
+
+            // The live release's files, except those replaced or deleted.
+            if (currentDir is not null)
+            {
+                foreach (var file in Directory.EnumerateFiles(currentDir, "*", SearchOption.AllDirectories))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var relative = Path.GetRelativePath(currentDir, file).Replace(Path.DirectorySeparatorChar, '/');
+                    if (toDelete.Contains(relative)) { deleted.Add(relative); continue; }
+                    if (toWrite.ContainsKey(relative)) continue;
+
+                    var destination = Path.Combine(stagingDir, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    File.Copy(file, destination);
+                    totalBytes += new FileInfo(destination).Length;
+                    fileCount++;
+                }
+            }
+
+            foreach (var missing in toDelete.Except(deleted).Order(StringComparer.Ordinal))
+                warnings.Add($"'{missing}' was not in the site, so there was nothing to delete.");
+
+            foreach (var (relative, bytes) in toWrite)
+            {
+                var destination = Path.GetFullPath(Path.Combine([stagingDir, .. relative.Split('/')]));
+                if (!PathHelpers.IsInside(stagingDir, destination)) return DeployResult.Failed($"'{relative}' is not a path a site can hold.");
+
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                await File.WriteAllBytesAsync(destination, bytes, ct);
+                totalBytes += bytes.LongLength;
+                fileCount++;
+            }
+
+            if (fileCount > _options.MaxEntries)
+                return DeployResult.Failed($"The site would hold more than the {_options.MaxEntries:N0} files allowed.");
+            if (totalBytes > _options.MaxExtractedBytes)
+                return DeployResult.Failed($"The site would hold {Format.Bytes(totalBytes)}, over the {Format.Bytes(_options.MaxExtractedBytes)} limit.");
+
+            var hasRootIndex = File.Exists(Path.Combine(stagingDir, "index.html"));
+            if (!hasRootIndex && fileCount > 0)
+                warnings.Add("No index.html is at the root of the site — requests will fall back to a 404.");
+
+            // New declarations are prepared as a deploy's are; carried-over ones already were.
+            if (variablesChanged) _variables.PrepareForRelease(variables, isAdministrator, warnings);
+
+            var releaseDir = _paths.ReleaseDir(domain, releaseId);
+            Directory.CreateDirectory(_paths.ReleasesDir(domain));
+            Directory.Move(stagingDir, releaseDir);
+            stagingDir = null;
+
+            var release = new ReleaseRecord
+            {
+                Id = releaseId,
+                DeployedBy = actor,
+                Source = source,
+                FileCount = fileCount,
+                TotalBytes = totalBytes,
+                ArchiveName = $"{writes.Count} file(s) written, {deleted.Count} deleted",
+                HasRootIndex = hasRootIndex,
+                Headers = [.. headerRules],
+                Redirects = [.. redirectRules],
+                Variables = [.. variables],
+                Functions = current?.Functions
+            };
+
+            site.Releases.Insert(0, release);
+            site.CurrentRelease = releaseId;
+            site.LastDeployedBy = actor;
+
+            await _variables.ProtectDeclaredSecretsAsync(site);
+            PruneReleases(site);
+            await _sites.SaveAsync(site);
+            _content.Evict(domain);
+            _variables.Evict(domain);
+
+            await _audit.WriteAsync("site.files", actor, new
+            {
+                domain, release = releaseId, written = writes.Select(w => w.Path), deleted = deletes, source
+            });
+            _logger.LogInformation("Updated {Domain} in place as release {Release}: {Written} written, {Deleted} deleted",
+                domain, releaseId, writes.Count, deleted.Count);
+
+            return new DeployResult(true, null, domain, release, warnings, null, null);
+        }
+        catch (IOException ex)
+        {
+            _logger.LogError(ex, "Updating the files of {Domain} failed while writing to disk", domain);
+            return DeployResult.Failed("The files could not be written to disk. Check the server logs.");
+        }
+        finally
+        {
+            if (stagingDir is not null) TryDeleteDirectory(stagingDir);
+            _deployGate.Release();
+        }
+    }
+
     /// <summary>
     /// Creates a site with no release, for one made of proxy routes, or to set up before the first
     /// deploy. Anyone who may deploy may do this: deploying to a new domain creates the site anyway.

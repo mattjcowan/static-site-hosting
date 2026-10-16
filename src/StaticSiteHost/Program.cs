@@ -68,6 +68,7 @@ builder.Services.AddSingleton<SiteProxyService>();
 builder.Services.AddSingleton<SiteVariableService>();
 builder.Services.AddSingleton<SiteHostEndpoints>();
 builder.Services.AddSingleton<ZipDeploymentService>();
+builder.Services.AddSingleton<SiteFiles>();
 builder.Services.AddSingleton<FunctionSourceReader>();
 builder.Services.AddSingleton<FunctionProjectGenerator>();
 builder.Services.AddSingleton<FunctionBuildService>();

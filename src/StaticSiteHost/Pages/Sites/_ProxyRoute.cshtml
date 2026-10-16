@@ -20,7 +20,8 @@
 <form method="post" asp-page-handler="SaveProxyRoute" asp-route-domain="@Model.Domain" class="proxy-form">
     @if (!Model.IsNew)
     {
-        <input type="hidden" name="originalPath" value="@Model.OriginalPath" />
+        @* What the saved route is known by: a site's route by its path, a server-wide one by its id. *@
+        <input type="hidden" name="@(Model.IsServer ? "routeId" : "originalPath")" value="@Model.OriginalPath" />
     }
 
     @if (Model.Errors.Count > 0)
@@ -33,6 +34,20 @@
                     <li>@error</li>
                 }
             </ul>
+        </div>
+    }
+
+    @if (route is ServerProxyRoute server)
+    {
+        <div class="field">
+            <label for="@id-sites">Sites</label>
+            <input id="@id-sites" name="Sites" type="text" value="@server.Sites" required autocomplete="off" autocapitalize="off"
+                   spellcheck="false" placeholder="*.apps.example.com" />
+            <p class="hint proxy-row-hint">
+                <span class="mono">*</span> for every site, <span class="mono">*.apps.example.com</span> for every site under that
+                domain, or a domain for one site; several separated by commas. A site's own route at the same path wins, and a
+                site can turn this route off on its own page.
+            </p>
         </div>
     }
 
@@ -142,12 +157,14 @@
 {
     <div class="proxy-actions">
         <form method="post" asp-page-handler="TestProxyRoute" asp-route-domain="@Model.Domain">
-            <input type="hidden" name="path" value="@Model.OriginalPath" />
+            <input type="hidden" name="@(Model.IsServer ? "id" : "path")" value="@Model.OriginalPath" />
             <button type="submit" class="btn">Test</button>
         </form>
         <form method="post" asp-page-handler="RemoveProxyRoute" asp-route-domain="@Model.Domain"
-              data-confirm="Remove the proxy route at @Model.OriginalPath? Its paths go back to the site's files.">
-            <input type="hidden" name="path" value="@Model.OriginalPath" />
+              data-confirm="@(Model.IsServer
+                  ? $"Remove the server-wide route at {route.Path} for {((ServerProxyRoute)route).Sites}? Its paths go back to each site's own files and routes."
+                  : $"Remove the proxy route at {Model.OriginalPath}? Its paths go back to the site's files.")">
+            <input type="hidden" name="@(Model.IsServer ? "id" : "path")" value="@Model.OriginalPath" />
             <button type="submit" class="btn-danger">Remove route</button>
         </form>
     </div>

@@ -1,5 +1,5 @@
 using System.Net;
-using System.Runtime.CompilerServices;
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http.Features;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
@@ -32,22 +32,28 @@ public sealed class SiteProxy
     internal const int MaxHops = 5;
 
     /// <summary>
-    /// What each site's routes compile to, keyed by the list itself. A change replaces the list
-    /// (see <see cref="SiteRecord.Proxy"/>), so the stale table is never found again and goes when
-    /// the list does: nothing has to be evicted, on a rename or anywhere else.
+    /// What each site's routes compile to: its own and the server-wide ones that apply to it
+    /// (<see cref="ProxySites.Effective"/>), with the three lists it was compiled from. Each list is
+    /// replaced, never edited, when it changes (see <see cref="SiteRecord.Proxy"/>), so a table is
+    /// still current exactly while all three are the same objects; otherwise it is compiled again.
     /// </summary>
-    private readonly ConditionalWeakTable<List<ProxyRoute>, ProxyRouteTable> _tables = new();
+    private readonly ConcurrentDictionary<string, CachedTable> _tables = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record CachedTable(object SiteRoutes, object ServerRoutes, object Disabled, ProxyRouteTable Table);
 
     private readonly IHttpForwarder _forwarder;
     private readonly ProxyInvokers _invokers;
     private readonly SiteContentServer _content;
+    private readonly SiteProxyService _routes;
     private readonly ILogger<SiteProxy> _logger;
 
-    public SiteProxy(IHttpForwarder forwarder, ProxyInvokers invokers, SiteContentServer content, ILogger<SiteProxy> logger)
+    public SiteProxy(
+        IHttpForwarder forwarder, ProxyInvokers invokers, SiteContentServer content, SiteProxyService routes, ILogger<SiteProxy> logger)
     {
         _forwarder = forwarder;
         _invokers = invokers;
         _content = content;
+        _routes = routes;
         _logger = logger;
     }
 
@@ -57,9 +63,10 @@ public sealed class SiteProxy
     /// </summary>
     public async Task<bool> TryForwardAsync(HttpContext context, SiteRecord site)
     {
-        if (site.Proxy is not { Count: > 0 } routes) return false;
+        var serverRoutes = await _routes.ServerRoutesAsync();
+        if (site.Proxy.Count == 0 && serverRoutes.Count == 0) return false;
 
-        var table = _tables.GetValue(routes, list => ProxyRouteTable.Compile(list, site.Domain, _logger));
+        var table = TableFor(site, serverRoutes);
         if (!table.TryMatch(context.Request.Path, out var route, out var remainder)) return false;
 
         var requestPath = context.Request.Path.Value ?? "/";
@@ -67,6 +74,20 @@ public sealed class SiteProxy
 
         await ForwardAsync(context, site, route, remainder, requestPath);
         return true;
+    }
+
+    private ProxyRouteTable TableFor(SiteRecord site, IReadOnlyList<ServerProxyRoute> serverRoutes)
+    {
+        if (_tables.TryGetValue(site.Domain, out var cached) &&
+            ReferenceEquals(cached.SiteRoutes, site.Proxy) &&
+            ReferenceEquals(cached.ServerRoutes, serverRoutes) &&
+            ReferenceEquals(cached.Disabled, site.DisabledServerRoutes))
+            return cached.Table;
+
+        var table = ProxyRouteTable.Compile(
+            ProxySites.Effective(site.Domain, site.Proxy, serverRoutes, site.DisabledServerRoutes), site.Domain, _logger);
+        _tables[site.Domain] = new CachedTable(site.Proxy, serverRoutes, site.DisabledServerRoutes, table);
+        return table;
     }
 
     private async Task ForwardAsync(HttpContext context, SiteRecord site, CompiledProxyRoute route, PathString remainder, string requestPath)
@@ -205,7 +226,7 @@ internal sealed class ProxyRouteTable
 
     private ProxyRouteTable(CompiledProxyRoute[] routes) => _routes = routes;
 
-    public static ProxyRouteTable Compile(List<ProxyRoute> routes, string domain, ILogger logger) => new(
+    public static ProxyRouteTable Compile(IReadOnlyList<ProxyRoute> routes, string domain, ILogger logger) => new(
         routes
             .Where(route => route.Enabled)
             .Select(route => CompiledProxyRoute.Compile(route, domain, logger))
