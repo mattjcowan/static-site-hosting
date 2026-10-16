@@ -20,9 +20,13 @@ public class AiModel : PageModel
     private readonly AiChatService _chat;
     private readonly SiteStore _sites;
     private readonly StaticSiteHost.Services.Assistant.AssistantSettingsStore _assistant;
+    private readonly StaticSiteHost.Services.Assistant.AssistantUsageStore _usage;
 
-    public AiModel(AiProviderStore providers, AiChatService chat, SiteStore sites, StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant)
+    public AiModel(
+        AiProviderStore providers, AiChatService chat, SiteStore sites,
+        StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant, StaticSiteHost.Services.Assistant.AssistantUsageStore usage)
     {
+        _usage = usage;
         _providers = providers;
         _chat = chat;
         _sites = sites;
@@ -32,13 +36,18 @@ public class AiModel : PageModel
     /// <summary>The management assistant's settings, for its card.</summary>
     public StaticSiteHost.Services.Assistant.AssistantSettings Assistant { get; private set; } = new();
 
+    /// <summary>Who has used the assistant today, and how much, for its card.</summary>
+    public IReadOnlyList<StaticSiteHost.Services.Assistant.AssistantUserUsage> UsageToday { get; private set; } = [];
+
+    public string UsageDay { get; private set; } = "";
+
     /// <summary>
     /// Turns the assistant on with a provider and model, or off with none. Every message is billed
     /// to the provider's key, so administrators decide whether members may use it.
     /// </summary>
-    public async Task<IActionResult> OnPostAssistantAsync(string? providerId, string? model, bool membersMayUse)
+    public async Task<IActionResult> OnPostAssistantAsync(string? providerId, string? model, bool membersMayUse, int? memberMessagesPerDay)
     {
-        if (await _assistant.SaveAsync(providerId, model, membersMayUse, Actor) is { } error)
+        if (await _assistant.SaveAsync(providerId, model, membersMayUse, Actor, memberMessagesPerDay) is { } error)
             TempData["ErrorMessage"] = error;
         else if (string.IsNullOrWhiteSpace(providerId))
             TempData["StatusMessage"] = "The assistant is off.";
@@ -70,6 +79,7 @@ public class AiModel : PageModel
     private async Task LoadAsync()
     {
         Assistant = await _assistant.ReadAsync();
+        (UsageDay, UsageToday) = await _usage.TodayAsync();
         Providers = await _providers.ListAsync();
         SiteCounts = _sites.List()
             .Where(site => site.Ai is { HasProvider: true })

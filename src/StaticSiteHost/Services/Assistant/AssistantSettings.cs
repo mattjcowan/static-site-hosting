@@ -20,6 +20,17 @@ public sealed class AssistantSettings
     /// </summary>
     public bool MembersMayUse { get; set; }
 
+    /// <summary>
+    /// The most messages one member may send the assistant in a UTC day; 0 is no limit.
+    /// Administrators are never limited. Counted by <see cref="AssistantUsageStore"/>.
+    /// </summary>
+    public int MemberMessagesPerDay { get; set; } = DefaultMemberMessagesPerDay;
+
+    public const int DefaultMemberMessagesPerDay = 50;
+
+    /// <summary>The highest limit that can be set; above it, choose no limit.</summary>
+    public const int MaxMemberMessagesPerDay = 10_000;
+
     public DateTimeOffset? UpdatedUtc { get; set; }
     public string? UpdatedBy { get; set; }
 }
@@ -49,26 +60,32 @@ public sealed class AssistantSettingsStore
                (isAdministrator || settings.MembersMayUse);
     }
 
-    /// <summary>Saves new settings. A null or empty provider turns the assistant off. Returns why not, or null.</summary>
-    public async Task<string?> SaveAsync(string? providerId, string? model, bool membersMayUse, string actor)
+    /// <summary>
+    /// Saves new settings. A null or empty provider turns the assistant off; a null daily limit keeps
+    /// the one set. Returns why not, or null.
+    /// </summary>
+    public async Task<string?> SaveAsync(string? providerId, string? model, bool membersMayUse, string actor, int? memberMessagesPerDay = null)
     {
         providerId = string.IsNullOrWhiteSpace(providerId) ? null : providerId.Trim();
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
 
         if (providerId is not null && _providers.Find(providerId) is null) return "That AI provider no longer exists.";
         if (model is { Length: > AiProviderStore.MaxModelLength }) return $"The model name must be {AiProviderStore.MaxModelLength} characters or fewer.";
+        if (memberMessagesPerDay is < 0 or > AssistantSettings.MaxMemberMessagesPerDay)
+            return $"The daily limit for members is 0 (no limit) to {AssistantSettings.MaxMemberMessagesPerDay:N0} messages.";
 
         await _store.UpdateAsync(settings =>
         {
             settings.ProviderId = providerId;
             settings.Model = model;
             settings.MembersMayUse = membersMayUse;
+            if (memberMessagesPerDay is { } limit) settings.MemberMessagesPerDay = limit;
             settings.UpdatedUtc = DateTimeOffset.UtcNow;
             settings.UpdatedBy = actor;
             return (true, true);
         });
 
-        await _audit.WriteAsync("assistant.settings", actor, new { providerId, model, membersMayUse });
+        await _audit.WriteAsync("assistant.settings", actor, new { providerId, model, membersMayUse, memberMessagesPerDay });
         return null;
     }
 }

@@ -138,6 +138,9 @@ builder.Services.AddSingleton<AiModelCatalog>();
 
 // The management assistant: the panel on every management page, using the tools MCP serves.
 builder.Services.AddSingleton<StaticSiteHost.Services.Assistant.AssistantSettingsStore>();
+builder.Services.AddSingleton<StaticSiteHost.Services.Assistant.AssistantConversationStore>();
+builder.Services.AddSingleton<StaticSiteHost.Services.Assistant.AssistantUsageStore>(services =>
+    new StaticSiteHost.Services.Assistant.AssistantUsageStore(services.GetRequiredService<DataPaths>()));
 builder.Services.AddSingleton<StaticSiteHost.Services.Assistant.AssistantService>();
 
 // ---------------------------------------------------------------- realtime

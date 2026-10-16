@@ -968,11 +968,7 @@
             <thead>
                 <tr>
                     <th>Release</th>
-                    <th>Deployed</th>
-                    <th>By</th>
-                    <th>Files</th>
-                    <th>Size</th>
-                    <th>Archive</th>
+                    <th>Contents</th>
                     <th>Functions</th>
                     <th></th>
                 </tr>
@@ -981,20 +977,27 @@
                 @foreach (var release in Model.Site.Releases)
                 {
                     <tr>
-                        <td class="mono nowrap">
-                            @release.Id
+                        <td>
+                            <span class="mono nowrap">@release.Id</span>
                             @if (release.Id == Model.Site.CurrentRelease)
                             {
                                 <span class="badge badge-ok">live</span>
                             }
+                            <div class="cell-sub">@release.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") by @(release.DeployedBy ?? "—")</div>
                         </td>
-                        <td class="nowrap muted">@release.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                        <td class="muted">@(release.DeployedBy ?? "—")</td>
-                        <td>@release.FileCount.ToString("N0")</td>
-                        <td class="nowrap">@Format.Bytes(release.TotalBytes)</td>
-                        <td class="muted">@(release.IsFunctionsOnly ? "functions only, no files" : release.ArchiveName ?? "—")</td>
+                        <td>
+                            @if (release.IsFunctionsOnly)
+                            {
+                                <span class="muted">functions only, no files</span>
+                            }
+                            else
+                            {
+                                <span class="nowrap">@release.FileCount.ToString("N0") file@(release.FileCount == 1 ? "" : "s"), @Format.Bytes(release.TotalBytes)</span>
+                                <div class="cell-sub">@(release.ArchiveName ?? "—")</div>
+                            }
+                        </td>
                         <td class="mono muted">@(release.Functions is null ? "—" : Model.BundleLabel(release.Functions))</td>
-                        <td class="actions">
+                        <td class="actions release-actions">
                             @if (!release.IsFunctionsOnly)
                             {
                                 <a class="btn-link" asp-page-handler="DownloadRelease" asp-route-domain="@Model.Site.Domain"

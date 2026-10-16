@@ -30,7 +30,7 @@ public static class AssistantEndpoints
         app.MapPost("/assistant/end", async (HttpContext http, IAntiforgery antiforgery, AssistantService assistant, string? conversation) =>
         {
             if (!await antiforgery.IsRequestValidAsync(http)) return Results.BadRequest();
-            assistant.End(conversation, UserId(http.User));
+            await assistant.EndAsync(conversation, UserId(http.User));
             return Results.Ok();
         }).RequireAuthorization().DisableAntiforgery();
 
@@ -44,6 +44,7 @@ public static class AssistantEndpoints
         AiProviderStore providers,
         AiChatService chat,
         AssistantService assistant,
+        AssistantUsageStore usage,
         SiteStore sites,
         CancellationToken ct)
     {
@@ -99,10 +100,17 @@ public static class AssistantEndpoints
             await http.Response.Body.FlushAsync(ct);
         }
 
+        // Every message is billed to the provider's key: members get a daily allowance, and
+        // everyone's use is counted for the AI page.
+        var userId = UserId(http.User);
+        var username = http.User.Identity?.Name ?? userId;
+
         await assistant.RunAsync(
-            UserId(http.User), request,
+            userId, request,
             Context(http.User, isAdministrator, sites, await http.RequestServices.GetRequiredService<SiteProxyService>().ServerRoutesAsync(), request.Domain),
-            new ProviderAssistantModel(chat, provider, settings.Model), http.RequestServices, Emit, ct);
+            new ProviderAssistantModel(chat, provider, settings.Model), http.RequestServices, Emit, ct,
+            admit: () => usage.AdmitAsync(userId, username, isAdministrator, settings.MemberMessagesPerDay),
+            record: (input, output) => usage.RecordAsync(userId, username, isAdministrator, input, output));
     }
 
     /// <summary>

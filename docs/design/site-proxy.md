@@ -781,6 +781,37 @@ disabling an account each stopped for confirmation within two seconds. Publishin
 reached a page open in Chrome. The tool catalog is now 57 tools, about 10,000 tokens with the
 instructions, and still cached.
 
+## After 0.6.1: for running on Railway
+
+Four items for deployments behind someone else's edge, built before phase 3:
+
+* **Conversations survive restarts.** `AssistantConversationStore` writes each conversation after
+  every message to `config/assistant-conversations/<id>.bin`, encrypted with Data Protection
+  (tool results can hold file text, invitation links or temporary passwords). After a restart
+  one is loaded on first use, a step waiting for Run included. The 2-hour idle limit is
+  unchanged; idle files are swept every 10 minutes. A file that cannot be decrypted (a lost key
+  ring) is dropped and a new conversation starts. Checked with Haiku: a delete waiting for Run
+  across a restart ran on Run, and the model still had the earlier messages.
+* **A daily limit for members.** `AssistantSettings.MemberMessagesPerDay` (default 50, 0 for no
+  limit), counted per UTC day by `AssistantUsageStore` in `config/assistant-usage.json`, so a
+  restart does not reset it. Run and Cancel are not messages. Administrators are counted, never
+  limited. The AI page lists today's use with tokens; the API and `get_assistant_settings`
+  return it as `usageToday`.
+* **Screenshots** of proxy routes, server-wide routes, the assistant and releases, taken by
+  `scripts/screenshots.sh` (the assistant only when `ANTHROPIC_API_KEY` is set). Taking them
+  showed the releases table overflowing its card since Download was added; it is now four
+  columns.
+* **Cloudflare Tunnel:** `deploy/cloudflare-tunnel/` (Compose with the server and a pinned
+  `cloudflared`, no port published) and a README section. Checked as far as Compose and the
+  server go: the server answers by host name on the Compose network, and nothing is published.
+  The Cloudflare side follows Cloudflare's documentation; the dashboard has been reported to
+  refuse wildcard routes, so the README sets them with the API.
+
+**gRPC, dropped for now.** Railway's edge forwards every request to the service as HTTP/1.1, so
+an HTTP/2-only listener here would not bring native gRPC through a Railway domain. gRPC-Web
+translation on a route would, and is a possible later item; native gRPC comes with phase 3,
+where TLS in the server gives HTTP/2 by ALPN.
+
 ## Phases 3 and 4: planned
 
 As sketched above. Phase 3 should start by choosing the ACME client (decision 5), and should add

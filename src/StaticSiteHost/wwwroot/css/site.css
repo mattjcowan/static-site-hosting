@@ -218,6 +218,8 @@ th { color: var(--muted); font-weight: 550; font-size: 0.8rem; text-transform: u
 tbody tr:last-child td { border-bottom: none; }
 td.actions { text-align: right; white-space: nowrap; }
 td.actions form { display: inline; }
+td.release-actions > * + * { margin-left: 0.75rem; }
+.cell-sub { color: var(--muted); font-size: 0.825rem; margin-top: 0.15rem; }
 .table-wrap { overflow-x: auto; margin: 0 -0.25rem; }
 
 .badge {

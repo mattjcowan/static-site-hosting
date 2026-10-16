@@ -1,0 +1,53 @@
+# Static Site Host behind a Cloudflare Tunnel. cloudflared connects out to Cloudflare, and
+# visitors reach the server through it, so the machine opens no inbound port at all: no 80, no
+# 443, and Cloudflare provides HTTPS. See "Cloudflare Tunnel" in the README for the steps.
+#
+#   cp .env.example .env    # then fill it in
+#   docker compose up -d
+#
+# Run from this folder. It is a whole setup of its own, not an addition to the
+# docker-compose.yml at the root of the repository.
+
+services:
+  static-site-host:
+    image: mattjcowan/static-site-hosting:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+
+    # No ports: cloudflared reaches the server over this Compose network, as
+    # http://static-site-host:8080, and nothing else can.
+
+    environment:
+      # Where the management UI and API answer. Every other host name the tunnel sends here is
+      # a site, chosen by its Host header.
+      SiteHosting__ManagementHosts__0: "${MANAGEMENT_HOST:?Set MANAGEMENT_HOST, such as admin.example.com}"
+
+      # Safe here, and needed: only cloudflared can reach the server, and Cloudflare sends the
+      # visitor's address and https in X-Forwarded-For and X-Forwarded-Proto.
+      SiteHosting__TrustForwardedHeaders: "true"
+
+      # The first administrator. Leave the password empty and one is generated on first run,
+      # printed to the log (docker compose logs static-site-host) and written to
+      # /data/config/bootstrap-password.txt.
+      Bootstrap__Username: "${ADMIN_USERNAME:-admin}"
+      Bootstrap__Password: "${ADMIN_PASSWORD:-}"
+
+      # An API key for the administrator from the first start, for scripts and AI agents (/mcp).
+      Bootstrap__ApiKey: "${ADMIN_API_KEY:-}"
+
+    volumes:
+      - site-data:/data
+
+  cloudflared:
+    # Pinned, so an update is a choice. Newer releases: https://hub.docker.com/r/cloudflare/cloudflared/tags
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-2026.9.3}
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # The tunnel's token, from Zero Trust → Networks → Tunnels → your tunnel. Its routes (which
+      # host names go where) are kept at Cloudflare, not here.
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?Set TUNNEL_TOKEN to the tunnel's token}"
+    depends_on:
+      - static-site-host
+
+volumes:
+  site-data:

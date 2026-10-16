@@ -1010,20 +1010,22 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("get_assistant_settings", ToolEffect.Read)]
-    [Description("The management assistant's settings: which AI provider and model it uses, and whether members may use it. Administrators only.")]
+    [Description("The management assistant's settings (its AI provider and model, whether members may use it, and how many messages a member may send per day) and who has used it today. Administrators only.")]
     public static async Task<JsonElement> GetAssistantSettings(IServiceProvider services)
     {
         if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
-        return ToJson(await services.GetRequiredService<AssistantSettingsStore>().ReadAsync());
+        return ToJson(await AdminEndpoints.DescribeAssistantAsync(
+            services.GetRequiredService<AssistantSettingsStore>(), services.GetRequiredService<AssistantUsageStore>()));
     }
 
     [SiteHostTool("set_assistant_settings", ToolEffect.Change)]
-    [Description("Sets the management assistant's AI provider and model, and whether members may use it. No provider turns the assistant off. Administrators only.")]
+    [Description("Sets the management assistant's AI provider and model, whether members may use it, and how many messages a member may send per day. No provider turns the assistant off. Administrators only.")]
     public static async Task<JsonElement> SetAssistantSettings(
         IServiceProvider services,
         [Description("The provider's id or name; empty turns the assistant off.")] string? provider = null,
         [Description("The model. Leave out for the provider's default.")] string? model = null,
-        [Description("True lets members use the assistant too, as themselves.")] bool membersMayUse = false)
+        [Description("True lets members use the assistant too, as themselves.")] bool membersMayUse = false,
+        [Description("The most messages one member may send per UTC day; 0 is no limit. Leave out to keep the current limit.")] int? memberMessagesPerDay = null)
     {
         var caller = Caller.Of(services);
         if (caller.AdministratorsOnly() is { } refused) return refused;
@@ -1037,8 +1039,10 @@ public static class SiteHostTools
         }
 
         var settings = services.GetRequiredService<AssistantSettingsStore>();
-        var error = await settings.SaveAsync(providerId, model, membersMayUse, caller.Actor);
-        return error is null ? ToJson(await settings.ReadAsync()) : Error(error);
+        var error = await settings.SaveAsync(providerId, model, membersMayUse, caller.Actor, memberMessagesPerDay);
+        return error is null
+            ? ToJson(await AdminEndpoints.DescribeAssistantAsync(settings, services.GetRequiredService<AssistantUsageStore>()))
+            : Error(error);
     }
 
     // ================================================================ users

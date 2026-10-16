@@ -59,8 +59,35 @@
                 <label for="assistant-members">Members may use it too (it can do only what a member can)</label>
             </div>
             <input type="hidden" name="membersMayUse" value="false" />
+            <div class="field" style="margin-top: 0.75rem; max-width: 22rem">
+                <label for="assistant-member-limit">Messages a member may send per day</label>
+                <input id="assistant-member-limit" name="memberMessagesPerDay" type="number" min="0" max="@StaticSiteHost.Services.Assistant.AssistantSettings.MaxMemberMessagesPerDay"
+                       value="@Model.Assistant.MemberMessagesPerDay" />
+                <span class="hint">Counted per UTC day; 0 is no limit. Administrators are never limited.</span>
+            </div>
             <button type="submit" class="btn-primary" style="margin-top: 0.75rem">Save assistant settings</button>
         </form>
+
+        @if (Model.UsageToday.Count > 0)
+        {
+            <h3 class="fn-subhead" style="margin-top: 1.25rem">Used today <span class="muted">(@Model.UsageDay, UTC)</span></h3>
+            <table>
+                <thead>
+                    <tr><th>User</th><th>Messages</th><th>Tokens in</th><th>Tokens out</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var user in Model.UsageToday)
+                    {
+                        <tr>
+                            <td>@user.Username @if (user.Administrator) { <span class="badge">administrator</span> }</td>
+                            <td>@user.Messages@(!user.Administrator && Model.Assistant.MemberMessagesPerDay > 0 ? $" of {Model.Assistant.MemberMessagesPerDay}" : "")</td>
+                            <td>@user.InputTokens.ToString("N0")</td>
+                            <td>@user.OutputTokens.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
     }
 </div>
 

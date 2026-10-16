@@ -98,15 +98,18 @@ public static class AdminEndpoints
 
         // ---- the management assistant
 
-        api.MapGet("/assistant", async (StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant) =>
-            Results.Ok(await assistant.ReadAsync()))
+        api.MapGet("/assistant", async (
+            StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant, StaticSiteHost.Services.Assistant.AssistantUsageStore usage) =>
+            Results.Ok(await DescribeAssistantAsync(assistant, usage)))
             .RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapPut("/assistant", async (
-            AssistantSettingsRequest? body, ClaimsPrincipal principal, StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant) =>
+            AssistantSettingsRequest? body, ClaimsPrincipal principal,
+            StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant, StaticSiteHost.Services.Assistant.AssistantUsageStore usage) =>
         {
-            var error = await assistant.SaveAsync(body?.ProviderId, body?.Model, body?.MembersMayUse ?? false, ApiEndpoints.Actor(principal));
-            return error is null ? Results.Ok(await assistant.ReadAsync()) : Results.BadRequest(new { error });
+            var error = await assistant.SaveAsync(
+                body?.ProviderId, body?.Model, body?.MembersMayUse ?? false, ApiEndpoints.Actor(principal), body?.MemberMessagesPerDay);
+            return error is null ? Results.Ok(await DescribeAssistantAsync(assistant, usage)) : Results.BadRequest(new { error });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
         // ---- users
@@ -179,6 +182,24 @@ public static class AdminEndpoints
     private static string? ActivationLink(LinkGenerator links, HttpContext http, string token) =>
         links.GetUriByPage(http, "/Activate", handler: null, values: new { token });
 
+    /// <summary>The assistant's settings and who has used it today.</summary>
+    internal static async Task<object> DescribeAssistantAsync(
+        StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant, StaticSiteHost.Services.Assistant.AssistantUsageStore usage)
+    {
+        var settings = await assistant.ReadAsync();
+        var (day, users) = await usage.TodayAsync();
+        return new
+        {
+            providerId = settings.ProviderId,
+            model = settings.Model,
+            membersMayUse = settings.MembersMayUse,
+            memberMessagesPerDay = settings.MemberMessagesPerDay,
+            updatedUtc = settings.UpdatedUtc,
+            updatedBy = settings.UpdatedBy,
+            usageToday = new { day, users }
+        };
+    }
+
     internal static object DescribeKey(ApiKeyRecord key) => new
     {
         id = key.Id,
@@ -230,8 +251,11 @@ public sealed record AiProviderRequest(string? Name, string? Kind, string? BaseU
 /// <summary>Body of POST /api/v1/users. Credential is "link" (a private link, the default) or "password" (a temporary one).</summary>
 public sealed record UserCreateRequest(string? Username, string? DisplayName, string? Role, string? Credential);
 
-/// <summary>Body of PUT /api/v1/assistant. No provider turns the assistant off.</summary>
-public sealed record AssistantSettingsRequest(string? ProviderId, string? Model, bool? MembersMayUse);
+/// <summary>
+/// Body of PUT /api/v1/assistant. No provider turns the assistant off. A daily limit left out keeps
+/// the one set; 0 is no limit.
+/// </summary>
+public sealed record AssistantSettingsRequest(string? ProviderId, string? Model, bool? MembersMayUse, int? MemberMessagesPerDay);
 
 /// <summary>Body of PUT /api/v1/users/{id}. Each field left out is left as it is.</summary>
 public sealed record UserUpdateRequest(string? Role, bool? Disabled);

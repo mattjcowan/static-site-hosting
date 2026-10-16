@@ -163,6 +163,14 @@ itself (variable values, the passcode, rules saved in the UI, AI settings) stays
     <td><a href="docs/screenshots/editor-test.png"><img src="docs/screenshots/editor-test.png" alt="Testing a function that returns a PNG"></a><br><sub><b>Test</b>: run a request against the checked build; images, PDFs and JSON render inline.</sub></td>
   </tr>
   <tr>
+    <td><a href="docs/screenshots/proxy.png"><img src="docs/screenshots/proxy.png" alt="A site's proxy routes, with a server-wide route it inherits"></a><br><sub><b>Proxy routes</b>: a site with no files in front of two servers, plus a server-wide route it can turn off.</sub></td>
+    <td><a href="docs/screenshots/server-proxy.png"><img src="docs/screenshots/server-proxy.png" alt="A server-wide proxy route and the sites it reaches"></a><br><sub><b>Server-wide routes</b>: one route for every site under a domain, and where it is in effect.</sub></td>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/assistant.png"><img src="docs/screenshots/assistant.png" alt="The assistant changing a page's heading"></a><br><sub><b>Assistant</b>: asked to change a heading, it reads the page and edits that one line.</sub></td>
+    <td><a href="docs/screenshots/releases.png"><img src="docs/screenshots/releases.png" alt="A site's releases with Download and Make live"></a><br><sub><b>Releases</b>: the assistant's edit is a release of its own; any release downloads as a zip.</sub></td>
+  </tr>
+  <tr>
     <td><a href="docs/screenshots/blog-home.png"><img src="docs/screenshots/blog-home.png" alt="Night Sky Field Notes home page"></a><br><sub><b>blog-site.zip</b>: an astronomy journal with a live Moon phase and a starfield.</sub></td>
     <td><a href="docs/screenshots/blog-studio.png"><img src="docs/screenshots/blog-studio.png" alt="The blog's studio editing a post"></a><br><sub>Its studio: sign-in, accounts and Markdown posts, all C# functions and SQLite.</sub></td>
   </tr>
@@ -170,7 +178,9 @@ itself (variable values, the passcode, rules saved in the UI, AI settings) stays
 
 `scripts/screenshots.sh` takes these screenshots. It starts a temporary instance, deploys the
 samples through the UI and captures each screen. Run it again after you change the UI. It needs
-Node, and it downloads Chromium the first time. The app itself needs neither.
+Node, and it downloads Chromium the first time. The app itself needs neither. The assistant's
+picture needs a model to talk to: it is taken only when `ANTHROPIC_API_KEY` is set (and
+`ASSISTANT_MODEL`, if not Claude Haiku), at the cost of one short conversation.
 
 ---
 
@@ -2605,11 +2615,18 @@ deploying a function 6 to 12 seconds, and a delete well under a second to ask an
 * Every message is billed to the provider's key. Under each answer the panel shows the tokens it
   used and how many model calls it took.
 * At most 12 model calls per message. A message is limited to 8,000 characters.
-* A conversation is kept in the server's memory for 2 hours after its last message, and is lost
-  on a restart.
+* A conversation is kept for 2 hours after its last message. It is saved to
+  `config/assistant-conversations/`, encrypted, after every message, so a restart or a redeploy
+  does not end it, a step waiting for **Run** included. **New** deletes it.
+* **Members' daily limit.** A member may send 50 messages a day (UTC) by default; change it, or
+  set 0 for no limit, under **AI → Assistant**. Choosing **Run** or **Cancel** is not a message.
+  Administrators are never limited. The same card lists who has used it today, with their
+  messages and tokens. The counts are kept in `config/assistant-usage.json`, so a restart does
+  not reset them.
 * It answers on the management host only, signed in, with the UI's own antiforgery check.
 * `GET` and `PUT /api/v1/assistant` read and change its settings (`providerId`, `model`,
-  `membersMayUse`); administrators only.
+  `membersMayUse`, `memberMessagesPerDay`), and `GET` lists today's use (`usageToday`);
+  administrators only.
 
 ---
 
@@ -2677,7 +2694,9 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 │   ├── users.json                 accounts (PBKDF2-hashed passwords, hashed invite tokens)
 │   ├── apikeys.json               API keys (hashed secrets)
 │   ├── ai-providers.json          AI providers (keys encrypted)
-│   ├── assistant.json             the assistant's provider, model and who may use it
+│   ├── assistant.json             the assistant's provider, model, who may use it and members' daily limit
+│   ├── assistant-usage.json       today's assistant use, per person
+│   ├── assistant-conversations/   the assistant's open conversations (encrypted; gone 2 hours after their last use)
 │   ├── proxy-routes.json          server-wide proxy routes
 │   ├── audit.log                  JSON lines: deploys, logins, user and key changes
 │   ├── keys/                      data-protection keys: sessions, secret variables and AI keys need them
@@ -2704,7 +2723,8 @@ Back up `/data`, and you have backed up everything.
 ## Production notes
 
 * **TLS.** The app speaks plain HTTP on port 8080. Terminate TLS at a reverse proxy (Caddy handles
-  wildcard certificates well for this kind of workload), and publish on ports 80 and 443.
+  wildcard certificates well for this kind of workload), and publish on ports 80 and 443. Or
+  publish nothing and use a [Cloudflare Tunnel](#cloudflare-tunnel).
 * **Forwarded headers.** Set `TRUST_FORWARDED_HEADERS=true` only when a proxy you control is in
   front of the app. Routing uses the `Host` header, so a forged `X-Forwarded-Host` would let a
   caller choose which site answers.
@@ -2798,8 +2818,62 @@ Full (strict) once Railway shows the certificate as issued.
   or change the tag to move to a new version.
 * Back up the volume before upgrading at a site that matters (Railway's volume backups, or
   download `/data`).
-* gRPC through Railway's edge is not covered here: see the HTTP/2 note under
-  [Proxy routes](#proxy-routes).
+* gRPC cannot come in through a Railway domain: Railway's edge forwards every request to the
+  service as HTTP/1.1, and gRPC needs HTTP/2 on every hop. gRPC between services on Railway's
+  private network is not affected.
+
+## Cloudflare Tunnel
+
+**What it is.** A way to put the server on the internet from a machine that opens no inbound
+port. `cloudflared` runs next to the server and connects out to Cloudflare; visitors reach it
+through Cloudflare, which provides HTTPS. Use it on a home server, a VPS behind a firewall, or
+anywhere you would rather not publish ports 80 and 443. It needs the domain's DNS on Cloudflare.
+
+**How to use it.** `deploy/cloudflare-tunnel/` holds a Compose file with the server and
+`cloudflared`, and nothing published on the host.
+
+1. **Create the tunnel.** In Cloudflare's Zero Trust dashboard: **Networks → Tunnels → Create a
+   tunnel → Cloudflared**. Name it, and copy the token from the command it shows (the long value
+   after `--token`).
+2. **Start it.** In `deploy/cloudflare-tunnel/`, copy `.env.example` to `.env`, set
+   `TUNNEL_TOKEN`, `MANAGEMENT_HOST` (such as `admin.example.com`) and `ADMIN_PASSWORD`, then
+   `docker compose up -d`. The tunnel shows as healthy in the dashboard.
+3. **Route the host names to the server.** Every host name goes to the same place,
+   `http://static-site-host:8080`; the server picks the site by its `Host` header. The dashboard
+   adds one host name at a time (the tunnel's **Published application routes**), which is enough
+   for the management host and a few sites. For every site under a domain, set the routes with
+   one API call instead, which takes a wildcard (the dashboard has been reported to refuse one):
+
+   ```bash
+   curl -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" \
+     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+     --data '{"config":{"ingress":[
+       {"hostname":"admin.example.com","service":"http://static-site-host:8080"},
+       {"hostname":"*.example.com","service":"http://static-site-host:8080"},
+       {"service":"http_status:404"}]}}'
+   ```
+
+   The token needs **Cloudflare Tunnel: Edit** on the account. The last rule, with no host name,
+   is required. The call replaces every route the tunnel has, those added in the dashboard
+   included, so list them all in it.
+4. **DNS.** For each host name, a **proxied** CNAME to `<tunnel id>.cfargotunnel.com`. The
+   dashboard creates it for a host name added there. Add the wildcard one yourself:
+   `*` → `<tunnel id>.cfargotunnel.com`, proxied.
+
+**Rules and limits.**
+
+* **Certificates.** Cloudflare's free certificate covers `example.com` and `*.example.com`, one
+  level. Sites at `shop.example.com` are covered; sites at `shop.apps.example.com` need an
+  Advanced Certificate for `*.apps.example.com`. The tunnel itself needs no certificate here.
+* **Forwarded headers.** The Compose file sets `SiteHosting__TrustForwardedHeaders=true`, so the
+  server sees `https` and the visitor's address. That is safe only because nothing but
+  `cloudflared` can reach the server: keep its port unpublished.
+* **WebSockets** (realtime, and proxy routes that forward them) pass through the tunnel. gRPC is
+  not covered here.
+* **Uploads.** Cloudflare limits a request body to 100 MB on the Free and Pro plans, so a larger
+  zip must be deployed some other way.
+* This setup was checked as far as Compose and the server go; the Cloudflare side follows
+  Cloudflare's documentation.
 
 ## Local development
 

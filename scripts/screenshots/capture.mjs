@@ -106,6 +106,71 @@ const testCard = page.locator('.card', { has: page.locator('#fe-run') });
 await testCard.scrollIntoViewIfNeeded();
 await shot('editor-test', testCard);
 
+// ---- proxy routes --------------------------------------------------------------
+
+/** Fills in the "add a route" form on a site's page or on Proxy, and saves it. */
+async function addRoute(url, fields, switches = []) {
+  await page.goto(url);
+  await page.evaluate(() => { document.querySelector('details.proxy-add').open = true; });
+  const form = page.locator('details.proxy-add form.proxy-form');
+  for (const [name, value] of Object.entries(fields)) await form.locator(`[name=${name}]`).fill(value);
+  for (const name of switches) await form.locator(`input[type=checkbox][name=${name}]`).check();
+  await Promise.all([page.waitForNavigation(), form.locator('button[type=submit]').click()]);
+}
+
+// One route for every site first, then a site with no files of its own in front of two servers.
+await addRoute(`${base}/admin/proxy`, { Sites: '*.localhost', Path: '/auth', Target: 'http://auth:9000' });
+
+await page.goto(`${base}/sites`);
+await page.fill('#new-domain', 'app.localhost');
+await Promise.all([page.waitForNavigation(), page.locator('form:has(#new-domain) button[type=submit]').click()]);
+await addRoute(`${base}/sites/details/app.localhost`, { Path: '/', Target: 'http://web:3000' });
+await addRoute(`${base}/sites/details/app.localhost`, { Path: '/api', Target: 'http://api:8080' }, ['WebSockets']);
+
+await page.goto(`${base}/sites/details/app.localhost`);
+await page.locator('#proxy').scrollIntoViewIfNeeded();
+await shot('proxy', page.locator('#proxy'));
+
+// The server-wide route opened, down to the sites it reaches and the start of its form.
+await page.goto(`${base}/admin/proxy`);
+await page.evaluate(() => { document.querySelector('#proxy details.proxy-route').open = true; });
+const card = await page.locator('#proxy').boundingBox();
+const reach = await page.locator('#proxy .proxy-reach').boundingBox();
+await shot('server-proxy', page, { clip: { x: card.x, y: card.y, width: card.width, height: reach.y + reach.height + 150 - card.y } });
+
+// ---- the assistant (only with a model to talk to) ---------------------------------
+
+// The assistant needs a real AI provider, so this part runs only when a key is given:
+// ANTHROPIC_API_KEY, and optionally ASSISTANT_MODEL. Without one, assistant.png is left as it is.
+if (process.env.ANTHROPIC_API_KEY) {
+  await page.goto(`${base}/admin/ai`);
+  await page.fill('#ai-name', 'Anthropic');
+  await page.selectOption('#ai-kind', 'anthropic');
+  await page.fill('#ai-key', process.env.ANTHROPIC_API_KEY);
+  await page.fill('#ai-model', process.env.ASSISTANT_MODEL || 'claude-haiku-5-5');
+  await Promise.all([page.waitForNavigation(), page.locator('form.ai-add button[type=submit]').click()]);
+  await page.selectOption('#assistant-provider', { label: `Anthropic (${process.env.ASSISTANT_MODEL || 'claude-haiku-5-5'})` });
+  await Promise.all([page.waitForNavigation(), page.locator('#assistant-settings button[type=submit]').click()]);
+
+  await page.goto(`${base}/sites/details/demo.localhost`);
+  await page.locator('.nav-assistant').click();
+  await page.fill('#assistant textarea', 'Change the heading on the home page to say "Welcome back."');
+  await page.locator('#assistant .assistant-form button[type=submit]').click();
+  await page.waitForFunction(() => !document.getElementById('assistant').classList.contains('is-busy') &&
+    document.querySelectorAll('#assistant .assistant-log > :not(.assistant-empty)').length > 1);
+  await page.waitForTimeout(1500); // the page under the panel brings itself up to date
+  await shot('assistant', page, { clip: { x: 0, y: 0, width: 1280, height: 860 } });
+  await page.locator('#assistant .assistant-close').click();
+} else {
+  console.log('  assistant.png skipped: set ANTHROPIC_API_KEY to take it');
+}
+
+// The releases, each with Download: the assistant's change above made the second one.
+await page.goto(`${base}/sites/details/demo.localhost`);
+const releases = page.locator('.card', { has: page.locator('h2', { hasText: 'Releases' }) });
+await releases.scrollIntoViewIfNeeded();
+await shot('releases', releases);
+
 // ---- the blog sample ------------------------------------------------------------
 
 const blog = site('nightsky.localhost');

@@ -14,13 +14,16 @@ public interface IAssistantModel
     IAsyncEnumerable<AiChatChunk> StreamAsync(AiChatRequest request, CancellationToken ct);
 }
 
-/// <summary>One conversation with the assistant, held in memory for one user.</summary>
+/// <summary>
+/// One conversation with the assistant, for one user: held in memory, and saved to disk after
+/// every message by <see cref="AssistantConversationStore"/>, so a restart does not end it.
+/// </summary>
 public sealed class AssistantConversation
 {
     /// <summary>The most turns kept; a conversation that grows past it asks for a new one.</summary>
     public const int MaxMessages = 200;
 
-    public string Id { get; } = Guid.NewGuid().ToString("n");
+    public string Id { get; init; } = Guid.NewGuid().ToString("n");
     public required string UserId { get; init; }
     public List<AiMessage> Messages { get; } = [];
 
@@ -81,17 +84,20 @@ public sealed class AssistantService
     private readonly ConcurrentDictionary<string, AssistantConversation> _conversations = new();
     private readonly IReadOnlyList<SiteHostTool> _tools;
     private readonly IReadOnlyList<AiTool> _offered;
+    private readonly AssistantConversationStore? _store;
     private readonly ILogger<AssistantService> _logger;
+    private DateTimeOffset _lastDiskSweep = DateTimeOffset.MinValue;
 
-    public AssistantService(ILogger<AssistantService> logger) : this(SiteHostTools.All, logger)
+    public AssistantService(AssistantConversationStore store, ILogger<AssistantService> logger) : this(SiteHostTools.All, logger, store)
     {
     }
 
-    /// <summary>For tests, with tools of their own.</summary>
-    public AssistantService(IReadOnlyList<SiteHostTool> tools, ILogger<AssistantService> logger)
+    /// <summary>For tests, with tools of their own, and conversations on disk only when given a store.</summary>
+    public AssistantService(IReadOnlyList<SiteHostTool> tools, ILogger<AssistantService> logger, AssistantConversationStore? store = null)
     {
         _tools = tools;
         _offered = tools.Select(tool => new AiTool(tool.Function.Name, tool.Function.Description, tool.Function.JsonSchema)).ToList();
+        _store = store;
         _logger = logger;
     }
 
@@ -109,15 +115,19 @@ public sealed class AssistantService
     /// sent to the model with every call.
     /// </summary>
     /// <param name="services">The request's services: the tools act as whoever the request is signed in as.</param>
+    /// <param name="admit">
+    /// Asked before a new message is taken (not for a Run or Cancel): null lets it through, anything
+    /// else is the reason it is refused, shown to the user. For the daily limit on members.
+    /// </param>
+    /// <param name="record">Told the tokens the request used, once it is done.</param>
     public async Task RunAsync(
         string userId, AssistantRequest request, string context, IAssistantModel model, IServiceProvider services,
-        Func<object, Task> emit, CancellationToken ct)
+        Func<object, Task> emit, CancellationToken ct,
+        Func<Task<string?>>? admit = null, Func<int, int, Task>? record = null)
     {
         Sweep();
 
-        var conversation = request.Conversation is { } id && _conversations.TryGetValue(id, out var found) && found.UserId == userId
-            ? found
-            : null;
+        var conversation = request.Conversation is { } id ? await FindAsync(id, userId) : null;
 
         if (conversation is null)
         {
@@ -167,6 +177,12 @@ public sealed class AssistantService
                     return;
                 }
 
+                if (admit is not null && await admit() is { } refused)
+                {
+                    await emit(new { type = "error", message = refused });
+                    return;
+                }
+
                 conversation.Messages.Add(AiMessage.User(request.Message.Trim()));
             }
 
@@ -192,7 +208,20 @@ public sealed class AssistantService
         }
         finally
         {
+            if (_store is not null) await _store.SaveAsync(conversation);
             conversation.Gate.Release();
+            if (record is not null)
+            {
+                try
+                {
+                    await record(usage.Input, usage.Output);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "The assistant's token use could not be recorded");
+                }
+            }
+
             await emit(new
             {
                 type = "done",
@@ -449,7 +478,26 @@ public sealed class AssistantService
     /// <summary>The longest read_site_file or read_function_files result passed back, a little over the text they return at most.</summary>
     public const int MaxFileReadChars = 64_000;
 
-    /// <summary>Drops conversations nobody has used for <see cref="IdleLifetime"/>.</summary>
+    /// <summary>
+    /// The user's conversation with that id: from memory, or from disk after a restart. Null when
+    /// there is none, it belongs to someone else, or it has been idle too long.
+    /// </summary>
+    private async Task<AssistantConversation?> FindAsync(string id, string userId)
+    {
+        if (_conversations.TryGetValue(id, out var found)) return found.UserId == userId ? found : null;
+        if (_store is null) return null;
+
+        var loaded = await _store.LoadAsync(id, DateTimeOffset.UtcNow - IdleLifetime);
+        if (loaded is null || loaded.UserId != userId) return null;
+
+        // Two requests may load it at once; both use whichever was kept.
+        return _conversations.GetOrAdd(id, loaded);
+    }
+
+    /// <summary>
+    /// Drops conversations nobody has used for <see cref="IdleLifetime"/>, from memory every time
+    /// and from disk every few minutes.
+    /// </summary>
     private void Sweep()
     {
         var cutoff = DateTimeOffset.UtcNow - IdleLifetime;
@@ -457,13 +505,21 @@ public sealed class AssistantService
         {
             if (conversation.LastUsedUtc < cutoff) _conversations.TryRemove(id, out _);
         }
+
+        if (_store is not null && DateTimeOffset.UtcNow - _lastDiskSweep > TimeSpan.FromMinutes(10))
+        {
+            _lastDiskSweep = DateTimeOffset.UtcNow;
+            _store.DeleteIdle(cutoff);
+        }
     }
 
-    /// <summary>Forgets a conversation, as "New conversation" asks.</summary>
-    public void End(string? conversationId, string userId)
+    /// <summary>Forgets a conversation, as "New conversation" asks, from memory and from disk.</summary>
+    public async Task EndAsync(string? conversationId, string userId)
     {
-        if (conversationId is not null && _conversations.TryGetValue(conversationId, out var conversation) && conversation.UserId == userId)
-            _conversations.TryRemove(conversationId, out _);
+        if (conversationId is null || await FindAsync(conversationId, userId) is null) return;
+
+        _conversations.TryRemove(conversationId, out _);
+        _store?.Delete(conversationId);
     }
 
     private sealed class Usage
