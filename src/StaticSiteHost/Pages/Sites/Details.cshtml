@@ -428,6 +428,10 @@
                     {
                         <span class="badge">streaming</span>
                     }
+                    @if (route.GrpcWeb)
+                    {
+                        <span class="badge">gRPC-Web</span>
+                    }
                     @if (route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2)
                     {
                         <span class="badge">HTTP/2</span>
@@ -471,6 +475,7 @@
                                     route.StripPath ? "path removed" : "path kept",
                                     route.WebSockets ? "WebSockets" : null,
                                     route.Streaming ? "streaming" : null,
+                                    route.GrpcWeb ? "gRPC-Web" : null,
                                     route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2 ? "HTTP/2" : null,
                                     route.FilesFirst ? "files first" : null,
                                     $"{route.TimeoutSeconds} s timeout"

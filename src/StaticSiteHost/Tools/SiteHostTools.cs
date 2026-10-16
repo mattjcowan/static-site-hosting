@@ -546,7 +546,7 @@ public static class SiteHostTools
     public static async Task<JsonElement> SetProxyRoute(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
-        [Description("The route. Required: path and target (an http:// or https:// URL, such as http://api:8080). Optional settings: stripPath (default true), enabled, webSockets, crossSiteWebSockets, streaming (server-sent events), httpVersion ('auto', '1.1' or '2'; '2' for gRPC), timeoutSeconds (default 100), maxRequestBodyBytes, keepHost, forwardedHeaders, requestHeaders ([{name, value}], empty value removes), cookieMode ('host', 'keep' or 'parent') with cookieParentDomain, rewriteRedirects, filesFirst, acceptAnyCertificate.")] ProxyRoute route,
+        [Description("The route. Required: path and target (an http:// or https:// URL, such as http://api:8080). Optional settings: stripPath (default true), enabled, webSockets, crossSiteWebSockets, streaming (server-sent events), grpcWeb (translate a browser's gRPC-Web calls to gRPC for a gRPC server that has no gRPC-Web of its own), httpVersion ('auto', '1.1' or '2'; gRPC always goes over HTTP/2 unless this is '1.1'), timeoutSeconds (default 100), maxRequestBodyBytes, keepHost, forwardedHeaders, requestHeaders ([{name, value}], empty value removes), cookieMode ('host', 'keep' or 'parent') with cookieParentDomain, rewriteRedirects, filesFirst, acceptAnyCertificate.")] ProxyRoute route,
         [Description("The path the route is saved under now, to change its path. Leave out otherwise.")] string? originalPath = null)
     {
         var caller = Caller.Of(services);
@@ -581,7 +581,7 @@ public static class SiteHostTools
             {
                 saved = new { saved.Path, saved.Target },
                 check = check is null ? null : new { answered = check.Answered, status = check.Status, error = check.Error, summary = check.Describe() },
-                routes = site.Proxy.Select(r => new { r.Path, r.Target, r.Enabled, r.StripPath, r.WebSockets, r.Streaming, r.HttpVersion })
+                routes = site.Proxy.Select(r => new { r.Path, r.Target, r.Enabled, r.StripPath, r.WebSockets, r.Streaming, r.GrpcWeb, r.HttpVersion })
             };
         });
     }

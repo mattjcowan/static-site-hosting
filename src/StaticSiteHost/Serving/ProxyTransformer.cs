@@ -86,6 +86,20 @@ internal sealed partial class ProxyTransformer : HttpTransformer
             if (!proxyRequest.Headers.TryAddWithoutValidation(name, value))
                 proxyRequest.Content?.Headers.TryAddWithoutValidation(name, value);
         }
+
+        // gRPC-Web goes on as gRPC: its own content type, and the TE header gRPC servers look for.
+        if (state.GrpcWeb != GrpcWebMode.None)
+        {
+            if (proxyRequest.Content is { } content)
+            {
+                content.Headers.Remove(HeaderNames.ContentType);
+                content.Headers.TryAddWithoutValidation(HeaderNames.ContentType, state.GrpcContentType);
+                if (state.GrpcWeb == GrpcWebMode.Text) content.Headers.ContentLength = null;
+            }
+
+            proxyRequest.Headers.Remove(HeaderNames.TE);
+            proxyRequest.Headers.TryAddWithoutValidation(HeaderNames.TE, "trailers");
+        }
     }
 
     public override async ValueTask<bool> TransformResponseAsync(
@@ -105,6 +119,18 @@ internal sealed partial class ProxyTransformer : HttpTransformer
 
         if (_route.Streaming) headers["X-Accel-Buffering"] = "no";
 
+        // A gRPC answer to a gRPC-Web call goes back as gRPC-Web. Anything else, such as the
+        // target's own error page, goes back as it came.
+        if (state.GrpcWeb != GrpcWebMode.None &&
+            GrpcWeb.WebContentTypeFor(proxyResponse.Content.Headers.ContentType?.ToString(), state.GrpcWeb) is { } webContentType)
+        {
+            headers.ContentType = webContentType;
+            headers.ContentLength = null;
+            headers["X-Accel-Buffering"] = "no";
+            state.GrpcWebResponse = true;
+            if (context.Response.Body is GrpcWebTextResponseStream text) text.Active = true;
+        }
+
         headers.XContentTypeOptions = "nosniff";
 
         // The site's header rules, after the backend's own headers so a rule wins, as it does over
@@ -120,6 +146,40 @@ internal sealed partial class ProxyTransformer : HttpTransformer
         }
 
         return proceed;
+    }
+
+    /// <summary>
+    /// The target's trailers. For a gRPC-Web call they go at the end of the body, as the frame the
+    /// browser reads <c>grpc-status</c> from; none means the status came with the headers
+    /// (a trailers-only answer), and those have been passed on already.
+    /// </summary>
+    public override async ValueTask TransformResponseTrailersAsync(
+        HttpContext context, HttpResponseMessage proxyResponse, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!ProxyRequestState.Of(context).GrpcWebResponse)
+            {
+                // Trailers after no body at all, as a gRPC error that follows the headers is: sent now,
+                // the headers go without the Content-Length: 0 Kestrel would give a response with an
+                // empty body, which nginx's grpc_pass takes for the end and drops the trailers after.
+                if (!context.Response.HasStarted && proxyResponse.TrailingHeaders.Any() && context.Response.SupportsTrailers())
+                    await context.Response.StartAsync(cancellationToken);
+
+                await base.TransformResponseTrailersAsync(context, proxyResponse, cancellationToken);
+                return;
+            }
+
+            if (!proxyResponse.TrailingHeaders.Any()) return;
+
+            await context.Response.Body.WriteAsync(GrpcWeb.TrailersFrame(proxyResponse.TrailingHeaders), cancellationToken);
+            await context.Response.Body.FlushAsync(cancellationToken);
+        }
+        catch (Exception ex) when (context.RequestAborted.IsCancellationRequested || ex is IOException or OperationCanceledException)
+        {
+            // The visitor went away as the target finished, as one closing a server stream does:
+            // nobody is left to send the status to. YARP lets this through, so it is ended here.
+        }
     }
 
     /// <summary>The Cookie header without the server's own cookies, whose names start with <c>ssh.</c>.</summary>
@@ -191,6 +251,15 @@ internal sealed partial class ProxyTransformer : HttpTransformer
 internal sealed record ProxyRequestState(PathString Remainder, string RequestPath, SiteHeaderRules HeaderRules, bool IsPrivate)
 {
     private const string Key = "ssh.proxy";
+
+    /// <summary>A gRPC-Web call the route translates, and in which form; None for any other request.</summary>
+    public GrpcWebMode GrpcWeb { get; init; }
+
+    /// <summary>The gRPC content type the call goes to the target with.</summary>
+    public string GrpcContentType { get; init; } = "";
+
+    /// <summary>Set once the target answered the call with gRPC, so the trailers go in the body.</summary>
+    public bool GrpcWebResponse { get; set; }
 
     public void Attach(HttpContext context) => context.Items[Key] = this;
 

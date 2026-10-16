@@ -131,10 +131,46 @@ public sealed class SiteProxy
 
         if (route.Route.Streaming) context.Items[NoCompressionKey] = true;
 
-        new ProxyRequestState(remainder, requestPath, _content.HeaderRulesFor(site), site.IsPasscodeProtected).Attach(context);
+        // gRPC-Web to translate: the transformer changes the content types and adds the trailers
+        // frame; a text body is decoded here on the way in and encoded on the way out.
+        var contentType = context.Request.ContentType;
+        var grpcContentType = "";
+        var grpcWeb = route.Route.GrpcWeb ? GrpcWeb.ModeOf(contentType, out grpcContentType) : GrpcWebMode.None;
+        GrpcWebTextResponseStream? textResponse = null;
+        if (grpcWeb != GrpcWebMode.None)
+        {
+            // A server stream's messages must reach the browser as they come.
+            context.Items[NoCompressionKey] = true;
 
-        var error = await _forwarder.SendAsync(
-            context, route.TargetPrefix!, _invokers.For(route.Route.AcceptAnyCertificate), route.Config, route.Transformer);
+            if (grpcWeb == GrpcWebMode.Text)
+            {
+                context.Request.Body = new GrpcWebTextRequestStream(context.Request.Body);
+                // Decoded, the body is shorter than the length the browser sent.
+                context.Request.ContentLength = null;
+                context.Response.Body = textResponse = new GrpcWebTextResponseStream(context.Response.Body);
+            }
+        }
+
+        new ProxyRequestState(remainder, requestPath, _content.HeaderRulesFor(site), site.IsPasscodeProtected)
+        {
+            GrpcWeb = grpcWeb,
+            GrpcContentType = grpcContentType
+        }.Attach(context);
+
+        // gRPC, and gRPC-Web once translated, needs HTTP/2 to the target, h2c for an http:// one.
+        var config = grpcWeb != GrpcWebMode.None || GrpcWeb.IsGrpc(contentType) ? route.GrpcConfig : route.Config;
+
+        ForwarderError error;
+        try
+        {
+            error = await _forwarder.SendAsync(
+                context, route.TargetPrefix!, _invokers.For(route.Route.AcceptAnyCertificate), config, route.Transformer);
+        }
+        finally
+        {
+            // An error page written after this goes out as it is, not in base64.
+            if (textResponse is not null) context.Response.Body = textResponse.Inner;
+        }
 
         if (error != ForwarderError.None) await FailedAsync(context, site, route, error);
     }
@@ -272,6 +308,12 @@ internal sealed class CompiledProxyRoute
 
     public ForwarderRequestConfig Config { get; private init; } = ForwarderRequestConfig.Empty;
 
+    /// <summary>
+    /// <see cref="Config"/> for a gRPC request: HTTP/2 and nothing else, which for an <c>http://</c>
+    /// target means h2c. The same as <see cref="Config"/> on a route set to HTTP/1.1 only.
+    /// </summary>
+    public ForwarderRequestConfig GrpcConfig { get; private init; } = ForwarderRequestConfig.Empty;
+
     public ProxyTransformer? Transformer { get; private init; }
 
     public static CompiledProxyRoute Compile(ProxyRoute route, string domain, ILogger logger)
@@ -301,16 +343,21 @@ internal sealed class CompiledProxyRoute
             _ => (HttpVersion.Version20, HttpVersionPolicy.RequestVersionOrLower)
         };
 
+        var config = new ForwarderRequestConfig
+        {
+            ActivityTimeout = TimeSpan.FromSeconds(route.TimeoutSeconds),
+            Version = version,
+            VersionPolicy = policy,
+            AllowResponseBuffering = false
+        };
+
         return new CompiledProxyRoute(route, prefix)
         {
             Target = target,
-            Config = new ForwarderRequestConfig
-            {
-                ActivityTimeout = TimeSpan.FromSeconds(route.TimeoutSeconds),
-                Version = version,
-                VersionPolicy = policy,
-                AllowResponseBuffering = false
-            },
+            Config = config,
+            GrpcConfig = route.HttpVersion == ProxyHttpVersions.Http11
+                ? config
+                : config with { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact },
             Transformer = new ProxyTransformer(route, prefix, target, headers)
         };
     }

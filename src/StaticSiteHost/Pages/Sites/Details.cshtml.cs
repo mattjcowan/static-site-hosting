@@ -70,6 +70,7 @@ public sealed class ProxyRouteInput
     public bool WebSockets { get; set; }
     public bool CrossSiteWebSockets { get; set; }
     public bool Streaming { get; set; }
+    public bool GrpcWeb { get; set; }
     public string? HttpVersion { get; set; }
     public int TimeoutSeconds { get; set; } = 100;
     public string? MaxRequestBodyMegabytes { get; set; }
@@ -123,6 +124,7 @@ public sealed class ProxyRouteInput
         route.WebSockets = WebSockets;
         route.CrossSiteWebSockets = CrossSiteWebSockets;
         route.Streaming = Streaming;
+        route.GrpcWeb = GrpcWeb;
         route.HttpVersion = HttpVersion ?? ProxyHttpVersions.Auto;
         route.TimeoutSeconds = TimeoutSeconds;
         route.MaxRequestBodyBytes = BytesOf(MaxRequestBodyMegabytes);

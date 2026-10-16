@@ -146,7 +146,7 @@ public static class AssistantEndpoints
             if (inherited.Count > 0) text.Append(" Server-wide routes for it: ").Append(string.Join("; ", inherited)).Append('.');
             if (current.Proxy.Count > 0)
                 text.Append(" Its own proxy routes: ").Append(string.Join("; ", current.Proxy.Select(r =>
-                    $"{r.Path} → {r.Target}{(r.Enabled ? "" : " (off)")}{(r.WebSockets ? " (WebSockets)" : "")}{(r.Streaming ? " (streaming)" : "")}"))).Append('.');
+                    $"{r.Path} → {r.Target}{(r.Enabled ? "" : " (off)")}{(r.WebSockets ? " (WebSockets)" : "")}{(r.Streaming ? " (streaming)" : "")}{(r.GrpcWeb ? " (gRPC-Web)" : "")}"))).Append('.');
             // The rules themselves when they are short, so changing them needs no get_rules first.
             text.Append(' ').Append(Rules("Header rules", HeaderRuleText.Format(current.Headers)));
             text.Append(' ').Append(Rules("Redirects", RedirectRuleText.Format(current.Redirects)));

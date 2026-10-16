@@ -34,6 +34,11 @@ services:
       SiteHosting__Tls__AcmeEmail: "${ACME_EMAIL:-}"   # optional ACME account contact
       SiteHosting__Tls__AcmeDirectory: "${ACME_DIRECTORY:-production}"
 
+      # A second plain port that speaks HTTP/2 only (h2c), for a proxy in front (Caddy's h2c://,
+      # nginx's grpc_pass) to pass gRPC on; 0 leaves it off. The proxy reaches it over the Compose
+      # network, so it needs no published port.
+      SiteHosting__H2cPort: "${H2C_PORT:-0}"
+
       SiteHosting__MaxUploadBytes: "${MAX_UPLOAD_BYTES:-536870912}"
       SiteHosting__ReleasesToKeep: "${RELEASES_TO_KEEP:-3}"
 

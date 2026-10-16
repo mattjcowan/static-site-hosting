@@ -64,6 +64,52 @@ if (hostingOptions.Tls.Enabled)
     });
 }
 
+// h2c (SiteHosting:H2cPort): a port of its own, since Kestrel offers HTTP/2 on a plain port only to
+// clients that start with it, and so only on a port that offers nothing else. Added to the
+// addresses the server already listens on (ASPNETCORE_URLS, or HTTPS in the server's two ports),
+// which binding a port in code would otherwise replace.
+if (hostingOptions.H2cPort > 0)
+{
+    var h2cPort = hostingOptions.H2cPort;
+
+    // Endpoints in Kestrel's own configuration replace every address, this one included.
+    if (builder.Configuration.GetSection("Kestrel:Endpoints").GetChildren().Any())
+        throw new InvalidOperationException(
+            "SiteHosting:H2cPort cannot be used with Kestrel:Endpoints, which replaces every other address. Add an endpoint with Protocols Http2 there instead.");
+
+    if (hostingOptions.Tls.Enabled)
+    {
+        if (h2cPort == hostingOptions.Tls.HttpPort || h2cPort == hostingOptions.Tls.HttpsPort)
+            throw new InvalidOperationException(
+                $"SiteHosting:H2cPort ({h2cPort}) must be a port of its own, not SiteHosting:Tls:HttpPort or HttpsPort.");
+
+        builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(h2cPort, listen => listen.Protocols = HttpProtocols.Http2));
+    }
+    else
+    {
+        // What Kestrel would listen on otherwise: the URLs, else the HTTP and HTTPS ports, else its default.
+        static IEnumerable<string> Ports(string? list, string scheme) =>
+            (list ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(port => $"{scheme}://*:{port}");
+
+        var urls = builder.WebHost.GetSetting(WebHostDefaults.ServerUrlsKey) is { Length: > 0 } configured
+            ? configured.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : Ports(builder.WebHost.GetSetting(WebHostDefaults.HttpPortsKey), "http")
+                .Concat(Ports(builder.WebHost.GetSetting(WebHostDefaults.HttpsPortsKey), "https"))
+                .DefaultIfEmpty("http://localhost:5000")
+                .ToArray();
+
+        if (urls.Any(url => url.TrimEnd('/').EndsWith($":{h2cPort}", StringComparison.Ordinal)))
+            throw new InvalidOperationException(
+                $"SiteHosting:H2cPort ({h2cPort}) must be a port of its own; the server already listens on it ({string.Join(";", urls)}).");
+
+        builder.WebHost.UseUrls([.. urls, $"http://*:{h2cPort}"]);
+        builder.WebHost.ConfigureKestrel(options => options.ConfigureEndpointDefaults(listen =>
+        {
+            if (listen.IPEndPoint?.Port == h2cPort) listen.Protocols = HttpProtocols.Http2;
+        }));
+    }
+}
+
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = hostingOptions.MaxUploadBytes;

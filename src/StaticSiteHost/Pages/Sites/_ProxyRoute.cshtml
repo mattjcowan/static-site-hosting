@@ -81,6 +81,8 @@
                 "Let pages on other sites open them. The visitor's cookies go along, so leave this off unless the backend checks Origin itself.");
             Switch("Streaming", route.Streaming, "Streaming",
                 "For server-sent events, long polls and big downloads: never compressed or buffered here.");
+            Switch("GrpcWeb", route.GrpcWeb, "Translate gRPC-Web",
+                "For a gRPC server with no gRPC-Web of its own: a browser's gRPC-Web calls go to it as gRPC over HTTP/2, and come back as gRPC-Web.");
             Switch("FilesFirst", route.FilesFirst, "Files first",
                 "Serve the site's file when there is one at the path, and forward only when there is not.");
             Switch("ForwardedHeaders", route.ForwardedHeaders, "Forwarded headers",
@@ -100,7 +102,7 @@
             <select id="@id-version" name="HttpVersion">
                 <option value="@ProxyHttpVersions.Auto" selected="@(route.HttpVersion == ProxyHttpVersions.Auto)">Auto</option>
                 <option value="@ProxyHttpVersions.Http11" selected="@(route.HttpVersion == ProxyHttpVersions.Http11)">HTTP/1.1 only</option>
-                <option value="@ProxyHttpVersions.Http2" selected="@(route.HttpVersion == ProxyHttpVersions.Http2)">HTTP/2 only (gRPC, h2c)</option>
+                <option value="@ProxyHttpVersions.Http2" selected="@(route.HttpVersion == ProxyHttpVersions.Http2)">HTTP/2 only (h2c)</option>
             </select>
         </div>
         <div class="field">
@@ -116,7 +118,8 @@
         </div>
     </div>
     <p class="hint proxy-row-hint">
-        Auto uses HTTP/2 when an https:// target offers it, and HTTP/1.1 otherwise. The timeout is how long the target may
+        Auto uses HTTP/2 when an https:// target offers it, and HTTP/1.1 otherwise; gRPC, and gRPC-Web once translated,
+        always go over HTTP/2. The timeout is how long the target may
         go without sending anything, an idle WebSocket included.
     </p>
 

@@ -129,7 +129,7 @@ zip.
 | Static files | Serve HTML, CSS, scripts and images from a zip | Upload the zip on the **Deploy** page, or `POST /api/v1/sites/{domain}/deploy`. Change some files with `PATCH /api/v1/sites/{domain}/files` or the [assistant](#the-assistant) | Member or administrator | [How hosting works](#how-hosting-works) |
 | Header rules | Set response headers, such as `Cache-Control`, per path | A `_headers` file in the zip, **Sites → the domain → Header rules**, or `PUT /api/v1/sites/{domain}/headers` | Member or administrator | [Header rules](#header-rules) |
 | Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
-| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming and HTTP/2 | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the top bar | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
+| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming, HTTP/2, gRPC and gRPC-Web | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the top bar | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
 | Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
 | HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
 | Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
@@ -517,9 +517,10 @@ releases list.
 | WebSockets | off | Forward WebSocket connections, over HTTP/1.1 and HTTP/2. Off, an upgrade is refused with `403` |
 | WebSockets from other sites | off | Off refuses an upgrade whose `Origin` is another site. The visitor's cookies go along with it, so leave this off unless the backend checks `Origin` itself |
 | Streaming | off | For server-sent events, long polls and large downloads: the response is never compressed or buffered by this server, and carries `X-Accel-Buffering: no` for an nginx in front |
-| HTTP version | Auto | **Auto:** HTTP/2 when an `https://` target offers it, HTTP/1.1 otherwise. **HTTP/1.1 only.** **HTTP/2 only:** HTTP/2 even over plain `http://` (h2c), as gRPC to a container needs |
+| Translate gRPC-Web | off | For a gRPC server with no gRPC-Web of its own: a browser's gRPC-Web calls go to it as gRPC over HTTP/2, and its answers come back as gRPC-Web. Other requests on the route are forwarded as usual. See [gRPC and gRPC-Web](#grpc-and-grpc-web) |
+| HTTP version | Auto | **Auto:** HTTP/2 when an `https://` target offers it, HTTP/1.1 otherwise; gRPC always goes over HTTP/2, h2c to an `http://` target. **HTTP/1.1 only.** **HTTP/2 only:** HTTP/2 for every request, even over plain `http://` (h2c) |
 | Timeout | 100 s | How long the target may go without sending anything: the wait for the headers, the gaps in a streamed answer, an idle WebSocket |
-| Largest request body | `MaxUploadBytes` | Lower it for an API that never takes big bodies, or raise it for an upload service |
+| Largest request body | `MaxUploadBytes` | Lower it for an API that never takes big bodies, or raise it for an upload service. It does not hold for gRPC over HTTP/2, whose streams YARP leaves unlimited, and a `grpc-web-text` body counts as its base64, about a third bigger |
 | Send the visitor's Host | off | For a backend that tells sites apart by name. Off, it gets the target's own host |
 | Forwarded headers | on | Send `X-Forwarded-For`, `-Proto`, `-Host` and, when the path is removed, `-Prefix`. Whatever the visitor sent under those names is dropped either way |
 | Request headers | none | `Name: value` lines set on every request, or `Name:` to remove one. Give a backend its API key here with `${env:…}`, and the browser never sees it |
@@ -583,11 +584,84 @@ Every change is written to the audit log.
 * A target cannot carry a user name or password, a query string or a fragment.
 * The request headers a route cannot set are `Host`, `Cookie`, the `X-Forwarded-*` headers,
   `Forwarded`, `X-Site-Host-Hops`, `Content-Length` and the other transport headers.
-* gRPC needs HTTP/2 on every hop. Use **HTTP/2 only** on the route for the hop to the target.
-  With [HTTPS in the server](#https-in-the-server), the hop into it is HTTP/2 too, and gRPC works
-  end to end. On port 8080, which is plain HTTP, the server refuses HTTP/2 (it answers
-  `HTTP_1_1_REQUIRED`), so a proxy in front that ends TLS cannot pass gRPC through it.
-  WebSockets, streaming and everything else work over HTTP/1.1.
+* gRPC needs HTTP/2 on every hop, and port 8080 speaks HTTP/1.1 only. See
+  [gRPC and gRPC-Web](#grpc-and-grpc-web) for the ways in. WebSockets, streaming and everything
+  else work over HTTP/1.1.
+
+### gRPC and gRPC-Web
+
+**What it is.** A proxy route can put a gRPC service on a site's domain, for gRPC clients and for
+browsers. Requests whose content type is `application/grpc…` go to the target over HTTP/2 (h2c
+for an `http://` target) on a route set to **Auto** or **HTTP/2 only**. The other hop, from the
+client into the server, depends on what is in front of it:
+
+| In front of the server | gRPC | gRPC-Web |
+| ---------------------- | ---- | -------- |
+| Nothing, with [HTTPS in the server](#https-in-the-server) | ✅ HTTP/2 comes with HTTPS | ✅ |
+| Caddy, nginx or another proxy that ends HTTPS | ✅ through the [h2c port](#the-h2c-port) | ✅ through either port |
+| [Railway](#deploying-on-railway) | ❌ its edge forwards HTTP/1.1 only | ✅ over HTTP/1.1 |
+| A [Cloudflare Tunnel](#cloudflare-tunnel) | not tested | not tested; it is ordinary HTTP requests |
+
+**gRPC-Web.** A browser cannot speak gRPC, so gRPC-Web clients (`grpc-web`, Connect's gRPC-Web
+transport, .NET's `GrpcWebHandler`) send it in a form that works over any HTTP version and through
+any proxy. Turn on **Translate gRPC-Web** on the route, and the server does what Envoy's gRPC-Web
+filter does: the call goes to the target as gRPC over HTTP/2, and the answer comes back as
+gRPC-Web, with its status at the end of the body. Both forms are understood: `application/grpc-web`
+and `application/grpc-web-text` (base64). Turn it on only for a target that has no gRPC-Web of its
+own; one that does needs nothing but a route.
+
+1. Add a route at the service's path, such as `/orders.v1.Orders` with **Remove the path** off, so
+   calls to `/orders.v1.Orders/GetOrder` reach the service unchanged. A route at `/grpc` with the
+   path removed works too, with the client's base URL ending in `/grpc`.
+2. Target the gRPC server: `http://orders:50051`. Leave the HTTP version on **Auto**.
+3. Turn on **Translate gRPC-Web**, and point the site's pages at their own host:
+   `createGrpcWebTransport({ baseUrl: location.origin })`. Being the same origin, they need no CORS.
+
+Unary calls and server streams work, with each message reaching the browser as the server sends
+it, and so do metadata in the headers and the trailers. gRPC-Web itself has no client or
+bidirectional streams. Calls through a site's [passcode](#private-sites) carry its cookie, like any
+request from its pages. A target that cannot be reached answers `502`, which gRPC clients report
+as `UNAVAILABLE`.
+
+#### The h2c port
+
+Kestrel will not speak HTTP/1.1 and HTTP/2 on one plain-HTTP port, so a proxy that ends HTTPS has
+no way to pass gRPC on through port 8080. `SiteHosting:H2cPort` adds a second plain port that
+speaks HTTP/2 only (h2c, with prior knowledge), for gRPC. It is off by default; set
+`SiteHosting__H2cPort=8081`, or `H2C_PORT=8081` with the Compose file. The proxy sends gRPC there
+and everything else to 8080, as these two do (both checked with gRPC and gRPC-Web clients):
+
+```caddyfile
+app.example.com {
+	@grpc header Content-Type application/grpc*
+	reverse_proxy @grpc h2c://static-site-host:8081
+	reverse_proxy static-site-host:8080
+}
+```
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name app.example.com;
+    # ssl_certificate …
+    client_max_body_size 0;        # nginx refuses bodies over 1 MB otherwise
+    location / {
+        grpc_set_header Host $host;
+        grpc_read_timeout 1h;      # long server streams
+        if ($content_type ~* "^application/grpc") {
+            grpc_pass grpc://static-site-host:8081;
+        }
+        proxy_set_header Host $host;
+        proxy_pass http://static-site-host:8080;
+    }
+}
+```
+
+The h2c port is plain HTTP like port 8080: with HTTPS in the server, requests to it are redirected
+to HTTPS, unless the proxy says it ended HTTPS (`X-Forwarded-Proto` with
+`SiteHosting:TrustForwardedHeaders`). A proxy route may not point at it, as at any of the server's
+own ports.
 
 ### Server-wide routes
 
@@ -2677,6 +2751,7 @@ environment variable with `__` as the separator (`SiteHosting__MaxUploadBytes`),
 | `SiteHosting:RealtimeMaxGroupsPerConnection` | `100`  | Realtime groups one page may be in |
 | `SiteHosting:ProxyBlockedNetworks`     | `169.254.0.0/16, fe80::/10` | Comma-separated networks a [proxy route](#proxy-routes) may never connect to. The server's own ports are refused whatever this says |
 | `SiteHosting:ProxyConnectTimeoutSeconds` | `10`       | How long a proxy route waits to connect to its target |
+| `SiteHosting:H2cPort`                  | `0` (off)    | A second plain-HTTP port that speaks HTTP/2 only, for a proxy in front to pass gRPC on. See [the h2c port](#the-h2c-port) |
 | `SiteHosting:Tls:Enabled`              | `false`      | End HTTPS in the server ([HTTPS in the server](#https-in-the-server)) |
 | `SiteHosting:Tls:HttpPort`             | `8080`       | The HTTP port, for Let's Encrypt's checks and redirects (published as 80) |
 | `SiteHosting:Tls:HttpsPort`            | `8443`       | The HTTPS port (published as 443) |
@@ -2750,7 +2825,7 @@ Back up `/data`, and you have backed up everything.
 **What it is.** The server ends HTTPS itself, so it needs nothing in front of it on a VPS: every
 site and management host gets a certificate, from Let's Encrypt by default, renewed by itself.
 Each connection gets the certificate for the host it names. Browsers get HTTP/2, and gRPC works
-end to end through [proxy routes](#proxy-routes) set to **HTTP/2 only**. It is off by default:
+end to end through [proxy routes](#proxy-routes) (see [gRPC and gRPC-Web](#grpc-and-grpc-web)). It is off by default:
 behind Caddy, nginx, Railway or a [Cloudflare Tunnel](#cloudflare-tunnel), which end HTTPS
 themselves, leave it off.
 
@@ -2864,7 +2939,7 @@ change per site.
 **How to use it.**
 
 1. **New service from a Docker image:** `mattjcowan/static-site-hosting:latest`, or a version
-   such as `mattjcowan/static-site-hosting:0.5.0` to choose when to upgrade. The `slim` tag serves
+   such as `mattjcowan/static-site-hosting:0.9.0` to choose when to upgrade. The `slim` tag serves
    static sites only, without functions.
 2. **Add a volume mounted at `/data`.** Users, keys, sites and releases live there. Without a
    volume, every redeploy starts empty.
@@ -2921,8 +2996,10 @@ Full (strict) once Railway shows the certificate as issued.
 * Back up the volume before upgrading at a site that matters (Railway's volume backups, or
   download `/data`).
 * gRPC cannot come in through a Railway domain: Railway's edge forwards every request to the
-  service as HTTP/1.1, and gRPC needs HTTP/2 on every hop. gRPC between services on Railway's
-  private network is not affected.
+  service as HTTP/1.1, and gRPC needs HTTP/2 on every hop. gRPC-Web can: turn on **Translate
+  gRPC-Web** on the route to the gRPC service, and browsers and other gRPC-Web clients reach it
+  through Railway's HTTP/1.1 (see [gRPC and gRPC-Web](#grpc-and-grpc-web)). gRPC between services
+  on Railway's private network is not affected.
 
 ## Cloudflare Tunnel
 
@@ -2970,8 +3047,9 @@ anywhere you would rather not publish ports 80 and 443. It needs the domain's DN
 * **Forwarded headers.** The Compose file sets `SiteHosting__TrustForwardedHeaders=true`, so the
   server sees `https` and the visitor's address. That is safe only because nothing but
   `cloudflared` can reach the server: keep its port unpublished.
-* **WebSockets** (realtime, and proxy routes that forward them) pass through the tunnel. gRPC is
-  not covered here.
+* **WebSockets** (realtime, and proxy routes that forward them) pass through the tunnel. gRPC and
+  gRPC-Web were not tried through a tunnel; gRPC-Web is ordinary HTTP requests, so it should pass
+  like any other.
 * **Uploads.** Cloudflare limits a request body to 100 MB on the Free and Pro plans, so a larger
   zip must be deployed some other way.
 * This setup was checked as far as Compose and the server go; the Cloudflare side follows

@@ -108,6 +108,8 @@ public static class ProxyRouteRules
 
             if (!ProxyHttpVersions.All.Contains(route.HttpVersion))
                 errors.Add($"{label}: the HTTP version must be one of {string.Join(", ", ProxyHttpVersions.All)}.");
+            else if (route.GrpcWeb && route.HttpVersion == ProxyHttpVersions.Http11)
+                errors.Add($"{label}: gRPC-Web is translated to gRPC, which needs HTTP/2; set the HTTP version to auto or 2.");
 
             if (route.TimeoutSeconds < 1 || route.TimeoutSeconds > MaxTimeoutSeconds)
                 errors.Add($"{label}: the timeout must be between 1 and {MaxTimeoutSeconds} seconds.");

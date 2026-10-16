@@ -45,6 +45,14 @@ public class ProxyRoute
     /// </summary>
     public bool Streaming { get; set; }
 
+    /// <summary>
+    /// Translate gRPC-Web to gRPC: a browser's gRPC-Web call (<c>application/grpc-web</c> or
+    /// <c>-text</c>), over any HTTP version, goes to the target as gRPC over HTTP/2, and its answer
+    /// comes back as gRPC-Web. For a gRPC server with no gRPC-Web of its own. Other requests on the
+    /// route are forwarded as usual. See <c>Serving/GrpcWeb.cs</c>.
+    /// </summary>
+    public bool GrpcWeb { get; set; }
+
     /// <summary>One of <see cref="ProxyHttpVersions"/>.</summary>
     public string HttpVersion { get; set; } = ProxyHttpVersions.Auto;
 
@@ -119,12 +127,15 @@ public sealed class ProxyHeader
 
 public static class ProxyHttpVersions
 {
-    /// <summary>HTTP/2 when an <c>https://</c> target offers it, otherwise HTTP/1.1.</summary>
+    /// <summary>
+    /// HTTP/2 when an <c>https://</c> target offers it, otherwise HTTP/1.1. gRPC goes over HTTP/2
+    /// either way, h2c to an <c>http://</c> target.
+    /// </summary>
     public const string Auto = "auto";
 
     public const string Http11 = "1.1";
 
-    /// <summary>HTTP/2 only, over plain <c>http://</c> too (h2c), as gRPC to a container needs.</summary>
+    /// <summary>HTTP/2 only, over plain <c>http://</c> too (h2c), for a target that speaks HTTP/2 alone.</summary>
     public const string Http2 = "2";
 
     public static readonly string[] All = [Auto, Http11, Http2];

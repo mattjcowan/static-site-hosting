@@ -129,6 +129,14 @@ public sealed class SiteHostingOptions
     /// <summary>How long a proxy route waits for a connection to its target.</summary>
     public int ProxyConnectTimeoutSeconds { get; set; } = 10;
 
+    /// <summary>
+    /// A second plain-HTTP port that speaks HTTP/2 only (h2c, with prior knowledge), for a proxy in
+    /// front that ends HTTPS and passes gRPC on: Caddy's <c>h2c://</c>, nginx's <c>grpc_pass</c>.
+    /// Kestrel cannot offer HTTP/1.1 and h2c on one plain port, so the usual port stays HTTP/1.1 and
+    /// this one is added beside it. 0, the default, leaves it off.
+    /// </summary>
+    public int H2cPort { get; set; }
+
     /// <summary>HTTPS in the server itself: off unless turned on. See <see cref="TlsOptions"/>.</summary>
     public TlsOptions Tls { get; set; } = new();
 

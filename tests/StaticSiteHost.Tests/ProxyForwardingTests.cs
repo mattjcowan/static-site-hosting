@@ -35,6 +35,9 @@ public sealed class ProxyServers : IAsyncLifetime
     public string BackendUrl { get; private set; } = "";
     public string Http2BackendUrl { get; private set; } = "";
     public string FrontUrl { get; private set; } = "";
+
+    /// <summary>The same front, on a port that speaks HTTP/2 only (h2c), as SiteHosting:H2cPort does.</summary>
+    public string Http2FrontUrl { get; private set; } = "";
     public SiteRecord Site { get; } = new() { Domain = Domain };
     public IServiceProvider FrontServices { get; private set; } = null!;
 
@@ -46,6 +49,7 @@ public sealed class ProxyServers : IAsyncLifetime
         var front = Front(DataRoot, blockedNetworks: "169.254.0.0/16", () => Site);
         FrontUrl = await StartAsync(front);
         FrontServices = front.Services;
+        Http2FrontUrl = await StartAsync(Front(DataRoot, blockedNetworks: "169.254.0.0/16", () => Site, http2Only: true));
 
         // A release with one file, for "Files first".
         var paths = front.Services.GetRequiredService<DataPaths>();
@@ -63,11 +67,14 @@ public sealed class ProxyServers : IAsyncLifetime
         return app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
     }
 
-    public static WebApplication Front(string dataRoot, string blockedNetworks, Func<SiteRecord> site)
+    public static WebApplication Front(string dataRoot, string blockedNetworks, Func<SiteRecord> site, bool http2Only = false)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        if (http2Only)
+            builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.Protocols = HttpProtocols.Http2));
+        else
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.Configure<SiteHostingOptions>(options =>
         {
             options.DataRoot = dataRoot;
@@ -144,6 +151,31 @@ public sealed class ProxyServers : IAsyncLifetime
             var received = await socket.ReceiveAsync(buffer, CancellationToken.None);
             await socket.SendAsync(buffer.AsMemory(0, received.Count), WebSocketMessageType.Text, true, CancellationToken.None);
             await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+        });
+
+        // gRPC, as far as the proxy can tell: the request's frames come back as they were sent, with
+        // what arrived in a header and the status in the trailers.
+        app.MapPost("/grpc.Echo/Say", async (HttpContext context) =>
+        {
+            using var body = new MemoryStream();
+            await context.Request.Body.CopyToAsync(body);
+            context.Response.ContentType = "application/grpc+proto";
+            context.Response.Headers["x-seen"] = $"{context.Request.Protocol} {context.Request.ContentType} te={context.Request.Headers.TE}";
+            await context.Response.Body.WriteAsync(body.ToArray());
+            if (!context.Response.SupportsTrailers()) return;
+            context.Response.AppendTrailer("grpc-status", "0");
+            context.Response.AppendTrailer("x-trailer", "t1");
+        });
+
+        // A gRPC error after the headers: no body at all, then the status in the trailers.
+        app.MapPost("/grpc.Echo/Fail", async (HttpContext context) =>
+        {
+            await context.Request.Body.CopyToAsync(Stream.Null);
+            context.Response.ContentType = "application/grpc";
+            await context.Response.StartAsync();
+            if (!context.Response.SupportsTrailers()) return;
+            context.Response.AppendTrailer("grpc-status", "5");
+            context.Response.AppendTrailer("grpc-message", "no such thing");
         });
 
         // Everything else: what arrived, as JSON.
@@ -510,6 +542,110 @@ public class ProxyForwardingTests : IClassFixture<ProxyServers>
         Use(Route(target: _servers.Http2BackendUrl, configure: r => r.HttpVersion = ProxyHttpVersions.Http2));
 
         Assert.Equal("HTTP/2", (await EchoAsync("/api/x")).Protocol);
+    }
+
+    /// <summary>One gRPC message frame: not compressed, the length, then the message.</summary>
+    private static byte[] GrpcFrame(string message)
+    {
+        var bytes = Encoding.UTF8.GetBytes(message);
+        var frame = new byte[5 + bytes.Length];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(1), bytes.Length);
+        bytes.CopyTo(frame, 5);
+        return frame;
+    }
+
+    private static HttpRequestMessage GrpcWebCall(string path, string contentType, byte[] body) => new(HttpMethod.Post, path)
+    {
+        Content = new ByteArrayContent(body) { Headers = { { "Content-Type", contentType } } }
+    };
+
+    [Fact]
+    public async Task Translates_grpc_web_to_grpc_over_http2_and_puts_the_trailers_in_the_body()
+    {
+        Use(Route(target: _servers.Http2BackendUrl, configure: r => r.GrpcWeb = true));
+        var frame = GrpcFrame("hello");
+
+        using var response = await _client.SendAsync(GrpcWebCall("/api/grpc.Echo/Say", "application/grpc-web+proto", frame));
+        var body = await response.Content.ReadAsByteArrayAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new Version(1, 1), response.Version);
+        Assert.Equal("application/grpc-web+proto", response.Content.Headers.ContentType?.ToString());
+        Assert.Equal("HTTP/2 application/grpc+proto te=trailers", response.Headers.GetValues("x-seen").Single());
+        Assert.Equal("no", response.Headers.GetValues("X-Accel-Buffering").Single());
+
+        Assert.Equal(frame, body[..frame.Length]);
+        var trailers = body[frame.Length..];
+        Assert.Equal(GrpcWeb.TrailersFlag, trailers[0]);
+        Assert.Equal(trailers.Length - 5, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(trailers.AsSpan(1)));
+        Assert.Equal("grpc-status:0\r\nx-trailer:t1\r\n", Encoding.ASCII.GetString(trailers, 5, trailers.Length - 5));
+    }
+
+    [Fact]
+    public async Task Translates_grpc_web_text_both_ways_in_base64()
+    {
+        Use(Route(target: _servers.Http2BackendUrl, configure: r => r.GrpcWeb = true));
+        var frame = GrpcFrame("hello");
+
+        // Sent in two pieces, each with its own padding, as the protocol allows.
+        var text = Convert.ToBase64String(frame[..4]) + "\r\n" + Convert.ToBase64String(frame[4..]);
+        using var response = await _client.SendAsync(GrpcWebCall("/api/grpc.Echo/Say", "application/grpc-web-text", Encoding.ASCII.GetBytes(text)));
+        var answer = await response.Content.ReadAsStringAsync();
+
+        // The target's +proto comes back with it.
+        Assert.Equal("application/grpc-web-text+proto", response.Content.Headers.ContentType?.ToString());
+        Assert.Equal("HTTP/2 application/grpc te=trailers", response.Headers.GetValues("x-seen").Single());
+
+        // Each write is padded on its own; decode it piece by piece, as a browser does.
+        var decoded = new List<byte>();
+        foreach (var piece in System.Text.RegularExpressions.Regex.Matches(answer, "[^=]+=*").Select(m => m.Value))
+            decoded.AddRange(Convert.FromBase64String(piece));
+        Assert.Equal(frame, decoded.Take(frame.Length));
+        Assert.Contains("grpc-status:0", Encoding.ASCII.GetString(decoded.Skip(frame.Length + 5).ToArray()));
+    }
+
+    [Fact]
+    public async Task A_grpc_web_call_is_forwarded_untouched_when_the_route_does_not_translate_and_so_is_an_answer_that_is_not_grpc()
+    {
+        Use(Route(configure: r => r.GrpcWeb = false));
+        var untouched = await EchoAsync(GrpcWebCall("/api/other", "application/grpc-web", GrpcFrame("x")));
+        Assert.Equal("application/grpc-web", untouched.Header("Content-Type"));
+        Assert.Null(untouched.Header("TE"));
+
+        // Translated on the way in, but the target answered with JSON: it comes back as it was.
+        Use(Route(target: _servers.Http2BackendUrl, configure: r => r.GrpcWeb = true));
+        using var response = await _client.SendAsync(GrpcWebCall("/api/other", "application/grpc-web", GrpcFrame("x")));
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        var echo = (await response.Content.ReadFromJsonAsync<Echo>(new JsonSerializerOptions(JsonSerializerDefaults.Web)))!;
+        Assert.Equal("application/grpc", echo.Header("Content-Type"));
+    }
+
+    [Fact]
+    public async Task Grpc_goes_over_http2_on_an_auto_route_and_an_error_after_the_headers_keeps_its_trailers()
+    {
+        Use(Route(target: _servers.Http2BackendUrl));
+        using var client = new HttpClient { BaseAddress = new Uri(_servers.Http2FrontUrl) };
+        HttpRequestMessage Call(string path)
+        {
+            var call = GrpcWebCall(path, "application/grpc", GrpcFrame("hi"));
+            (call.Version, call.VersionPolicy) = (HttpVersion.Version20, HttpVersionPolicy.RequestVersionExact);
+            // As every gRPC client sends it, and the backend may insist on it.
+            call.Headers.TE.ParseAdd("trailers");
+            return call;
+        }
+
+        using var say = await client.SendAsync(Call("/api/grpc.Echo/Say"));
+        await say.Content.ReadAsByteArrayAsync();
+        Assert.Equal("HTTP/2 application/grpc te=trailers", say.Headers.GetValues("x-seen").Single());
+        Assert.Equal("0", say.TrailingHeaders.GetValues("grpc-status").Single());
+
+        // No Content-Length: 0 ahead of the trailers, which nginx's grpc_pass takes for the end.
+        using var fail = await client.SendAsync(Call("/api/grpc.Echo/Fail"));
+        // As received: once the body is read, HttpClient works a length out by itself.
+        Assert.False(fail.Content.Headers.NonValidated.Contains("Content-Length"));
+        Assert.Empty(await fail.Content.ReadAsByteArrayAsync());
+        Assert.Equal("5", fail.TrailingHeaders.GetValues("grpc-status").Single());
+        Assert.Equal("no such thing", fail.TrailingHeaders.GetValues("grpc-message").Single());
     }
 
     private Uri WebSocketUri => new(_servers.FrontUrl.Replace("http://", "ws://") + "/api/ws");

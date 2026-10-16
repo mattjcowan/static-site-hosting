@@ -495,8 +495,8 @@ Confirmed by going ahead with phase 1 (2026-10-15); items 1–4 and 6 are built 
    libraries are maintained when the work starts.
 6. **Verified while building phase 1:** Kestrel does **not** take HTTP/2 without TLS (h2c) on a
    port that also speaks HTTP/1.1. It answers `HTTP_1_1_REQUIRED`. So gRPC through Caddy needs a
-   second, HTTP/2-only listener (a small addition, not built) until phase 3 puts TLS in the
-   server and ALPN does the negotiation.
+   second, HTTP/2-only listener until phase 3 puts TLS in the server and ALPN does the
+   negotiation. That listener came later as `SiteHosting:H2cPort` (see "0.9.0: gRPC-Web and h2c").
 
 ---
 
@@ -561,8 +561,8 @@ traffic forwarded, the Test button, validation messages, and the Proxy card's la
   given functions gets an empty release (source `functions`, no files) to carry them
   (`ZipDeploymentService.SetFunctionsAsync`), so a proxy-only site can have a sign-in middleware
   in front of its routes. A later zip deploy carries the functions forward as usual.
-* An HTTP/2-only listener option (for example `SiteHosting:Http2Port`), so gRPC can pass
-  through a TLS proxy in front before phase 3.
+* ~~An HTTP/2-only listener option~~, so gRPC can pass through a TLS proxy in front. Done as
+  `SiteHosting:H2cPort` (see "0.9.0: gRPC-Web and h2c").
 * Validation messages number routes by their position in the sorted list ("Route 2 (/x)"). On
   the page's single-route forms the number adds nothing and could be dropped.
 
@@ -810,7 +810,8 @@ Four items for deployments behind someone else's edge, built before phase 3:
 **gRPC, dropped for now.** Railway's edge forwards every request to the service as HTTP/1.1, so
 an HTTP/2-only listener here would not bring native gRPC through a Railway domain. gRPC-Web
 translation on a route would, and is a possible later item; native gRPC comes with phase 3,
-where TLS in the server gives HTTP/2 by ALPN.
+where TLS in the server gives HTTP/2 by ALPN. Both were built after phase 3 (see "0.9.0: gRPC-Web and
+h2c").
 
 ## Phase 3: built
 
@@ -869,6 +870,66 @@ HTTPS:5543 → an HTTP/2-only proxy route → `moul/grpcbin` over h2c) answered.
 
 **Not done:** DNS-01 (wildcards from Let's Encrypt) is phase 4; HTTP/3; OCSP stapling; ACME
 renewal information (ARI).
+
+## 0.9.0: gRPC-Web and h2c
+
+Two ways for gRPC to reach a route when the server does not end HTTPS itself.
+
+**gRPC-Web translation**, a route setting (`ProxyRoute.GrpcWeb`, "Translate gRPC-Web", off by
+default). Railway's edge forwards HTTP/1.1 only and browsers cannot speak gRPC; gRPC-Web works
+over either. `Serving/GrpcWeb.cs` does what Envoy's gRPC-Web filter does, on YARP's direct
+forwarder, with no new dependency:
+
+* `SiteProxy.ForwardAsync` sees `application/grpc-web[-text][+fmt]` on a translating route. For
+  `-text` it wraps the request body in a base64 decoder (pieces padded on their own, line breaks
+  and spaces allowed, as the protocol says) and the response body in an encoder that is only
+  switched on once the target answers with gRPC. The request goes with `GrpcConfig`: HTTP/2,
+  `RequestVersionExact`, so h2c to an `http://` target.
+* `ProxyTransformer` sends `application/grpc[+fmt]` and `TE: trailers`. A response in
+  `application/grpc…` goes back as `application/grpc-web…` without `Content-Length`, with
+  `X-Accel-Buffering: no`, and `TransformResponseTrailersAsync` writes the trailers into the body
+  as the `0x80` frame instead of as HTTP trailers. A trailers-only answer has its status in the
+  headers already and gets no frame. Anything else from the target passes through untouched.
+* A translating route cannot be set to HTTP/1.1 only.
+
+Native gRPC also uses `GrpcConfig` now, so a route on **Auto** carries it to an `http://` target;
+before, only **HTTP/2 only** did. The route's Test uses HTTP/2 on a translating route.
+
+**The h2c port**, `SiteHosting:H2cPort` (0, off, by default). Kestrel on a plain port with
+`Http1AndHttp2` logs that HTTP/2 needs TLS and speaks HTTP/1.1 only (checked again on .NET 10), so
+h2c needs a port of its own. With HTTPS in the server it is one more `ListenAnyIP`; otherwise the
+port is added to the URLs the server already has (`urls`, else `http_ports`, else Kestrel's
+default), since binding a port in code would replace them, and `ConfigureEndpointDefaults` makes
+that one port HTTP/2 only. `ProxyInvokers` reads it from the server's addresses with the others,
+so a route cannot point at it.
+
+**Found while testing:** a gRPC error sent after the headers has no body, and Kestrel answered it
+with `Content-Length: 0` before the trailers. nginx's `grpc_pass` takes that for the end and drops
+the trailers, so the client saw no `grpc-status`; Caddy and direct clients did not mind. When the
+target's answer has trailers and the response has not started, the transformer now starts it
+before passing them on, so no length is sent.
+
+**Checked:** a .NET gRPC server on h2c behind a route. Clients: .NET's `GrpcWebHandler` (binary and
+text, HTTP/1.1 and HTTP/2), Connect's gRPC-Web transport in Chromium (from a page the site served),
+and `Grpc.Net.Client` for native gRPC. Paths: straight in over HTTP/1.1; into the h2c port; with
+HTTPS in the server; through Caddy (`h2c://`) and nginx (`grpc_pass`), each sending gRPC to the
+h2c port and the rest to the usual one, as the README shows. Each run covered unary calls, header
+and trailer metadata, a 3 MB message both ways, a server stream arriving 400 ms apart as sent, an
+error after the headers and a trailers-only error. Also: a route without translation passes
+gRPC-Web on untouched; an unreachable target answers 502; a route to the h2c port is refused; bad
+base64 is a 400. Tests: `GrpcWebTests.cs`, and four in `ProxyForwardingTests.cs` against a second
+front that speaks h2c.
+
+**After review:** the h2c port refuses to start beside `Kestrel:Endpoints` (which would replace it
+silently) or on a port the server already uses, and keeps `https_ports` when it rebuilds the
+addresses. The trailers frame is Latin-1, as HttpClient read the bytes, so a UTF-8 `grpc-message`
+passes intact, and a value with a line break is left out rather than starting a trailer of its
+own. A visitor leaving just as the trailers go out no longer surfaces as an unhandled error.
+Known: YARP lifts the request body limit for gRPC over HTTP/2 (it did with HTTPS in the server
+already), and a `-text` body counts as its base64; the README says so.
+
+**Not done:** CORS for gRPC-Web from other origins (a site's own pages need none); gRPC-Web through
+a Cloudflare Tunnel, and on Railway itself, not tried.
 
 ## Phase 4: planned
 

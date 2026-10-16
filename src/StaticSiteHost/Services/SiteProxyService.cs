@@ -266,6 +266,7 @@ public sealed class SiteProxyService
             WebSockets = route.WebSockets,
             CrossSiteWebSockets = route.CrossSiteWebSockets,
             Streaming = route.Streaming,
+            GrpcWeb = route.GrpcWeb,
             HttpVersion = (route.HttpVersion ?? ProxyHttpVersions.Auto).Trim().ToLowerInvariant(),
             TimeoutSeconds = route.TimeoutSeconds,
             MaxRequestBodyBytes = route.MaxRequestBodyBytes is > 0 ? route.MaxRequestBodyBytes : null,
@@ -301,6 +302,8 @@ public sealed class SiteProxyService
         {
             ProxyHttpVersions.Http11 => (System.Net.HttpVersion.Version11, HttpVersionPolicy.RequestVersionOrLower),
             ProxyHttpVersions.Http2 => (System.Net.HttpVersion.Version20, HttpVersionPolicy.RequestVersionExact),
+            // A gRPC-Web route's calls go to the target over HTTP/2, so the test does too.
+            _ when route.GrpcWeb => (System.Net.HttpVersion.Version20, HttpVersionPolicy.RequestVersionExact),
             _ => (System.Net.HttpVersion.Version20, HttpVersionPolicy.RequestVersionOrLower)
         };
 
