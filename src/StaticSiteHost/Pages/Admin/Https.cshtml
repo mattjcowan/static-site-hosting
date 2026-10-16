@@ -1,0 +1,200 @@
+@page
+@model StaticSiteHost.Pages.Admin.HttpsModel
+@using StaticSiteHost.Models
+@{
+    ViewData["Title"] = "HTTPS";
+}
+
+<div class="page-head">
+    <h1>HTTPS</h1>
+    <p>Certificates for every host this server answers: from Let's Encrypt, made here, or uploaded.</p>
+</div>
+
+@if (!Model.Enabled)
+{
+    <div class="card">
+        <h2>Ended in front of this server <span class="badge">off here</span></h2>
+        <p class="hint">
+            This server speaks plain HTTP, and whatever is in front of it (Caddy, nginx, Railway, a Cloudflare Tunnel) ends HTTPS.
+            That is the right setup behind one of those. To end HTTPS here instead, on a server of your own with ports 80 and 443,
+            start it with:
+        </p>
+        <pre class="tls-config">SiteHosting__Tls__Enabled=true
+SiteHosting__Tls__AcmeEmail=you@example.com   # optional
+# publish the container's 8080 as 80 and 8443 as 443</pre>
+        <p class="hint" style="margin: 0.75rem 0 0">
+            Every site and management host then gets a certificate from Let's Encrypt by itself, once its DNS points here.
+            Each site's page lets you choose another source, and HSTS works either way.
+        </p>
+    </div>
+}
+else
+{
+    <div class="card">
+        <h2>
+            Server
+            <span class="badge badge-ok">on</span>
+            @if (Model.Tls.IsStaging)
+            {
+                <span class="badge badge-warn">Let's Encrypt staging</span>
+            }
+        </h2>
+        <dl class="tls-facts">
+            <dt>Listening</dt>
+            <dd>HTTP on @Model.Tls.HttpPort (Let's Encrypt's checks, and redirects), HTTPS on @Model.Tls.HttpsPort.</dd>
+            <dt>Certificates from</dt>
+            <dd><span class="mono">@Model.Tls.AcmeDirectoryUrl</span>@(Model.Tls.AcmeEmail is { Length: > 0 } email ? $", account contact {email}" : "")</dd>
+            <dt>Automatic means</dt>
+            <dd>a shared certificate that covers the host, otherwise @CertificateSources.Describe(Model.Tls.DefaultSource); names Let's Encrypt cannot issue for (*.localhost, *.test…) are self-signed.</dd>
+            <dt>Renewed</dt>
+            <dd>@Model.Tls.RenewDaysBefore days before they expire (a third of their lifetime, for shorter ones), checked every hour.</dd>
+        </dl>
+        @if (Model.Tls.IsStaging)
+        {
+            <p class="hint">Staging certificates are not trusted by browsers. Set <span class="mono">SiteHosting__Tls__AcmeDirectory=production</span> once they issue, and every host gets a real one.</p>
+        }
+    </div>
+
+    <div class="card">
+        <h2>Hosts <span class="badge">@Model.Hosts.Count</span></h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Host</th><th>Certificate</th><th>Status</th><th></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var host in Model.Hosts)
+                    {
+                        <tr>
+                            <td>
+                                @if (host.IsSite)
+                                {
+                                    <a asp-page="/Sites/Details" asp-route-domain="@host.Host" asp-fragment="https" class="mono">@host.Host</a>
+                                }
+                                else
+                                {
+                                    <span class="mono">@host.Host</span> <span class="badge">management</span>
+                                }
+                                <div class="cell-sub">@CertificateSources.Describe(host.Wanted)@(host.Wanted != host.Effective ? " → " + CertificateSources.Describe(host.Effective) : "")</div>
+                            </td>
+                            <td>
+                                @if (host.Served is { } served)
+                                {
+                                    <span>@served.Issuer</span>
+                                    @if (served.SelfSigned)
+                                    {
+                                        <span class="badge badge-warn">self-signed</span>
+                                    }
+                                    <div class="cell-sub">expires @served.NotAfter.ToLocalTime().ToString("yyyy-MM-dd"), in @HttpsModel.Days(served.NotAfter)@(host.RenewsAt is { } renews ? $"; renewed from {renews.ToLocalTime():yyyy-MM-dd}" : "")</div>
+                                }
+                                else
+                                {
+                                    <span class="muted">@(host.Effective == CertificateSources.None ? "none: HTTP only" : "none yet")</span>
+                                }
+                            </td>
+                            <td>
+                                @if (host.Busy)
+                                {
+                                    <span class="badge">getting one now…</span>
+                                }
+                                else if (host.Problem is { } problem)
+                                {
+                                    <span class="validation">@problem</span>
+                                }
+                                else if (host.Served is not null && host.ServedSource == host.Effective)
+                                {
+                                    <span class="badge badge-ok">serving</span>
+                                    @* Still serving, but the renewal failed: shown, so it is not found out at expiry. *@
+                                    @if (host.State.LastError is { } renewalError)
+                                    {
+                                        <div class="cell-sub validation">renewal failed: @renewalError</div>
+                                        @if (host.State.NextAttemptUtc is { } retry)
+                                        {
+                                            <div class="cell-sub">tries again after @retry.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                                        }
+                                    }
+                                }
+                                else if (host.State.LastError is { } error)
+                                {
+                                    <span class="validation">@error</span>
+                                    @if (host.State.NextAttemptUtc is { } next)
+                                    {
+                                        <div class="cell-sub">tries again after @next.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                                    }
+                                }
+                                else if (host.Served is not null)
+                                {
+                                    <span class="badge badge-ok">serving</span>
+                                }
+                            </td>
+                            <td class="actions">
+                                @if (host.Effective is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned && host.Problem is null)
+                                {
+                                    <form method="post" asp-page-handler="Renew">
+                                        <input type="hidden" name="host" value="@host.Host" />
+                                        <button type="submit" class="btn-link">Renew now</button>
+                                    </form>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<div class="card">
+    <h2>Shared certificates <span class="badge">@Model.Shared.Count</span></h2>
+    <p class="hint">
+        One certificate for many hosts, such as a Cloudflare Origin certificate or a company wildcard for
+        <span class="mono">*.example.com</span>. Every site it covers that is on automatic uses it instead of getting its own.
+        They are not renewed here: upload the next one before this one expires.
+    </p>
+
+    @if (Model.Shared.Count > 0)
+    {
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Names</th><th>Issuer</th><th>Expires</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var (info, certificate) in Model.Shared)
+                    {
+                        <tr>
+                            <td class="mono">@string.Join(", ", info.Names)</td>
+                            <td>@info.Issuer<div class="cell-sub">uploaded by @(info.UploadedBy ?? "—")</div></td>
+                            <td class="nowrap">@info.NotAfterUtc.ToLocalTime().ToString("yyyy-MM-dd")<div class="cell-sub">in @HttpsModel.Days(info.NotAfterUtc)</div></td>
+                            <td class="actions">
+                                <form method="post" asp-page-handler="RemoveShared" data-confirm="Remove the certificate for @string.Join(", ", info.Names)? The sites it covers get their own.">
+                                    <input type="hidden" name="id" value="@info.Id" />
+                                    <button type="submit" class="btn-link">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <details class="tls-upload" open="@(Model.UploadError is not null)">
+        <summary>Upload a shared certificate</summary>
+        @if (Model.UploadError is { } uploadError)
+        {
+            <div class="alert alert-error">@uploadError</div>
+        }
+        <form method="post" asp-page-handler="AddShared">
+            <div class="field">
+                <label for="shared-certificate">Certificate (PEM, then any intermediates)</label>
+                <textarea id="shared-certificate" name="certificate" class="rules" rows="5" wrap="off" spellcheck="false"
+                          placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+            </div>
+            <div class="field">
+                <label for="shared-key">Private key (PEM; stored encrypted, never shown again)</label>
+                <textarea id="shared-key" name="privateKey" class="rules" rows="5" wrap="off" spellcheck="false" autocomplete="off"
+                          placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+            </div>
+            <button type="submit" class="btn-primary">Upload</button>
+        </form>
+    </details>
+</div>

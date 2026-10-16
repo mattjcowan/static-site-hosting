@@ -406,7 +406,7 @@ public sealed class AssistantService
         if (call.Arguments.ValueKind != JsonValueKind.Object) return call.Name;
 
         var parts = new List<string>();
-        foreach (var key in new[] { "domain", "path", "name", "newDomain", "releaseId", "username", "user", "provider", "event" })
+        foreach (var key in new[] { "domain", "path", "name", "newDomain", "releaseId", "username", "user", "provider", "event", "host", "source" })
         {
             if (call.Arguments.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text)
                 parts.Add(text);

@@ -142,6 +142,189 @@
     }
 </div>
 
+@{
+    var tls = Model.Site.Tls;
+    var cert = Model.Certificate;
+    var wantedSource = tls?.Source ?? CertificateSources.Automatic;
+}
+<div class="card" id="https">
+    <h2>
+        HTTPS
+        @if (!Model.HttpsInServer)
+        {
+            <span class="badge">in front of this server</span>
+        }
+        else if (cert?.Served is { } served)
+        {
+            <span class="badge @(served.SelfSigned ? "badge-warn" : "badge-ok")">@CertificateSources.Describe(cert.ServedSource ?? cert.Effective)</span>
+        }
+        else if (cert?.Effective == CertificateSources.None)
+        {
+            <span class="badge">off</span>
+        }
+        else if (cert?.State.LastError is not null || cert?.Problem is not null)
+        {
+            <span class="badge badge-error">no certificate</span>
+        }
+        else
+        {
+            <span class="badge">waiting for a certificate</span>
+        }
+    </h2>
+
+    @if (!Model.HttpsInServer)
+    {
+        <p class="hint">
+            HTTPS is ended in front of this server (a reverse proxy, Railway, a Cloudflare Tunnel), so its certificates are
+            managed there. HSTS below still works: it is sent on every answer that arrived over HTTPS.
+            To end HTTPS here instead, see <strong>HTTPS</strong> in the top bar.
+        </p>
+    }
+    else if (cert is not null)
+    {
+        <dl class="tls-facts">
+            <dt>Certificate</dt>
+            <dd>
+                @if (cert.Served is { } served)
+                {
+                    <span>@CertificateSources.Describe(cert.ServedSource ?? "") from <strong>@served.Issuer</strong>,
+                        for <span class="mono">@string.Join(", ", served.Names)</span>.
+                        Expires @served.NotAfter.ToLocalTime().ToString("yyyy-MM-dd")
+                        (@((int)Math.Floor((served.NotAfter - DateTimeOffset.UtcNow).TotalDays)) days)@(cert.RenewsAt is { } renews ? $", renewed from {renews.ToLocalTime():yyyy-MM-dd}" : "").</span>
+                    @if (served.SelfSigned)
+                    {
+                        <span class="muted">Browsers warn about a self-signed certificate; it suits Cloudflare's "Full" mode and private networks.</span>
+                    }
+                }
+                else if (cert.Effective == CertificateSources.None)
+                {
+                    <span class="muted">None: this site answers over plain HTTP only.</span>
+                }
+                else
+                {
+                    <span class="muted">None yet.</span>
+                }
+            </dd>
+            <dt>Source</dt>
+            <dd>
+                @CertificateSources.Describe(cert.Wanted)@if (cert.Wanted != cert.Effective) {<text>, which here means </text>@CertificateSources.Describe(cert.Effective)}.
+                @if (cert.Busy)
+                {
+                    <span class="badge">getting one now…</span>
+                }
+            </dd>
+        </dl>
+
+        @if (cert.Problem is { } problem)
+        {
+            <div class="alert alert-error">@problem</div>
+        }
+        else if (cert.State.LastError is { } lastError)
+        {
+            <div class="alert alert-error">
+                <strong>The last attempt failed</strong> (@cert.State.LastAttemptUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm")): @lastError
+                @if (cert.State.NextAttemptUtc is { } next)
+                {
+                    <br /><span>It tries again after @next.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), or now with <strong>Renew now</strong>.
+                        For Let's Encrypt, the domain's DNS must point at this server and port 80 must reach it.</span>
+                }
+            </div>
+        }
+    }
+
+    @if (Model.TlsError is { } tlsError)
+    {
+        <div class="alert alert-error">@tlsError</div>
+    }
+
+    @if (Model.IsAdministrator)
+    {
+        <form method="post" asp-page-handler="Tls" asp-route-domain="@Model.Site.Domain">
+            @if (Model.HttpsInServer)
+            {
+                <div class="field" style="max-width: 26rem">
+                    <label for="tls-source">Where the certificate comes from</label>
+                    <select id="tls-source" name="source">
+                        <option value="automatic" selected="@(wantedSource == CertificateSources.Automatic)">Automatic</option>
+                        <option value="letsencrypt" selected="@(wantedSource == CertificateSources.LetsEncrypt)">Let's Encrypt</option>
+                        <option value="selfsigned" selected="@(wantedSource == CertificateSources.SelfSigned)">Self-signed</option>
+                        <option value="shared" selected="@(wantedSource == CertificateSources.Shared)">A shared certificate</option>
+                        @if (cert?.ServedSource == CertificateSources.Uploaded || wantedSource == CertificateSources.Uploaded)
+                        {
+                            <option value="uploaded" selected="@(wantedSource == CertificateSources.Uploaded)">The certificate uploaded for this site</option>
+                        }
+                        <option value="none" selected="@(wantedSource == CertificateSources.None)">None: HTTP only</option>
+                    </select>
+                    <p class="hint" style="margin: 0.35rem 0 0">
+                        Automatic is a shared certificate that covers this site (uploaded under <strong>HTTPS</strong>), otherwise the
+                        server's default, Let's Encrypt unless it says otherwise.
+                    </p>
+                </div>
+                <div class="checkline" style="margin-top: 0.75rem">
+                    <input id="tls-redirect" name="redirectToHttps" type="checkbox" value="true" checked="@(tls?.RedirectToHttps ?? true)" />
+                    <label for="tls-redirect">Send HTTP visitors to HTTPS</label>
+                </div>
+                <input type="hidden" name="redirectToHttps" value="false" />
+            }
+            else
+            {
+                <input type="hidden" name="redirectToHttps" value="@((tls?.RedirectToHttps ?? true) ? "true" : "false")" />
+            }
+            <div class="checkline" style="margin-top: 0.5rem">
+                <input id="tls-hsts" name="hsts" type="checkbox" value="true" checked="@(tls?.Hsts ?? false)" />
+                <label for="tls-hsts">HSTS: tell browsers to use HTTPS only, for a year</label>
+            </div>
+            <input type="hidden" name="hsts" value="false" />
+            <p class="hint" style="margin-top: 0.35rem">
+                Turn HSTS on only once HTTPS works for good. A browser that has seen it refuses plain HTTP for this domain for a
+                year, and turning it off here does not change that browser's mind.
+            </p>
+            <button type="submit" class="btn-primary">Save HTTPS settings</button>
+        </form>
+
+        @if (Model.HttpsInServer)
+        {
+            <div class="tls-actions">
+                @if (cert?.Effective is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned && cert.Problem is null)
+                {
+                    <form method="post" asp-page-handler="RenewCertificate" asp-route-domain="@Model.Site.Domain">
+                        <button type="submit" class="btn">Renew now</button>
+                    </form>
+                }
+                @if (cert?.ServedSource == CertificateSources.Uploaded || wantedSource == CertificateSources.Uploaded)
+                {
+                    <form method="post" asp-page-handler="RemoveCertificate" asp-route-domain="@Model.Site.Domain"
+                          data-confirm="Remove the certificate uploaded for @Model.Site.Domain? The site goes back to automatic.">
+                        <button type="submit" class="btn-danger">Remove uploaded certificate</button>
+                    </form>
+                }
+            </div>
+
+            <details class="tls-upload">
+                <summary>Upload a certificate for this site</summary>
+                <form method="post" asp-page-handler="UploadCertificate" asp-route-domain="@Model.Site.Domain">
+                    <p class="hint">
+                        PEM, as a certificate authority hands it out: the certificate first, then any intermediates. For a
+                        certificate that covers many sites, such as a Cloudflare Origin certificate for *.example.com, upload it once
+                        under <strong>HTTPS</strong> in the top bar instead. The key is stored encrypted and never shown again.
+                    </p>
+                    <div class="field">
+                        <label for="tls-certificate">Certificate</label>
+                        <textarea id="tls-certificate" name="certificate" class="rules" rows="5" wrap="off" spellcheck="false"
+                                  placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="tls-key">Private key</label>
+                        <textarea id="tls-key" name="privateKey" class="rules" rows="5" wrap="off" spellcheck="false" autocomplete="off"
+                                  placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                    </div>
+                    <button type="submit" class="btn-primary">Upload and use it</button>
+                </form>
+            </details>
+        }
+    }
+</div>
+
 <div class="card" id="proxy">
     <h2>
         Proxy routes

@@ -15,8 +15,13 @@ using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
 using StaticSiteHost.Services.Ai;
 using StaticSiteHost.Services.Realtime;
+using StaticSiteHost.Tls;
 using StaticSiteHost.Tools;
 using ModelContextProtocol.Server;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +39,30 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = hostingOptions.MaxUploadBytes;
     options.AddServerHeader = false;
 });
+
+// HTTPS in the server (SiteHosting:Tls): HTTP for Let's Encrypt's checks and redirects, HTTPS with
+// a certificate per host, chosen as each connection names its host. ALPN offers HTTP/2, so gRPC
+// works end to end. These replace ASPNETCORE_URLS.
+if (hostingOptions.Tls.Enabled)
+{
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.ListenAnyIP(hostingOptions.Tls.HttpPort);
+        options.ListenAnyIP(hostingOptions.Tls.HttpsPort, listen =>
+        {
+            listen.Protocols = HttpProtocols.Http1AndHttp2;
+            listen.UseHttps(new TlsHandshakeCallbackOptions
+            {
+                OnConnection = context => ValueTask.FromResult(new SslServerAuthenticationOptions
+                {
+                    ServerCertificateContext = listen.ApplicationServices.GetRequiredService<CertificateManager>()
+                        .Select(context.ClientHelloInfo.ServerName, (context.Connection.LocalEndPoint as System.Net.IPEndPoint)?.Address),
+                    ApplicationProtocols = [SslApplicationProtocol.Http2, SslApplicationProtocol.Http11]
+                })
+            });
+        });
+    });
+}
 
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -89,6 +118,49 @@ builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpForwarder();
 builder.Services.AddSingleton<ProxyInvokers>();
 builder.Services.AddSingleton<SiteProxy>();
+
+// ---------------------------------------------------------------- HTTPS
+
+builder.Services.AddSingleton<AcmeChallenges>();
+builder.Services.AddSingleton<CertificateStore>();
+builder.Services.AddSingleton<CertificateManager>();
+builder.Services.AddHostedService(services => services.GetRequiredService<CertificateManager>());
+builder.Services.AddHttpClient(CertificateManager.HttpClientName, client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(60);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("StaticSiteHost/" + SiteHostTools.ServerVersion);
+    })
+    .ConfigurePrimaryHttpMessageHandler(() =>
+    {
+        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
+        // A private ACME server (step-ca, Pebble) whose own HTTPS certificate comes from its own CA.
+        // The file may hold the root and intermediates; the server's own chain is used as well, so a
+        // certificate issued from an intermediate (as step-ca's is) checks out against the root.
+        if (hostingOptions.Tls.AcmeCaFile is { Length: > 0 } caFile)
+        {
+            var authorities = new X509Certificate2Collection();
+            authorities.ImportFromPemFile(caFile);
+            handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, presented, errors) =>
+            {
+                if (errors == SslPolicyErrors.None) return true;
+                if (certificate is null || errors != SslPolicyErrors.RemoteCertificateChainErrors) return false;
+
+                using var chain = new X509Chain();
+                chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+                chain.ChainPolicy.CustomTrustStore.AddRange(authorities);
+                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                if (presented is not null)
+                {
+                    foreach (var element in presented.ChainElements) chain.ChainPolicy.ExtraStore.Add(element.Certificate);
+                }
+
+                using var leaf = X509CertificateLoader.LoadCertificate(certificate.GetRawCertData());
+                return chain.Build(leaf);
+            };
+        }
+
+        return handler;
+    });
 
 // ---------------------------------------------------------------- MCP
 
@@ -254,6 +326,9 @@ else
 }
 
 app.UseResponseCompression();
+
+// Let's Encrypt's checks, HTTP to HTTPS, HSTS: before any site or the management app.
+app.UseMiddleware<TlsMiddleware>();
 
 // Everything above is shared; from here the Host header decides which app answers.
 app.UseHostedSites();

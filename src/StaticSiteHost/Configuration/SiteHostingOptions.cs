@@ -129,6 +129,9 @@ public sealed class SiteHostingOptions
     /// <summary>How long a proxy route waits for a connection to its target.</summary>
     public int ProxyConnectTimeoutSeconds { get; set; } = 10;
 
+    /// <summary>HTTPS in the server itself: off unless turned on. See <see cref="TlsOptions"/>.</summary>
+    public TlsOptions Tls { get; set; } = new();
+
     private HashSet<string>? _managementHostSet;
 
     public bool IsManagementHost(string host)
@@ -141,3 +144,75 @@ public sealed class SiteHostingOptions
 
     public bool HasManagementHosts => ManagementHosts.Any(h => !string.IsNullOrWhiteSpace(h));
 }
+
+/// <summary>
+/// HTTPS ended in the server, with a certificate per host name: from Let's Encrypt, made here
+/// (self-signed), or uploaded. Bound from SiteHosting:Tls. Off by default, so a server behind a
+/// proxy that ends TLS itself (Caddy, Railway, a Cloudflare Tunnel) is not affected.
+/// </summary>
+public sealed class TlsOptions
+{
+    /// <summary>Let's Encrypt's production directory.</summary>
+    public const string LetsEncrypt = "https://acme-v02.api.letsencrypt.org/directory";
+
+    /// <summary>Let's Encrypt's staging directory: certificates no browser trusts, and generous rate limits.</summary>
+    public const string LetsEncryptStaging = "https://acme-staging-v02.api.letsencrypt.org/directory";
+
+    /// <summary>Listen for HTTPS, and answer Let's Encrypt's checks on the HTTP port.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The port HTTP is served on, with Let's Encrypt's checks and the redirects to HTTPS. In the
+    /// container, 8080, published as 80: Let's Encrypt only ever checks port 80.
+    /// </summary>
+    public int HttpPort { get; set; } = 8080;
+
+    /// <summary>The port HTTPS is served on. In the container, 8443, published as 443.</summary>
+    public int HttpsPort { get; set; } = 8443;
+
+    /// <summary>
+    /// The port visitors reach HTTPS on, for redirects from HTTP: 443 when the container's 8443 is
+    /// published as 443, which is the usual case.
+    /// </summary>
+    public int PublicHttpsPort { get; set; } = 443;
+
+    /// <summary>
+    /// Where a host's certificate comes from when its site has not chosen: <c>letsencrypt</c>,
+    /// <c>selfsigned</c> or <c>none</c>. Either way a shared certificate that covers the host (such
+    /// as a Cloudflare Origin certificate for <c>*.example.com</c>) is used first.
+    /// </summary>
+    public string DefaultSource { get; set; } = "letsencrypt";
+
+    /// <summary>
+    /// A contact address for the ACME account. Optional: Let's Encrypt stopped sending expiry
+    /// e-mails in 2025, and other ACME servers may use it.
+    /// </summary>
+    public string? AcmeEmail { get; set; }
+
+    /// <summary>
+    /// The ACME directory: <c>production</c> or <c>staging</c> for Let's Encrypt's, or the URL of
+    /// any other ACME server (step-ca, ZeroSSL, Pebble).
+    /// </summary>
+    public string AcmeDirectory { get; set; } = "production";
+
+    /// <summary>
+    /// A PEM file of the certificate authority an ACME server's own HTTPS uses, for a private one
+    /// such as step-ca or Pebble. Leave empty for Let's Encrypt.
+    /// </summary>
+    public string? AcmeCaFile { get; set; }
+
+    /// <summary>Renew a certificate this many days before it expires.</summary>
+    public int RenewDaysBefore { get; set; } = 30;
+
+    /// <summary>The directory URL <see cref="AcmeDirectory"/> names.</summary>
+    public string AcmeDirectoryUrl => AcmeDirectory.Trim().ToLowerInvariant() switch
+    {
+        "" or "production" or "letsencrypt" => LetsEncrypt,
+        "staging" or "letsencrypt-staging" => LetsEncryptStaging,
+        _ => AcmeDirectory.Trim()
+    };
+
+    /// <summary>Whether <see cref="AcmeDirectoryUrl"/> is Let's Encrypt's staging directory.</summary>
+    public bool IsStaging => AcmeDirectoryUrl == LetsEncryptStaging;
+}
+

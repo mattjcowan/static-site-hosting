@@ -721,3 +721,16 @@ td.actions .validation { white-space: normal; text-align: left; max-width: 24rem
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+/* HTTPS: the facts about a certificate, and the forms under them. */
+.tls-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0 0 1rem; font-size: 0.925rem; }
+.tls-facts dt { color: var(--muted); font-weight: 550; }
+.tls-facts dd { margin: 0; }
+.tls-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+.tls-actions:empty { display: none; }
+.tls-upload { margin-top: 1rem; }
+.tls-upload summary { cursor: pointer; font-weight: 550; }
+.tls-upload form { margin-top: 0.75rem; }
+@media (max-width: 640px) { .tls-facts { grid-template-columns: 1fr; } .tls-facts dd { margin-bottom: 0.4rem; } }
+
+.tls-config { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.825rem; line-height: 1.55; overflow-x: auto; margin: 0; }

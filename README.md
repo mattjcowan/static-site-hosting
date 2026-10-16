@@ -131,6 +131,7 @@ zip.
 | Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
 | Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming and HTTP/2 | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the top bar | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
 | Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
+| HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
 | Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
 | Functions | Answer requests with C# code | A `_functions/` folder in the zip, an upload on the site's **Functions** card, the browser editor, or `PUT /api/v1/sites/{domain}/functions` | Administrator | [Functions](#functions) |
 | Middleware | Run code before every request to the site, files included | A `[Middleware]` method in a function file | Administrator | [Middleware](#middleware) |
@@ -582,9 +583,10 @@ Every change is written to the audit log.
 * A target cannot carry a user name or password, a query string or a fragment.
 * The request headers a route cannot set are `Host`, `Cookie`, the `X-Forwarded-*` headers,
   `Forwarded`, `X-Site-Host-Hops`, `Content-Length` and the other transport headers.
-* gRPC needs HTTP/2 on every hop. Use **HTTP/2 only** on the route for the hop to the target. The
-  hop into this server is the catch: on port 8080, which is plain HTTP, the server refuses HTTP/2
-  (it answers `HTTP_1_1_REQUIRED`), so a TLS proxy in front cannot pass gRPC through it yet.
+* gRPC needs HTTP/2 on every hop. Use **HTTP/2 only** on the route for the hop to the target.
+  With [HTTPS in the server](#https-in-the-server), the hop into it is HTTP/2 too, and gRPC works
+  end to end. On port 8080, which is plain HTTP, the server refuses HTTP/2 (it answers
+  `HTTP_1_1_REQUIRED`), so a proxy in front that ends TLS cannot pass gRPC through it.
   WebSockets, streaming and everything else work over HTTP/1.1.
 
 ### Server-wide routes
@@ -2270,6 +2272,15 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `PUT`    | `/api/v1/sites/{domain}/proxy`              | `{"routes":[{"path":"/api","target":"http://orders:8080"}]}` — replace them; administrators only |
 | `DELETE` | `/api/v1/sites/{domain}/proxy`              | remove them; administrators only |
 | `PUT`    | `/api/v1/sites/{domain}/proxy/server-routes` | `{"path":"/api","enabled":false}` — turn the [server-wide routes](#server-wide-routes) at a path off for this site, or back on; administrators only |
+| `GET`    | `/api/v1/sites/{domain}/tls`                | the site's [HTTPS](#https-in-the-server) settings and certificate |
+| `PUT`    | `/api/v1/sites/{domain}/tls`                | `{"source":"letsencrypt","redirectToHttps":true,"hsts":false}`, each optional; administrators only |
+| `POST`   | `/api/v1/sites/{domain}/tls/renew`          | get a new certificate now; administrators only |
+| `PUT`    | `/api/v1/sites/{domain}/tls/certificate`    | `{"certificate":"-----BEGIN CERTIFICATE-----…","privateKey":"…"}`, PEM: upload one and use it; administrators only |
+| `DELETE` | `/api/v1/sites/{domain}/tls/certificate`    | remove the uploaded one; the site goes back to automatic; administrators only |
+| `GET`    | `/api/v1/tls`                               | the server's HTTPS: settings, every host's certificate, the shared ones; administrators only |
+| `POST`   | `/api/v1/tls/renew/{host}`                  | a new certificate now for any host, a management host included; administrators only |
+| `POST`   | `/api/v1/tls/shared`                        | `{"certificate":"…","privateKey":"…"}`: a certificate for every host it covers; administrators only |
+| `DELETE` | `/api/v1/tls/shared/{id}`                   | remove a shared certificate; administrators only |
 | `GET`    | `/api/v1/proxy`                             | the [server-wide routes](#server-wide-routes); request header values for administrators only |
 | `PUT`    | `/api/v1/proxy`                             | `{"routes":[{"sites":"*.apps.example.com","path":"/api","target":"http://api:8080"}]}` — replace them all; a route with an `id` keeps it, one without gets one; administrators only |
 | `DELETE` | `/api/v1/proxy`                             | remove them all; administrators only |
@@ -2536,6 +2547,7 @@ log entries.
 | Proxy routes | `get_proxy_routes`, `set_proxy_route`, `remove_proxy_route`, `test_proxy_route`, `get_server_proxy_routes`, `set_server_proxy_route`, `remove_server_proxy_route`, `set_server_route_for_site` |
 | Functions | `get_functions`, `read_function_files`, `edit_function_file`, `check_functions`, `test_functions`, `deploy_functions`, `remove_function_file`, `remove_functions` |
 | AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `update_ai_provider`, `remove_ai_provider`, `test_ai_provider`, `set_site_ai`, `remove_site_ai`, `get_assistant_settings`, `set_assistant_settings` |
+| HTTPS | `get_tls`, `set_site_tls`, `renew_certificate` |
 | Realtime | `get_realtime`, `publish_realtime_event` |
 | Users | `list_users`, `create_user`, `invite_user`, `set_user_role`, `disable_user`, `delete_user` |
 
@@ -2547,7 +2559,8 @@ log entries.
   set. Nothing changes if it does not compile, and the errors come back with file and line.
 * Tools that name a user or an AI provider take its id or its name.
 * API keys have no tools, on purpose: a conversation cannot create or revoke credentials. Use
-  **Account → API keys** or `/api/v1/keys`.
+  **Account → API keys** or `/api/v1/keys`. Uploading a certificate has none either, since its
+  private key would pass through the conversation: use the site's page or the API.
 * The rule tools take the `_headers` and `_redirects` text formats.
 * Each tool says whether it only reads, changes something, or is destructive (`delete_site`,
   `remove_functions`, `remove_function_file`, `remove_proxy_route`, `remove_server_proxy_route`,
@@ -2664,6 +2677,15 @@ environment variable with `__` as the separator (`SiteHosting__MaxUploadBytes`),
 | `SiteHosting:RealtimeMaxGroupsPerConnection` | `100`  | Realtime groups one page may be in |
 | `SiteHosting:ProxyBlockedNetworks`     | `169.254.0.0/16, fe80::/10` | Comma-separated networks a [proxy route](#proxy-routes) may never connect to. The server's own ports are refused whatever this says |
 | `SiteHosting:ProxyConnectTimeoutSeconds` | `10`       | How long a proxy route waits to connect to its target |
+| `SiteHosting:Tls:Enabled`              | `false`      | End HTTPS in the server ([HTTPS in the server](#https-in-the-server)) |
+| `SiteHosting:Tls:HttpPort`             | `8080`       | The HTTP port, for Let's Encrypt's checks and redirects (published as 80) |
+| `SiteHosting:Tls:HttpsPort`            | `8443`       | The HTTPS port (published as 443) |
+| `SiteHosting:Tls:PublicHttpsPort`      | `443`        | The port redirects to HTTPS name |
+| `SiteHosting:Tls:DefaultSource`        | `letsencrypt` | What automatic means when no shared certificate covers a host: `letsencrypt`, `selfsigned` or `none` |
+| `SiteHosting:Tls:AcmeEmail`            | *(empty)*    | An optional contact address for the ACME account (Let's Encrypt no longer sends expiry e-mails) |
+| `SiteHosting:Tls:AcmeDirectory`        | `production` | `production` or `staging` for Let's Encrypt, or another ACME server's directory URL |
+| `SiteHosting:Tls:AcmeCaFile`           | *(empty)*    | A PEM file of the root (and any intermediates) a private ACME server's own HTTPS uses (step-ca, Pebble) |
+| `SiteHosting:Tls:RenewDaysBefore`      | `30`         | Renew this many days before expiry (a third of the lifetime, for shorter certificates) |
 | `Bootstrap:Username`                   | `admin`      | The first administrator |
 | `Bootstrap:Password`                   | *(empty)*    | Empty generates one on first run |
 | `Bootstrap:DisplayName`                | `Administrator` | The first administrator's display name |
@@ -2678,6 +2700,8 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 | `IMAGE_TAG` | the image tag: `latest` or `slim` |
 | `IMAGE_TARGET` | the build target for `docker compose up --build`: `runtime-functions` (matches `latest`) or `runtime` (matches `slim`) |
 | `HTTP_PORT` | the host port (8080 by default; use 80 in production) |
+| `HTTPS_PORT` | the host port for HTTPS (8443 by default; use 443 with `TLS_ENABLED`) |
+| `TLS_ENABLED`, `ACME_EMAIL`, `ACME_DIRECTORY` | `SiteHosting:Tls:Enabled`, `:AcmeEmail`, `:AcmeDirectory` |
 | `MANAGEMENT_HOST` | `SiteHosting:ManagementHosts` (one host) |
 | `TRUST_FORWARDED_HEADERS` | `SiteHosting:TrustForwardedHeaders` |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME` | `Bootstrap:Username`, `Bootstrap:Password`, `Bootstrap:DisplayName` |
@@ -2698,6 +2722,7 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 │   ├── assistant-usage.json       today's assistant use, per person
 │   ├── assistant-conversations/   the assistant's open conversations (encrypted; gone 2 hours after their last use)
 │   ├── proxy-routes.json          server-wide proxy routes
+│   ├── certs/                     HTTPS certificates, per host and source, and shared ones; keys encrypted
 │   ├── audit.log                  JSON lines: deploys, logins, user and key changes
 │   ├── keys/                      data-protection keys: sessions, secret variables and AI keys need them
 │   ├── functions.json             which global functions are live
@@ -2720,11 +2745,88 @@ Back up `/data`, and you have backed up everything.
 
 ---
 
+## HTTPS in the server
+
+**What it is.** The server ends HTTPS itself, so it needs nothing in front of it on a VPS: every
+site and management host gets a certificate, from Let's Encrypt by default, renewed by itself.
+Each connection gets the certificate for the host it names. Browsers get HTTP/2, and gRPC works
+end to end through [proxy routes](#proxy-routes) set to **HTTP/2 only**. It is off by default:
+behind Caddy, nginx, Railway or a [Cloudflare Tunnel](#cloudflare-tunnel), which end HTTPS
+themselves, leave it off.
+
+**How to use it.**
+
+1. **DNS.** Point each site's domain and the management host at the server (`A`/`AAAA`
+   records). A wildcard record such as `*.apps.example.com` works too: each site under it gets
+   its own certificate.
+2. **Start the server with HTTPS on** and both ports published. Let's Encrypt checks port 80 only.
+
+   ```bash
+   docker run -d --name static-site-host -p 80:8080 -p 443:8443 -v site-data:/data \
+     -e SiteHosting__ManagementHosts__0=admin.example.com \
+     -e SiteHosting__Tls__Enabled=true -e SiteHosting__Tls__AcmeEmail=you@example.com \
+     mattjcowan/static-site-hosting:latest
+   ```
+
+   With Compose: `TLS_ENABLED=true`, `ACME_EMAIL=…`, `HTTP_PORT=80` and `HTTPS_PORT=443` in `.env`.
+   Do not set `TRUST_FORWARDED_HEADERS` when nothing is in front.
+3. **That is it.** Within a minute of starting, and of each new site, the certificates arrive.
+   **HTTPS** in the top bar lists every host with its certificate, its expiry and any error; a
+   site's **HTTPS** card shows its own. HTTP requests are sent to HTTPS (308) once a host has a
+   certificate.
+
+To try it first without Let's Encrypt's rate limits, start with
+`SiteHosting__Tls__AcmeDirectory=staging`: the certificates are real but not trusted by browsers.
+Then set `production`, and every host gets a trusted one.
+
+**Where a certificate comes from**, chosen on each site's **HTTPS** card:
+
+| Source | What it is |
+| ------ | ---------- |
+| Automatic (the default) | A shared certificate that covers the host, if one was uploaded; otherwise Let's Encrypt (`SiteHosting:Tls:DefaultSource`). Names Let's Encrypt cannot issue for, such as `*.localhost`, `*.test` and addresses, get a self-signed one |
+| Let's Encrypt | Checked over HTTP on port 80, renewed 30 days before it expires (a third of the lifetime, for shorter ones) |
+| Self-signed | Made here, valid a year, renewed by itself. Browsers warn about it; it suits Cloudflare's **Full** mode and private networks |
+| Uploaded | A certificate and key you paste for this site (PEM, intermediates after the certificate). Not renewed here |
+| A shared certificate | One uploaded under **HTTPS** for many hosts, such as a Cloudflare Origin certificate for `*.example.com` (for Cloudflare's **Full (strict)**), or a company wildcard |
+| None | Plain HTTP only |
+
+Each site's card also has **Send HTTP visitors to HTTPS** (on by default) and **HSTS** (off by
+default), and **Renew now**. The management hosts are always automatic.
+
+**When getting one fails**, the error is shown on the site's card and under **HTTPS**, written to
+the audit log, and tried again after 1, 2, 4, 8 and 16 hours, then daily, so a domain whose DNS is
+not ready yet never runs into Let's Encrypt's limits. **Renew now** tries at once. Meanwhile the
+host keeps serving the certificate it had, or a stand-in self-signed one.
+
+**Rules and limits.**
+
+* Let's Encrypt needs port 80 to reach the server for every domain, and DNS that points at it. It
+  issues one name at a time here; a wildcard certificate needs a DNS check, which this server
+  does not do yet. Upload one as a shared certificate instead.
+* Let's Encrypt's limits, among others: 50 certificates per registered domain per week, and 5
+  failed checks per host name per hour. Switching a site between sources keeps each source's
+  certificate, so switching back does not ask for another.
+* Behind Cloudflare's proxy (orange cloud), Let's Encrypt's check goes through Cloudflare to the
+  server. If Cloudflare sends it to HTTPS first and is set to **Full (strict)**, the first check
+  can fail, since the host has no trusted certificate yet: use **Full** until the certificates
+  are issued, then **Full (strict)**. Or upload a Cloudflare Origin certificate as a shared one.
+* HSTS tells browsers to refuse plain HTTP for the domain for a year (`max-age=31536000`). A
+  browser that has seen it keeps it even after it is turned off here. It is also sent when HTTPS
+  is ended in front of the server.
+* Keys are stored encrypted in `config/certs/`, with the key ring in `config/keys`: back up the
+  whole of `/data`.
+* The server keeps one certificate per host. Several servers behind one name each need their own,
+  or a shared one uploaded to each.
+* Deleting or renaming a site removes its certificates; the new name gets its own.
+* The HTTPS port also offers HTTP/2. HTTP/3 is not offered.
+* At start, Kestrel logs that it is *overriding address(es) 'http://+:8080'*: with HTTPS on, the
+  server sets its two ports itself, in place of the image's `ASPNETCORE_URLS`. It is expected.
+
 ## Production notes
 
-* **TLS.** The app speaks plain HTTP on port 8080. Terminate TLS at a reverse proxy (Caddy handles
-  wildcard certificates well for this kind of workload), and publish on ports 80 and 443. Or
-  publish nothing and use a [Cloudflare Tunnel](#cloudflare-tunnel).
+* **TLS.** Either end HTTPS in the server itself ([HTTPS in the server](#https-in-the-server)),
+  or leave it speaking plain HTTP on port 8080 and end TLS at a reverse proxy (Caddy handles
+  wildcard certificates well), or publish nothing and use a [Cloudflare Tunnel](#cloudflare-tunnel).
 * **Forwarded headers.** Set `TRUST_FORWARDED_HEADERS=true` only when a proxy you control is in
   front of the app. Routing uses the `Host` header, so a forged `X-Forwarded-Host` would let a
   caller choose which site answers.

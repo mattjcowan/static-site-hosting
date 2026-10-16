@@ -56,7 +56,7 @@ RUN mkdir -p /data && chown -R app:app /data
 
 USER app
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 8080 8443
 
 ENTRYPOINT ["dotnet", "StaticSiteHost.dll"]
 
@@ -96,6 +96,6 @@ USER app
 RUN dotnet workload list > /dev/null
 
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 8080 8443
 
 ENTRYPOINT ["dotnet", "StaticSiteHost.dll"]

@@ -812,7 +812,64 @@ an HTTP/2-only listener here would not bring native gRPC through a Railway domai
 translation on a route would, and is a possible later item; native gRPC comes with phase 3,
 where TLS in the server gives HTTP/2 by ALPN.
 
-## Phases 3 and 4: planned
+## Phase 3: built
 
-As sketched above. Phase 3 should start by choosing the ACME client (decision 5), and should add
-the h2c/ALPN listener work, since TLS in Kestrel gives HTTP/2 to browsers and gRPC end to end.
+Built on 2026-10-16. HTTPS in the server, off by default (`SiteHosting:Tls:Enabled`).
+
+* **ACME client: our own** (decision 5). Checked first: Certes came back in September 2026
+  after three quiet years, with BouncyCastle as a dependency and three majors in a week;
+  LettuceEncrypt has not released since 2024. `Tls/AcmeClient.cs` is RFC 8555 with HTTP-01:
+  account, order, authorizations, challenge, finalize with a CSR, download, ES256 JWS with an
+  ECDSA P-256 account key from `System.Security.Cryptography`, `badNonce` retried once. No new
+  dependency.
+* **Listening.** With TLS on, Kestrel listens on `HttpPort` (8080) and `HttpsPort` (8443) itself,
+  in place of `ASPNETCORE_URLS`. The HTTPS listener uses `TlsHandshakeCallbackOptions`: each
+  handshake gets an `SslStreamCertificateContext` for the SNI name from memory, with the
+  intermediates, and ALPN offers h2 and http/1.1. An unknown name gets a stand-in self-signed
+  certificate, so it sees a warning rather than a dropped connection.
+* **Sources** (`Models/SiteTls.cs`): automatic, letsencrypt, selfsigned, uploaded, shared, none,
+  chosen per site (`SiteRecord.Tls`). Automatic is a covering shared certificate, else
+  `DefaultSource`, and self-signed for names no public CA issues for (`*.localhost`, `*.test`,
+  addresses). Management hosts are always automatic.
+* **Storage** (`Tls/CertificateStore.cs`): `config/certs/hosts/<host>/<source>/`, keys encrypted
+  with Data Protection, one folder per source so switching back does not reissue (Let's Encrypt
+  allows 5 duplicates a week); a Let's Encrypt certificate records the directory it came from,
+  so staging → production reissues. `shared/<id>/` and `acme/<directory>/` alongside.
+* **Renewal** (`Tls/CertificateManager.cs`, a hosted service): hourly, on every site change
+  (`SiteStore.Changed`), and on Renew now. Each pass serves what is on disk first, then issues
+  what is missing or due, one at a time. Due is 30 days before expiry or a third of the lifetime
+  before, whichever is later: Pebble handed out a 6-day certificate in testing, which a fixed 30
+  days would have renewed every hour. Failures back off 1, 2, 4… 24 hours, persisted, so
+  restarts do not hammer Let's Encrypt. A settings change applies at once what needs no
+  issuing (none, shared, a certificate on disk); only issuing waits for the loop.
+* **Per request** (`Tls/TlsMiddleware.cs`), after forwarded headers, the exception handler and
+  response compression, and before anything that picks a site: the
+  HTTP-01 answer for a token in progress, on any host and port; HTTP → HTTPS with 308 for a host
+  that has a certificate, unless its site turned it off, `/healthz` excepted; HSTS
+  (`max-age=31536000`) on HTTPS answers for a site that turned it on.
+* **UI, API, tools.** **HTTPS** in the top bar (server, every host, shared certificates); an
+  HTTPS card on each site; `/api/v1/tls…` and `/api/v1/sites/{domain}/tls…`; `get_tls`,
+  `set_site_tls`, `renew_certificate`. No upload tool: the private key would pass through the
+  conversation.
+* **Container.** `EXPOSE 8080 8443`; Compose publishes `HTTPS_PORT` and passes `TLS_ENABLED`,
+  `ACME_EMAIL`, `ACME_DIRECTORY`.
+
+**Checked end to end against Pebble 2.10.1** (with `pebble-challtestsrv` answering every name with
+127.0.0.1, and `AcmeCaFile` trusting Pebble's own HTTPS): the management host and a new site got
+certificates within seconds, curl verified the chain against Pebble's root over HTTP/2, HTTP
+redirected with 308 and `/healthz` did not; a restart served from disk with no new order;
+switching to self-signed and back reused the stored certificate; none stopped HTTPS and the
+redirect at once; HSTS appeared; an upload with the wrong host, the wrong key or no PEM was
+refused and a good one served with its chain; a shared `*.example.net` took over every
+automatic host and its removal restored theirs at once; a name pointed at an unreachable address
+failed with Pebble's error and a 1-hour wait, and Renew now issued it once the DNS was fixed;
+rename issued for the new name and dropped the old; delete dropped it. gRPC (`grpcurl` →
+HTTPS:5543 → an HTTP/2-only proxy route → `moul/grpcbin` over h2c) answered. 15 tests (some with several cases) in
+`TlsTests.cs`.
+
+**Not done:** DNS-01 (wildcards from Let's Encrypt) is phase 4; HTTP/3; OCSP stapling; ACME
+renewal information (ARI).
+
+## Phase 4: planned
+
+As sketched above. DNS-01 through Cloudflare's API fits the client as a second challenge type.

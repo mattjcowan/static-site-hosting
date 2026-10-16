@@ -173,8 +173,10 @@ public class DetailsModel : PageModel
         SiteAiChatFactory aiChats,
         SiteAiSettingsService aiSettings,
         RealtimeRegistry realtime,
+        StaticSiteHost.Tls.CertificateManager certificates,
         IOptions<SiteHostingOptions> options)
     {
+        _certificates = certificates;
         _functions = functions;
         _functionDeployer = functionDeployer;
         _aiProviders = aiProviders;
@@ -194,6 +196,17 @@ public class DetailsModel : PageModel
     }
 
     public SiteRecord Site { get; private set; } = null!;
+
+    private readonly StaticSiteHost.Tls.CertificateManager _certificates;
+
+    /// <summary>Whether this server ends HTTPS itself (SiteHosting:Tls:Enabled), so certificates are managed here.</summary>
+    public bool HttpsInServer => _certificates.Enabled;
+
+    /// <summary>The site's certificate as the HTTPS card shows it, when HTTPS is in the server.</summary>
+    public StaticSiteHost.Tls.HostCertificateStatus? Certificate { get; private set; }
+
+    /// <summary>Why the last HTTPS change or upload was refused, shown on the card.</summary>
+    public string? TlsError { get; private set; }
 
     public bool IsAdministrator => User.IsInRole(Roles.Administrator);
 
@@ -422,6 +435,8 @@ public class DetailsModel : PageModel
         AiAllowVisitors = site.Ai?.AllowVisitors ?? false;
         AiAccessHook = AccessHookOf(site);
         AiSnippet = BuildAiSnippet(site.Domain);
+
+        Certificate = _certificates.Enabled ? _certificates.StatusOf(site.Domain) : null;
 
         RealtimeConnections = _realtime.ConnectionCount(site.Domain);
         RealtimeGroups = _realtime.GroupSizes(site.Domain);
@@ -838,6 +853,74 @@ public class DetailsModel : PageModel
                     : $"{site.Domain} now chats through {provider?.Name}, for its functions only.";
 
         return RedirectToPage(new { domain = site.Domain });
+    }
+
+    /// <summary>The site's HTTPS choices: where its certificate comes from, the redirect, HSTS.</summary>
+    public async Task<IActionResult> OnPostTlsAsync(string domain, string? source, bool redirectToHttps, bool hsts)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        if (await _certificates.SetSiteAsync(site, source, redirectToHttps, hsts, User.Identity?.Name ?? "unknown") is { } error)
+        {
+            await LoadAsync(site);
+            TlsError = error;
+            return Page();
+        }
+
+        TempData["StatusMessage"] = _certificates.Enabled
+            ? $"HTTPS settings saved for {site.Domain}. A new certificate, if it needs one, follows within a minute."
+            : $"HTTPS settings saved for {site.Domain}.";
+        return RedirectToPage(null, null, new { domain = site.Domain }, "https");
+    }
+
+    /// <summary>A certificate and key for this site, pasted as PEM; saving it makes it the site's choice.</summary>
+    public async Task<IActionResult> OnPostUploadCertificateAsync(string domain, string? certificate, string? privateKey)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        if (await _certificates.UploadForSiteAsync(site, certificate, privateKey, User.Identity?.Name ?? "unknown") is { } error)
+        {
+            await LoadAsync(site);
+            TlsError = error;
+            return Page();
+        }
+
+        TempData["StatusMessage"] = $"{site.Domain} now serves the uploaded certificate.";
+        return RedirectToPage(null, null, new { domain = site.Domain }, "https");
+    }
+
+    public async Task<IActionResult> OnPostRemoveCertificateAsync(string domain)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        await _certificates.RemoveUploadedAsync(site, User.Identity?.Name ?? "unknown");
+        TempData["StatusMessage"] = $"The uploaded certificate was removed. {site.Domain} is back to automatic.";
+        return RedirectToPage(null, null, new { domain = site.Domain }, "https");
+    }
+
+    public IActionResult OnPostRenewCertificate(string domain)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        if (_certificates.Enabled)
+        {
+            _certificates.RenewNow(site.Domain);
+            TempData["StatusMessage"] = $"Asked for a new certificate for {site.Domain}. Reload in a few seconds to see it.";
+        }
+
+        return RedirectToPage(null, null, new { domain = site.Domain }, "https");
     }
 
     /// <summary>Clears the AI settings, so neither the site's functions nor its visitors can chat.</summary>

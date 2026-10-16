@@ -66,6 +66,12 @@ public sealed class SiteRecord
     /// </summary>
     public List<string> DisabledServerRoutes { get; set; } = [];
 
+    /// <summary>
+    /// The site's HTTPS settings, when HTTPS is on in the server (SiteHosting:Tls). Null means
+    /// automatic, redirect on, HSTS off. Administrators only.
+    /// </summary>
+    public SiteTlsSettings? Tls { get; set; }
+
     /// <summary>Every function bundle some retained release still runs.</summary>
     public List<FunctionBundle> FunctionBundles { get; set; } = [];
 

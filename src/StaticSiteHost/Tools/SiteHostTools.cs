@@ -686,6 +686,55 @@ public static class SiteHostTools
         });
     }
 
+    // ================================================================ HTTPS
+
+    [SiteHostTool("get_tls", ToolEffect.Read)]
+    [Description("HTTPS: with a domain, that site's settings and certificate (where it comes from, issuer, expiry, the last error); with none, the whole server: whether HTTPS is ended here, the ACME directory, every host's certificate and the shared certificates. Administrators only for the whole server.")]
+    public static JsonElement GetTls(IServiceProvider services, [Description("A site's domain, or empty for the whole server.")] string? domain = null)
+    {
+        var certificates = services.GetRequiredService<StaticSiteHost.Tls.CertificateManager>();
+        if (!string.IsNullOrWhiteSpace(domain)) return WithSite(services, domain, site => TlsEndpoints.DescribeSite(site, certificates));
+
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        return ToJson(TlsEndpoints.DescribeServer(certificates,
+            services.GetRequiredService<Microsoft.Extensions.Options.IOptions<StaticSiteHost.Configuration.SiteHostingOptions>>().Value.Tls));
+    }
+
+    [SiteHostTool("set_site_tls", ToolEffect.Change)]
+    [Description("Changes a site's HTTPS settings; anything left out stays as it is. source: 'automatic' (a shared certificate that covers it, otherwise the server's default, usually Let's Encrypt), 'letsencrypt', 'selfsigned', 'shared', 'uploaded' (only once a certificate was uploaded in the UI or API) or 'none' (HTTP only). A new certificate follows within a minute. HSTS makes browsers refuse plain HTTP for a year and cannot be taken back from a browser that saw it: turn it on only when the user asks and HTTPS already works. Administrators only.")]
+    public static async Task<JsonElement> SetSiteTls(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("Where the certificate comes from, as above.")] string? source = null,
+        [Description("Send HTTP visitors to HTTPS (on by default).")] bool? redirectToHttps = null,
+        [Description("Send Strict-Transport-Security.")] bool? hsts = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        var certificates = services.GetRequiredService<StaticSiteHost.Tls.CertificateManager>();
+        return await WithSiteAsync(services, domain, async site =>
+            await certificates.SetSiteAsync(site, source, redirectToHttps, hsts, caller.Actor) is { } error
+                ? new { error }
+                : TlsEndpoints.DescribeSite(site, certificates));
+    }
+
+    [SiteHostTool("renew_certificate", ToolEffect.Change)]
+    [Description("Gets a new certificate for a site or a management host now, from Let's Encrypt or self-signed as its settings say, even when the last attempt failed recently. Takes a few seconds to a minute; get_tls shows the result. Administrators only.")]
+    public static JsonElement RenewCertificate(IServiceProvider services, [Description("The site's domain, or a management host.")] string host)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+
+        var certificates = services.GetRequiredService<StaticSiteHost.Tls.CertificateManager>();
+        if (!certificates.Enabled) return Error(TlsEndpoints.NotOn);
+
+        var status = certificates.Status().FirstOrDefault(s => s.Host.Equals((host ?? "").Trim().TrimEnd('.'), StringComparison.OrdinalIgnoreCase));
+        if (status is null) return Error($"This server does not answer for '{host}'. list_sites shows the sites.");
+
+        certificates.RenewNow(status.Host);
+        return ToJson(new { ok = true, host = status.Host, note = TlsEndpoints.Renewing });
+    }
+
     // ================================================================ functions
 
     [SiteHostTool("get_functions", ToolEffect.Read)]

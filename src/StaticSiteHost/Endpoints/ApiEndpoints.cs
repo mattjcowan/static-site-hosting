@@ -562,6 +562,7 @@ public static class ApiEndpoints
 
         api.MapFunctionEndpoints();
         api.MapAdminEndpoints();
+        api.MapTlsEndpoints();
 
         return app;
     }

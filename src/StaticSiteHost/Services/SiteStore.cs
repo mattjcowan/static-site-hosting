@@ -27,9 +27,19 @@ public sealed class SiteStore
         _logger = logger;
     }
 
+    /// <summary>
+    /// Domains whose folder is on disk but whose site.json could not be read at the last load, so
+    /// whatever follows the list of sites (the certificates) leaves their things alone.
+    /// </summary>
+    public IReadOnlySet<string> Unreadable => _unreadable;
+
+    private HashSet<string> _unreadable = new(StringComparer.OrdinalIgnoreCase);
+
     public void Load()
     {
         _sites.Clear();
+        var unreadable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _unreadable = unreadable;
         if (!Directory.Exists(_paths.SitesDir)) return;
 
         foreach (var dir in Directory.EnumerateDirectories(_paths.SitesDir))
@@ -47,6 +57,7 @@ public sealed class SiteStore
             }
             catch (JsonException ex)
             {
+                unreadable.Add(domain);
                 _logger.LogError(ex, "Skipping site {Domain}: site.json could not be parsed", domain);
             }
         }
@@ -72,6 +83,12 @@ public sealed class SiteStore
         return Directory.Exists(dir) ? dir : null;
     }
 
+    /// <summary>
+    /// Raised after a site is saved, renamed or deleted, for whatever follows the list of sites
+    /// (the certificates). Handlers must be quick and must not throw.
+    /// </summary>
+    public event Action? Changed;
+
     public async Task SaveAsync(SiteRecord site)
     {
         await _writeGate.WaitAsync();
@@ -84,6 +101,8 @@ public sealed class SiteStore
         {
             _writeGate.Release();
         }
+
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -132,6 +151,7 @@ public sealed class SiteStore
                 _logger.LogWarning(ex, "Moved {From} to {To} but could not rewrite site.json", from, to);
             }
 
+            Changed?.Invoke();
             return (true, null);
         }
         finally
@@ -154,6 +174,7 @@ public sealed class SiteStore
     public async Task<bool> DeleteAsync(string domain)
     {
         if (!_sites.TryRemove(domain, out _)) return false;
+        Changed?.Invoke();
 
         await _writeGate.WaitAsync();
         try
