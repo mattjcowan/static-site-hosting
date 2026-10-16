@@ -4,8 +4,10 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 using StaticSiteHost.Services;
@@ -53,19 +55,22 @@ public sealed class SitePasscodeGate
     private readonly AuditLog _audit;
     private readonly SiteHostingOptions _options;
     private readonly ILogger<SitePasscodeGate> _logger;
+    private readonly IStringLocalizer<Strings> _strings;
 
     public SitePasscodeGate(
         IDataProtectionProvider protection,
         SiteStore sites,
         AuditLog audit,
         IOptions<SiteHostingOptions> options,
-        ILogger<SitePasscodeGate> logger)
+        ILogger<SitePasscodeGate> logger,
+        IStringLocalizer<Strings> strings)
     {
         _protection = protection;
         _sites = sites;
         _audit = audit;
         _options = options.Value;
         _logger = logger;
+        _strings = strings;
     }
 
     public int MinLength => Math.Max(1, _options.MinPasscodeLength);
@@ -141,7 +146,7 @@ public sealed class SitePasscodeGate
             context.Response.Headers.RetryAfter =
                 ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
             await ChallengeAsync(context, site, StatusCodes.Status429TooManyRequests,
-                $"Too many attempts. Try again in {Math.Ceiling(retryAfter.TotalMinutes)} minute(s).", returnUrl);
+                _strings.Plural("visitor.passcode.tooManyTries", (long)Math.Ceiling(retryAfter.TotalMinutes)), returnUrl);
             return;
         }
 
@@ -158,7 +163,7 @@ public sealed class SitePasscodeGate
             if (backoff > TimeSpan.Zero) await Task.Delay(backoff, context.RequestAborted);
 
             await ChallengeAsync(context, site, StatusCodes.Status401Unauthorized,
-                "That passcode was not recognised.", returnUrl);
+                _strings.Text("visitor.passcode.wrong"), returnUrl);
             return;
         }
 
@@ -274,85 +279,43 @@ public sealed class SitePasscodeGate
         await response.WriteAsJsonAsync(new { error = "This site needs a passcode." }, context.RequestAborted);
     }
 
-    private static async Task ChallengeAsync(
+    /// <summary>The passcode form, in the visitor's language. <paramref name="error"/> is text; it is encoded here.</summary>
+    private async Task ChallengeAsync(
         HttpContext context, SiteRecord site, int statusCode, string? error, string returnUrl)
     {
         if (context.Response.HasStarted) return;
 
         var response = context.Response;
-        response.StatusCode = statusCode;
-        response.ContentType = "text/html; charset=utf-8";
-        response.Headers.CacheControl = "no-store";
         response.Headers["X-Robots-Tag"] = "noindex, nofollow";
-        response.Headers["X-Content-Type-Options"] = "nosniff";
         response.Headers["Referrer-Policy"] = "no-referrer";
 
         var alert = error is null
             ? ""
             : $"""<p class="error" role="alert">{WebUtility.HtmlEncode(error)}</p>""";
 
-        var html = $$"""
-            <!doctype html>
-            <html lang="en">
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <meta name="robots" content="noindex, nofollow">
-            <title>Passcode required — {{WebUtility.HtmlEncode(site.Domain)}}</title>
-            <style>
-              :root {
-                color-scheme: light dark;
-                --bg: #f6f7f9; --surface: #fff; --border: #dfe3ea; --text: #1a1d24;
-                --muted: #626b7d; --accent: #3b5bdb; --accent-text: #fff;
-                --danger: #c92a2a; --danger-soft: #fff0f0;
-              }
-              @media (prefers-color-scheme: dark) {
-                :root {
-                  --bg: #0f1115; --surface: #171a21; --border: #2a2f3a; --text: #e4e7ee;
-                  --muted: #8b93a5; --accent: #6b8afd; --accent-text: #0f1115;
-                  --danger: #ff8787; --danger-soft: #2a1a1c;
-                }
-              }
-              * { box-sizing: border-box; }
-              body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 1.5rem;
-                     background: var(--bg); color: var(--text);
-                     font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-              main { width: 100%; max-width: 24rem; }
-              .head { text-align: center; margin-bottom: 1.25rem; }
-              .head svg { width: 30px; height: 30px; color: var(--muted); }
-              h1 { font-size: 1.35rem; margin: 0.4rem 0 0.25rem; letter-spacing: -0.02em; }
-              .head p { margin: 0; color: var(--muted); font-size: 0.9rem; word-break: break-all; }
-              form { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; }
-              label { display: block; font-weight: 550; font-size: 0.875rem; margin-bottom: 0.35rem; }
-              input { width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
-                      background: var(--bg); color: var(--text); font: inherit; }
-              input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-              button { width: 100%; margin-top: 1rem; padding: 0.55rem 0.9rem; border: 1px solid var(--accent);
-                       border-radius: 8px; background: var(--accent); color: var(--accent-text);
-                       font: inherit; font-weight: 550; cursor: pointer; }
-              button:hover { filter: brightness(1.08); }
-              .error { margin: 0 0 1rem; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.875rem;
-                       background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger); }
-            </style>
-            <main>
-              <div class="head">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-                <h1>This site is private</h1>
-                <p>{{WebUtility.HtmlEncode(site.Domain)}}</p>
-              </div>
-              <form method="post" action="{{UnlockPath}}">
-                {{alert}}
-                <input type="hidden" name="{{ReturnUrlField}}" value="{{WebUtility.HtmlEncode(returnUrl)}}">
-                <label for="passcode">Passcode</label>
-                <input id="passcode" name="{{PasscodeField}}" type="password" autocomplete="current-password"
-                       maxlength="{{MaxPasscodeLength}}" autofocus required>
-                <button type="submit">View site</button>
-              </form>
-            </main>
+        var body = $$"""
+            <div class="head">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <h1>{{Encoded("visitor.passcode.title")}}</h1>
+              <p>{{WebUtility.HtmlEncode(site.Domain)}}</p>
+              <p>{{Encoded("visitor.passcode.hint")}}</p>
+            </div>
+            <form method="post" action="{{UnlockPath}}">
+              {{alert}}
+              <input type="hidden" name="{{ReturnUrlField}}" value="{{WebUtility.HtmlEncode(returnUrl)}}">
+              <label for="passcode">{{Encoded("visitor.passcode.label")}}</label>
+              <input id="passcode" name="{{PasscodeField}}" type="password" autocomplete="current-password"
+                     maxlength="{{MaxPasscodeLength}}" autofocus required>
+              <button type="submit">{{Encoded("visitor.passcode.submit")}}</button>
+            </form>
             """;
 
-        await response.WriteAsync(html, Encoding.UTF8);
+        await VisitorPage.WriteAsync(context, statusCode, _strings.Text("visitor.passcode.pageTitle", new { domain = site.Domain }), body);
     }
+
+    /// <summary>A string in the visitor's language, encoded for HTML.</summary>
+    private string Encoded(string key, object? values = null) => WebUtility.HtmlEncode(_strings.Text(key, values));
 }

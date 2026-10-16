@@ -1,6 +1,7 @@
 using System.Net;
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http.Features;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 using Yarp.ReverseProxy.Forwarder;
@@ -40,6 +41,19 @@ public sealed class SiteProxy
     private readonly ConcurrentDictionary<string, CachedTable> _tables = new(StringComparer.OrdinalIgnoreCase);
 
     private sealed record CachedTable(object SiteRoutes, object ServerRoutes, object Disabled, ProxyRouteTable Table);
+
+    /// <summary>
+    /// What a browser is shown when a route fails: the keys of a title and a sentence or two in
+    /// visitor.json. They say what the visitor can do, and nothing about the target.
+    /// </summary>
+    private readonly record struct FailurePage(string Title, string Detail);
+
+    private static readonly FailurePage NotSetUp = new("visitor.proxy.notSetUp.title", "visitor.proxy.notSetUp.detail");
+    private static readonly FailurePage Unreachable = new("visitor.proxy.unreachable.title", "visitor.proxy.unreachable.detail");
+    private static readonly FailurePage TimedOut = new("visitor.proxy.timedOut.title", "visitor.proxy.timedOut.detail");
+    private static readonly FailurePage Refused = new("visitor.proxy.refused.title", "visitor.proxy.refused.detail");
+    private static readonly FailurePage WebSocketsOff = new("visitor.proxy.refused.title", "visitor.proxy.webSocketsOff");
+    private static readonly FailurePage WebSocketsCrossSite = new("visitor.proxy.refused.title", "visitor.proxy.webSocketsCrossSite");
 
     private readonly IHttpForwarder _forwarder;
     private readonly ProxyInvokers _invokers;
@@ -96,7 +110,7 @@ public sealed class SiteProxy
         // environment variable never lets the request fall through to files behind it.
         if (route.Target is null || route.Transformer is null)
         {
-            await WriteFailureAsync(context, StatusCodes.Status502BadGateway, "This path's backend is not set up correctly.");
+            await WriteFailureAsync(context, StatusCodes.Status502BadGateway, "This path's backend is not set up correctly.", NotSetUp);
             return;
         }
 
@@ -104,7 +118,7 @@ public sealed class SiteProxy
         {
             _logger.LogWarning("Proxy route {Path} on {Domain} refused a request that has been proxied {Hops} times: its target leads back here",
                 route.Route.Path, site.Domain, HopsOf(context));
-            await WriteFailureAsync(context, StatusCodes.Status508LoopDetected, "This path's backend leads back to this server.");
+            await WriteFailureAsync(context, StatusCodes.Status508LoopDetected, "This path's backend leads back to this server.", NotSetUp);
             return;
         }
 
@@ -112,13 +126,14 @@ public sealed class SiteProxy
         {
             if (!route.Route.WebSockets)
             {
-                await WriteFailureAsync(context, StatusCodes.Status403Forbidden, "WebSockets are not turned on for this path.");
+                await WriteFailureAsync(context, StatusCodes.Status403Forbidden, "WebSockets are not turned on for this path.", WebSocketsOff);
                 return;
             }
 
             if (!route.Route.CrossSiteWebSockets && IsCrossSite(context))
             {
-                await WriteFailureAsync(context, StatusCodes.Status403Forbidden, "WebSockets to this path may only be opened by the site's own pages.");
+                await WriteFailureAsync(context, StatusCodes.Status403Forbidden, "WebSockets to this path may only be opened by the site's own pages.",
+                    WebSocketsCrossSite);
                 return;
             }
         }
@@ -193,7 +208,8 @@ public sealed class SiteProxy
         var timedOut = error is ForwarderError.RequestTimedOut or ForwarderError.UpgradeActivityTimeout;
         await WriteFailureAsync(context,
             timedOut ? StatusCodes.Status504GatewayTimeout : StatusCodes.Status502BadGateway,
-            timedOut ? "The backend took too long to answer." : "The backend could not be reached.");
+            timedOut ? "The backend took too long to answer." : "The backend could not be reached.",
+            timedOut ? TimedOut : Unreachable);
     }
 
     /// <summary>The hop count the request arrived with: 0 when it has none, or none that can be read.</summary>
@@ -209,9 +225,21 @@ public sealed class SiteProxy
 
     /// <summary>
     /// A short answer that says nothing about the target: internal names and ports are not the
-    /// visitor's business. JSON for a caller that asked for it, the server's error page otherwise.
+    /// visitor's business. JSON for a caller that asked for it, the server's error page otherwise,
+    /// with the page the status calls for.
     /// </summary>
-    internal static async Task WriteFailureAsync(HttpContext context, int status, string message)
+    internal static Task WriteFailureAsync(HttpContext context, int status, string message) =>
+        WriteFailureAsync(context, status, message, status switch
+        {
+            StatusCodes.Status403Forbidden => Refused,
+            StatusCodes.Status504GatewayTimeout => TimedOut,
+            StatusCodes.Status508LoopDetected => NotSetUp,
+            _ => Unreachable
+        });
+
+    /// <param name="message">The JSON answer's error. It stays English, for the scripts that read it.</param>
+    /// <param name="page">What a browser is shown instead, in the visitor's language.</param>
+    private static async Task WriteFailureAsync(HttpContext context, int status, string message, FailurePage page)
     {
         if (context.Response.HasStarted) return;
 
@@ -225,16 +253,9 @@ public sealed class SiteProxy
             return;
         }
 
-        await SiteContentServer.WriteMessageAsync(context, status, ReasonPhrase(status), WebUtility.HtmlEncode(message));
+        var strings = SiteContentServer.StringsFor(context);
+        await SiteContentServer.WriteMessageAsync(context, status, strings.Text(page.Title), WebUtility.HtmlEncode(strings.Text(page.Detail)));
     }
-
-    private static string ReasonPhrase(int status) => status switch
-    {
-        StatusCodes.Status403Forbidden => "Forbidden",
-        StatusCodes.Status504GatewayTimeout => "Gateway timeout",
-        StatusCodes.Status508LoopDetected => "Loop detected",
-        _ => "Bad gateway"
-    };
 
     /// <summary>A WebSocket, or any other upgrade, over HTTP/1.1 or HTTP/2.</summary>
     private static bool IsUpgrade(HttpContext context) =>

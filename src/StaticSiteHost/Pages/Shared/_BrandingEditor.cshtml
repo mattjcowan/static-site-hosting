@@ -1,0 +1,330 @@
+@model StaticSiteHost.Pages.Shared.BrandingEditor
+@using StaticSiteHost.Pages.Shared
+@using StaticSiteHost.Services
+@{
+    var v = Model.Values;
+    var stacks = Model.Stacks();
+    string AssetUrl(string? id) => id is null ? "" : BrandingService.AssetUrl(id);
+    // Only a colour that is one reaches the preview's style, whatever was posted.
+    string Hex(BrandColors? colors, string token) => colors?[token] is { } value && BrandingTheme.IsColor(value) ? value : "#000000";
+    string PaneStyle(BrandColors? colors, bool dark) =>
+        string.Join(" ", BrandColors.Tokens.Select(t => $"--{t}: {Hex(colors, t)};")) +
+        $" --font-body: {stacks.GetValueOrDefault(v.BodyFont ?? "", "")}; --font-heading: {stacks.GetValueOrDefault(v.HeadingFont ?? "", "")};" +
+        $" --text-size: {v.TextSize}px; --heading-weight: {v.HeadingWeight}; --radius: {v.Radius}px; --radius-sm: {Math.Round((v.Radius ?? 8) * 0.75)}px;" +
+        $" --density: {(v.Density ?? 1).ToString(System.Globalization.CultureInfo.InvariantCulture)}; color-scheme: {(dark ? "dark" : "light")};";
+    var prefix = Model.IsSite ? "site-brand" : "brand";
+    var inheritedName = Model.Inherited?.Name ?? Brand.DefaultName;
+}
+
+@* The library's fonts, so the font choices and the preview can show them. *@
+<style>
+    @foreach (var font in Model.Fonts.Where(f => f.Kind != BrandFont.GoogleLinked))
+    {
+        @Html.Raw(BrandingTheme.FontFaces(font, BrandingService.FontUrl))
+    }
+</style>
+@if (Model.AllowGoogleFonts)
+{
+    @foreach (var font in Model.Fonts.Where(f => f.Kind == BrandFont.GoogleLinked && f.GoogleCssUrl is not null))
+    {
+        <link rel="stylesheet" href="@font.GoogleCssUrl" />
+    }
+}
+
+<form method="post" action="@Model.Action" enctype="multipart/form-data" class="branding-form" data-branding>
+    @* An explicit action gets no token by itself. *@
+    @Html.AntiForgeryToken()
+    <script type="application/json" data-branding-starters>@Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.StartersFor(L)))</script>
+    <script type="application/json" data-branding-stacks>@Html.Raw(System.Text.Json.JsonSerializer.Serialize(stacks))</script>
+    @if (Model.IsSite)
+    {
+        @* "Use the server's look" puts back the values the site gets from the server. *@
+        var server = BrandingEditor.Filled(null, Model.Inherited);
+        <script type="application/json" data-branding-inherited>@Html.Raw(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = "inherited", name = L.Text("branding.form.serverLook"),
+            light = BrandColors.Tokens.ToDictionary(t => t, t => server.Light![t]), dark = BrandColors.Tokens.ToDictionary(t => t, t => server.Dark![t]),
+            headingFont = server.HeadingFont, bodyFont = server.BodyFont, textSize = server.TextSize, headingWeight = server.HeadingWeight,
+            radius = server.Radius, density = server.Density
+        }))</script>
+    }
+
+    @if (Model.Errors.Count > 0)
+    {
+        <div class="alert alert-error" role="alert">
+            <strong>@L["branding.form.notSaved"]</strong>
+            <ul>
+                @foreach (var error in Model.Errors.Take(10))
+                {
+                    <li>@error</li>
+                }
+            </ul>
+        </div>
+    }
+
+    <div class="branding-layout">
+        <div class="branding-fields">
+            <details class="card section" data-section="@prefix-identity" open="@Sections.IsOpen(Context, prefix + "-identity")">
+                <summary class="section-head"><h2>@L["branding.identity.title"]</h2></summary>
+                <p class="hint">@L[Model.IsSite ? "branding.identity.siteHint" : "branding.identity.hint"]</p>
+
+                <div class="row">
+                    <div class="field">
+                        <label for="@prefix-name">@L["branding.identity.name"]</label>
+                        <input id="@prefix-name" name="Name" type="text" value="@v.Name" maxlength="@BrandingTheme.MaxNameLength"
+                               placeholder="@(Model.IsSite ? Model.Inherited?.Name ?? "" : inheritedName)" autocomplete="off" data-brand-name
+                               data-brand-default-name="@(Model.IsSite ? Model.Inherited?.Name ?? "" : inheritedName)" />
+                    </div>
+                    @if (!Model.IsSite)
+                    {
+                        <div class="field">
+                            <label for="@prefix-message">@L["branding.identity.signInMessage"]</label>
+                            <input id="@prefix-message" name="SignInMessage" type="text" value="@v.SignInMessage"
+                                   maxlength="@BrandingTheme.MaxSignInMessageLength" placeholder="@L["branding.identity.signInMessagePlaceholder"]" autocomplete="off" />
+                        </div>
+                    }
+                </div>
+                @if (!Model.IsSite)
+                {
+                    <p class="hint field-hint">@L["branding.identity.signInMessageHint"]</p>
+                }
+
+                <div class="logo-pickers">
+                    @foreach (var (field, current, labelKey, scheme) in new[]
+                    {
+                        ("LogoLight", Model.Saved.LogoLight, "branding.identity.logoLight", "light"),
+                        ("LogoDark", Model.Saved.LogoDark, "branding.identity.logoDark", "dark"),
+                        ("Favicon", Model.Saved.Favicon, "branding.identity.favicon", "light")
+                    })
+                    {
+                        var inherited = field switch
+                        {
+                            "LogoLight" => Model.Inherited?.LogoLight,
+                            "LogoDark" => Model.Inherited?.LogoDark,
+                            _ => Model.Inherited?.Favicon
+                        };
+                        <div class="logo-picker">
+                            <span class="label">@L[labelKey]</span>
+                            <div class="logo-swatch logo-swatch-@scheme" data-logo-swatch="@field">
+                                @if (current is not null)
+                                {
+                                    <img src="@AssetUrl(current)" alt="" />
+                                }
+                                else if (inherited is not null)
+                                {
+                                    <img src="@AssetUrl(inherited)" alt="" class="inherited" title="@L["branding.identity.inherited"]" />
+                                }
+                                else
+                                {
+                                    <span class="muted">@L["branding.identity.none"]</span>
+                                }
+                            </div>
+                            <input type="file" name="@(field)File" accept=".svg,.png,.webp,.jpg,.jpeg,.gif,.ico" data-logo-input="@field"
+                                   aria-label="@L[labelKey]" />
+                            <input type="hidden" name="@(field)Id" value="@current" />
+                            @if (current is not null)
+                            {
+                                <div class="checkline">
+                                    <input id="@prefix-remove-@field" type="checkbox" name="Remove@(field)" value="true" data-logo-remove="@field" />
+                                    <label for="@prefix-remove-@field">@L["branding.identity.remove"]</label>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="checkline">
+                    <input id="@prefix-logo-name" type="checkbox" name="LogoHasName" value="true" checked="@(v.LogoHasName == true)" data-brand-logo-has-name />
+                    <label for="@prefix-logo-name">@L["branding.identity.logoHasName"]</label>
+                </div>
+                <p class="hint field-hint">@L.Text("branding.identity.imageHint", new { size = BrandingStore.MaxAssetBytes / 1024 })</p>
+            </details>
+
+            <details class="card section" data-section="@prefix-starters" open="@Sections.IsOpen(Context, prefix + "-starters")">
+                <summary class="section-head"><h2>@L["branding.starter.title"]</h2></summary>
+                <p class="hint">@L["branding.starter.hint"]</p>
+                <div class="starter-list">
+                    @foreach (var starter in BrandingStarter.All)
+                    {
+                        <button type="button" class="starter" data-starter="@starter.Id"
+                                style="--s-light-bg: @starter.Light["bg"]; --s-light-accent: @starter.Light["accent"]; --s-dark-bg: @starter.Dark["bg"]; --s-dark-accent: @starter.Dark["accent"];">
+                            <span class="starter-swatch" aria-hidden="true"><span></span><span></span></span>
+                            @L[starter.NameKey]
+                        </button>
+                    }
+                </div>
+                <p class="hint starter-status" role="status" data-starter-status></p>
+            </details>
+
+            <details class="card section" data-section="@prefix-colours" open="@Sections.IsOpen(Context, prefix + "-colours")">
+                <summary class="section-head"><h2>@L["branding.colors.title"]</h2></summary>
+                <p class="hint">@L["branding.colors.hint"]</p>
+                <div class="table-wrap">
+                    <table class="color-table">
+                        <thead>
+                            <tr>
+                                <th>@L["branding.colors.column.color"]</th>
+                                <th>@L["branding.colors.column.light"]</th>
+                                <th>@L["branding.colors.column.dark"]</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var token in BrandColors.Tokens)
+                            {
+                                var label = L[BrandingLabels.Color(token)];
+                                <tr>
+                                    <td>@label</td>
+                                    @foreach (var (scheme, colors, field, schemeKey) in new[] { ("light", v.Light, "Light", "branding.colors.column.light"), ("dark", v.Dark, "Dark", "branding.colors.column.dark") })
+                                    {
+                                        <td>
+                                            <div class="color-field">
+                                                <input type="color" value="@Hex(colors, token)" data-color="@scheme:@token"
+                                                       aria-label="@label (@L[schemeKey])" />
+                                                <input type="text" name="@(field)[@token]" value="@Hex(colors, token)" maxlength="7" pattern="#[0-9a-fA-F]{6}"
+                                                       class="mono" spellcheck="false" autocomplete="off" data-hex="@scheme:@token"
+                                                       aria-label="@label (@L[schemeKey])" />
+                                            </div>
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <h3 class="contrast-title">@L["branding.colors.contrastTitle"]</h3>
+                <p class="hint">@L["branding.colors.contrastHint"]</p>
+                <div class="contrast-grid" data-contrast></div>
+            </details>
+
+            <details class="card section" data-section="@prefix-type" open="@Sections.IsOpen(Context, prefix + "-type")">
+                <summary class="section-head"><h2>@L["branding.type.title"]</h2></summary>
+                <div class="row">
+                    @foreach (var (field, labelKey, value) in new[] { ("HeadingFont", "branding.type.headingFont", v.HeadingFont), ("BodyFont", "branding.type.bodyFont", v.BodyFont) })
+                    {
+                        <div class="field">
+                            <label for="@prefix-@field">@L[labelKey]</label>
+                            <select id="@prefix-@field" name="@field" data-font="@field">
+                                <optgroup label="@L["branding.type.systemGroup"]">
+                                    @foreach (var (font, key) in BrandingLabels.SystemFonts)
+                                    {
+                                        <option value="@font" selected="@(value == font)">@L[key]</option>
+                                    }
+                                </optgroup>
+                                @if (Model.Fonts.Count > 0)
+                                {
+                                    <optgroup label="@L["branding.type.libraryGroup"]">
+                                        @foreach (var font in Model.Fonts)
+                                        {
+                                            <option value="@font.Id" selected="@(value == font.Id)">@font.Family</option>
+                                        }
+                                    </optgroup>
+                                }
+                            </select>
+                        </div>
+                    }
+                </div>
+                <p class="hint field-hint">@L["branding.type.fontsHint"]</p>
+
+                <div class="row branding-sizes">
+                    <div class="field">
+                        <label for="@prefix-size">@L["branding.type.textSize"] <output data-output="TextSize">@L.Text("branding.type.textSizeValue", new { size = v.TextSize })</output></label>
+                        <input id="@prefix-size" name="TextSize" type="range" min="@BrandingTheme.MinTextSize" max="@BrandingTheme.MaxTextSize" step="1"
+                               value="@v.TextSize" data-size="TextSize" data-format="@L["branding.type.textSizeValue"]" />
+                    </div>
+                    <div class="field">
+                        <label for="@prefix-weight">@L["branding.type.headingWeight"]</label>
+                        <select id="@prefix-weight" name="HeadingWeight" data-size="HeadingWeight">
+                            @foreach (var (weight, key) in BrandingLabels.Weights)
+                            {
+                                <option value="@weight" selected="@(v.HeadingWeight == weight)">@L[key]</option>
+                            }
+                            @* A weight set through the API that the list does not have stays as it is. *@
+                            @if (v.HeadingWeight is { } other && BrandingLabels.Weights.All(w => w.Weight != other))
+                            {
+                                <option value="@other" selected>@other</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="@prefix-radius">@L["branding.type.radius"] <output data-output="Radius">@L.Text("branding.type.radiusValue", new { size = v.Radius })</output></label>
+                        <input id="@prefix-radius" name="Radius" type="range" min="@BrandingTheme.MinRadius" max="@BrandingTheme.MaxRadius" step="1"
+                               value="@v.Radius" data-size="Radius" data-format="@L["branding.type.radiusValue"]" />
+                    </div>
+                    <div class="field">
+                        <label for="@prefix-density">@L["branding.type.density"] <output data-output="Density">@L.Text("branding.type.densityValue", new { value = (v.Density ?? 1).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) })</output></label>
+                        <input id="@prefix-density" name="Density" type="range" min="@BrandingTheme.MinDensity.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                               max="@BrandingTheme.MaxDensity.ToString(System.Globalization.CultureInfo.InvariantCulture)" step="0.01"
+                               value="@((v.Density ?? 1).ToString(System.Globalization.CultureInfo.InvariantCulture))" data-size="Density" data-format="@L["branding.type.densityValue"]" />
+                    </div>
+                </div>
+            </details>
+
+            <div class="branding-actions">
+                <button type="submit" class="btn-primary">@L[Model.IsSite ? "branding.form.saveSite" : "branding.form.save"]</button>
+                <button type="button" class="btn" data-starter="@(Model.IsSite ? "inherited" : "default")">@L[Model.IsSite ? "branding.form.serverLook" : "branding.form.builtIn"]</button>
+            </div>
+        </div>
+
+        <aside class="branding-preview" aria-label="@L["branding.preview.title"]">
+            <p class="side-group">@L["branding.preview.title"]</p>
+            @foreach (var (scheme, colors, labelKey) in new[] { ("light", v.Light, "branding.preview.light"), ("dark", v.Dark, "branding.preview.dark") })
+            {
+                var logo = scheme == "dark" ? (Model.Saved.LogoDark ?? Model.Saved.LogoLight ?? Model.Inherited?.LogoDark ?? Model.Inherited?.LogoLight)
+                                            : (Model.Saved.LogoLight ?? Model.Saved.LogoDark ?? Model.Inherited?.LogoLight ?? Model.Inherited?.LogoDark);
+                <div class="preview-pane" data-preview="@scheme" style="@PaneStyle(colors, scheme == "dark")">
+                    <span class="preview-scheme">@L[labelKey]</span>
+                    @if (Model.IsSite)
+                    {
+                        @* What this site's visitors see: its passcode screen. *@
+                        var shownName = v.Name ?? Model.Inherited?.Name;
+                        <div class="pv-visitor">
+                            <div class="pv-brand">
+                                <img class="pv-logo" src="@AssetUrl(logo)" alt="" hidden="@(logo is null)" data-preview-logo="@scheme" />
+                                <span class="pv-name" hidden="@(shownName is null || (logo is not null && v.LogoHasName == true))" data-preview-name>@shownName</span>
+                            </div>
+                            <span class="pv-lock">@Icons.Get("https")</span>
+                            <p class="pv-title">@L["visitor.passcode.title"]</p>
+                            <p class="hint">@Model.Site</p>
+                            <div class="card">
+                                <span class="label">@L["visitor.passcode.label"]</span>
+                                <span class="pv-input">&nbsp;</span>
+                                <span class="btn btn-primary pv-wide">@L["visitor.passcode.submit"]</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="pv-shell">
+                            <div class="pv-side">
+                                <div class="pv-brand">
+                                    <img class="pv-logo" src="@AssetUrl(logo)" alt="" hidden="@(logo is null)" data-preview-logo="@scheme" />
+                                    <span class="pv-mark" hidden="@(logo is not null)" data-preview-mark>@Icons.Get("brand")</span>
+                                    <span class="pv-name" hidden="@(logo is not null && v.LogoHasName == true)" data-preview-name>@(v.Name ?? inheritedName)</span>
+                                </div>
+                                <span class="pv-nav active">@Icons.Get("sites") @L["branding.preview.menuSites"]</span>
+                                <span class="pv-nav">@Icons.Get("users") @L["branding.preview.menuUsers"]</span>
+                            </div>
+                            <div class="pv-main">
+                                <p class="pv-title">@L["branding.preview.site"]</p>
+                                <div class="card">
+                                    <h2>@L["branding.preview.cardTitle"] <span class="badge badge-ok">@L["branding.preview.badge"]</span></h2>
+                                    <p class="hint">@L["branding.preview.hint"] <a href="#" tabindex="-1" onclick="return false">@L["branding.preview.link"]</a></p>
+                                    <div class="field">
+                                        <span class="label">@L["branding.preview.field"]</span>
+                                        <span class="pv-input">http://orders-api:8080</span>
+                                    </div>
+                                    <div class="pv-buttons">
+                                        <span class="btn btn-primary">@L["branding.preview.save"]</span>
+                                        <span class="btn">@L["branding.preview.test"]</span>
+                                    </div>
+                                </div>
+                                <div class="alert alert-success">@L["branding.preview.saved"]</div>
+                                <p class="pv-badges"><span class="badge badge-warn">@L["branding.preview.warning"]</span> <span class="badge badge-off">@L["branding.preview.error"]</span></p>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </aside>
+    </div>
+</form>
+<script src="~/js/branding.js" asp-append-version="true" defer></script>

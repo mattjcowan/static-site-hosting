@@ -1,0 +1,24 @@
+{
+  "js.app.copy.done": "Copiado",
+
+  "js.app.dropzone.files.one": "{count} archivo: {names}",
+  "js.app.dropzone.files.other": "{count} archivos: {names}",
+  "js.app.dropzone.skipped": "Omitidos: {names}. Solo se aceptan archivos {types}.",
+  "js.app.dropzone.change": "Haz clic para elegir otros archivos",
+  "js.app.dropzone.empty": "Primero elige o suelta al menos un archivo.",
+
+  "js.app.deploy.drop": "Suelta un archivo zip aquí",
+  "js.app.deploy.dropHint": "o haz clic para elegir un archivo",
+  "js.app.deploy.chosen": "{size}. Haz clic para elegir otro archivo.",
+  "js.app.deploy.noFile": "Primero elige un archivo zip.",
+  "js.app.deploy.noDomain": "Escribe el dominio donde desplegar.",
+  "js.app.deploy.uploading": "Subiendo…",
+  "js.app.deploy.unpacking": "Descomprimiendo…",
+  "js.app.deploy.submit": "Desplegar",
+  "js.app.deploy.badAnswer": "El servidor envió una respuesta inesperada (HTTP {status}). Vuelve a intentarlo.",
+  "js.app.deploy.failed": "El despliegue falló.",
+  "js.app.deploy.done.one": "{count} archivo ({size}) desplegado en {domain}.",
+  "js.app.deploy.done.other": "{count} archivos ({size}) desplegados en {domain}.",
+  "js.app.deploy.functions": "Las funciones de {folder} ya están publicadas: {routes}",
+  "js.app.deploy.uploadFailed": "La subida no terminó. Revisa tu conexión y vuelve a intentarlo."
+}

@@ -1,0 +1,14 @@
+{
+  "js.branding.pair.textOnBg": "页面背景上的文字",
+  "js.branding.pair.textOnSurface": "卡片上的文字",
+  "js.branding.pair.mutedOnSurface": "卡片上的次要文字",
+  "js.branding.pair.accentOnSurface": "卡片上的强调色",
+  "js.branding.pair.accentTextOnAccent": "强调色上的文字",
+  "js.branding.pair.dangerOnSurface": "卡片上的错误信息",
+  "js.branding.ratio": "{ratio}:1",
+  "js.branding.pass": "易于阅读",
+  "js.branding.large": "仅适合大号文字",
+  "js.branding.fail": "难以阅读",
+  "js.branding.applied": "已应用 {name}。保存后才会保留。",
+  "js.branding.notHex": "颜色请写成 #rrggbb 格式，例如 #2f5be8。"
+}

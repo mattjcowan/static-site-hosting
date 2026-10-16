@@ -1,16 +1,16 @@
 @page
 @model StaticSiteHost.Pages.Admin.FunctionsModel
 @{
-    ViewData["Title"] = "Functions";
+    ViewData["Title"] = L["functions.pageTitle"].Value;
 }
 
 <div class="page-head">
-    <h1>Global functions</h1>
-    <p>Handlers every hosted site answers with. A site's own functions are checked first, then these, then its files.</p>
+    <h1>@L["functions.title"]</h1>
+    <p>@L["functions.intro"]</p>
 </div>
 
 <div class="card">
-    <h2>Live functions</h2>
+    <h2>@L["functions.live.title"]</h2>
 
     <partial name="_FunctionErrors" model="new StaticSiteHost.Pages.Shared.FunctionErrorsView(Model.FunctionError, Model.FunctionDiagnostics)" />
 
@@ -22,7 +22,7 @@
     }
     else
     {
-        <p class="muted">No global functions are deployed.</p>
+        <p class="muted">@L["functions.live.empty"]</p>
     }
 
     @{
@@ -31,13 +31,10 @@
             Model.Current,
             Url.Page("/Admin/FunctionEditor")!,
             Url.Page(null, "Remove"),
-            "Remove global functions",
-            "Remove the global functions? Every site stops answering their routes.");
+            L["functions.remove.button"],
+            L["functions.remove.confirm"]);
     }
     <partial name="_FunctionUpload" model="upload" />
 
-    <p class="hint" style="margin: 0.75rem 0 0">
-        Global functions have no rollback: every upload goes live on every site at once. Download the
-        source first if you might want the current set back.
-    </p>
+    <p class="hint" style="margin: 0.75rem 0 0">@L["functions.noRollback"]</p>
 </div>

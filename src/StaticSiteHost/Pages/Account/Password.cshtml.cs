@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Security;
 using StaticSiteHost.Services;
 
@@ -13,11 +15,13 @@ public class PasswordModel : PageModel
 {
     private readonly UserStore _users;
     private readonly AuditLog _audit;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public PasswordModel(UserStore users, AuditLog audit)
+    public PasswordModel(UserStore users, AuditLog audit, IStringLocalizer<Strings> strings)
     {
         _users = users;
         _audit = audit;
+        _strings = strings;
     }
 
     [BindProperty]
@@ -27,20 +31,17 @@ public class PasswordModel : PageModel
     [BindProperty(SupportsGet = true)]
     public bool Required { get; set; }
 
+    /// <summary>All three are required, and the new password and its confirmation must match: <see cref="OnPostAsync"/> checks them, so the messages are in the viewer's language.</summary>
     public class InputModel
     {
-        [Required(ErrorMessage = "Enter your current password.")]
         [DataType(DataType.Password)]
-        public string CurrentPassword { get; set; } = "";
+        public string? CurrentPassword { get; set; } = "";
 
-        [Required(ErrorMessage = "Choose a new password.")]
         [DataType(DataType.Password)]
-        public string NewPassword { get; set; } = "";
+        public string? NewPassword { get; set; } = "";
 
-        [Required(ErrorMessage = "Confirm your new password.")]
         [DataType(DataType.Password)]
-        [Compare(nameof(NewPassword), ErrorMessage = "The two passwords do not match.")]
-        public string ConfirmPassword { get; set; } = "";
+        public string? ConfirmPassword { get; set; } = "";
     }
 
     public void OnGet()
@@ -53,11 +54,17 @@ public class PasswordModel : PageModel
         var user = await _users.FindByIdAsync(userId);
         if (user is null) return RedirectToPage("/Logout");
 
+        if (string.IsNullOrWhiteSpace(Input.CurrentPassword)) ModelState.AddModelError("Input.CurrentPassword", _strings["account.changePassword.noCurrent"]);
+        if (string.IsNullOrWhiteSpace(Input.NewPassword)) ModelState.AddModelError("Input.NewPassword", _strings["account.changePassword.noNew"]);
+        if (string.IsNullOrWhiteSpace(Input.ConfirmPassword)) ModelState.AddModelError("Input.ConfirmPassword", _strings["account.changePassword.noConfirm"]);
+        if (!string.Equals(Input.ConfirmPassword, Input.NewPassword, StringComparison.Ordinal))
+            ModelState.AddModelError("Input.ConfirmPassword", _strings["account.changePassword.mismatch"]);
+
         if (!ModelState.IsValid) return Page();
 
-        if (!PasswordHasher.Verify(Input.CurrentPassword, user.PasswordHash))
+        if (!PasswordHasher.Verify(Input.CurrentPassword!, user.PasswordHash))
         {
-            ModelState.AddModelError("Input.CurrentPassword", "That is not your current password.");
+            ModelState.AddModelError("Input.CurrentPassword", _strings["account.changePassword.wrongCurrent"]);
             return Page();
         }
 
@@ -67,13 +74,13 @@ public class PasswordModel : PageModel
             return Page();
         }
 
-        if (PasswordHasher.Verify(Input.NewPassword, user.PasswordHash))
+        if (PasswordHasher.Verify(Input.NewPassword!, user.PasswordHash))
         {
-            ModelState.AddModelError("Input.NewPassword", "Choose a password you have not used here before.");
+            ModelState.AddModelError("Input.NewPassword", _strings["account.changePassword.same"]);
             return Page();
         }
 
-        await _users.SetPasswordAsync(user.Id, Input.NewPassword);
+        await _users.SetPasswordAsync(user.Id, Input.NewPassword!);
         await _audit.WriteAsync("user.password.change", user.Username);
 
         // The security stamp just rotated, so the current cookie is no longer valid.
@@ -85,7 +92,7 @@ public class PasswordModel : PageModel
             UserStore.CreatePrincipal(refreshed),
             new AuthenticationProperties { IsPersistent = true });
 
-        TempData["StatusMessage"] = "Your password was changed.";
+        TempData["StatusMessage"] = _strings.Text("account.changePassword.done");
         return RedirectToPage("/Index");
     }
 }

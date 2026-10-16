@@ -1,78 +1,77 @@
 @page
 @model StaticSiteHost.Pages.Account.IndexModel
 @{
-    ViewData["Title"] = "Account";
+    ViewData["Title"] = L["account.pageTitle"].Value;
 }
 
 <div class="page-head">
-    <h1>Account</h1>
-    <p>Your profile, password and API keys.</p>
+    <h1>@L["account.title"]</h1>
+    <p>@L["account.intro"]</p>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.NewApiKey))
 {
     <div class="secret-box">
-        <h2>Your new API key</h2>
-        <p class="hint">This is the only time it will be shown. Store it somewhere safe.</p>
+        <h2>@L["account.newKey.title"]</h2>
+        <p class="hint">@L["account.newKey.hint"]</p>
         <div class="copyfield">
             <input type="text" id="new-api-key" value="@Model.NewApiKey" readonly onclick="this.select()" />
-            <button type="button" class="btn" data-copy="#new-api-key">Copy</button>
+            <button type="button" class="btn" data-copy="#new-api-key">@L["common.copy"]</button>
         </div>
     </div>
 }
 
 <div class="grid-2">
     <div class="card">
-        <h2>Profile</h2>
+        <h2>@L["account.profile.title"]</h2>
         <p class="hint">
             <strong>@Model.Account.Username</strong>
-            <span class="badge @(Model.Account.IsAdministrator ? "badge-admin" : null)">@Model.Account.Role</span>
+            <span class="badge @(Model.Account.IsAdministrator ? "badge-admin" : null)">@L[Model.Account.IsAdministrator ? "account.profile.administrator" : "account.profile.member"]</span>
             <br />
-            Member since @Model.Account.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd")@(Model.Account.LastLoginUtc is { } seen ? $" · last signed in {seen.ToLocalTime():yyyy-MM-dd HH:mm}" : "")
+            @(Model.Account.LastLoginUtc is { } seen
+                ? L.Text("account.profile.createdAndSignedIn", new { date = Model.Account.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd"), time = seen.ToLocalTime().ToString("yyyy-MM-dd HH:mm") })
+                : L.Text("account.profile.created", new { date = Model.Account.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd") }))
         </p>
 
         <form method="post" asp-page-handler="Profile">
             <div class="field">
-                <label for="displayName">Display name</label>
+                <label for="displayName">@L["account.profile.displayName"]</label>
                 <input type="text" id="displayName" name="displayName" value="@Model.Account.DisplayName" maxlength="128" required />
             </div>
-            <button type="submit">Save</button>
+            <button type="submit">@L["common.save"]</button>
         </form>
     </div>
 
     <div class="card">
-        <h2>Password</h2>
+        <h2>@L["account.password.title"]</h2>
         <p class="hint">
             @(Model.Account.PasswordChangedUtc is { } changed
-                ? $"Last changed {changed.ToLocalTime():yyyy-MM-dd HH:mm}."
-                : "You have not changed your password since the account was created.")
+                ? L.Text("account.password.lastChanged", new { time = changed.ToLocalTime().ToString("yyyy-MM-dd HH:mm") })
+                : L.Text("account.password.neverChanged"))
         </p>
-        <a class="btn" asp-page="Password">Change password</a>
+        <a class="btn" asp-page="Password">@L["account.password.change"]</a>
     </div>
 </div>
 
 <div class="card">
-    <h2>API keys</h2>
-    <p class="hint">
-        Use a key to deploy from CI or the command line. It can do exactly what you can do.
-        Send it as <span class="mono">X-Api-Key</span> or <span class="mono">Authorization: Bearer …</span>.
-    </p>
+    <h2>@L["account.keys.title"]</h2>
+    <p class="hint">@L.Html("account.keys.hint")</p>
 
     <form method="post" asp-page-handler="CreateKey" class="row" style="margin-bottom:1.25rem">
         <div class="field">
-            <label for="name">Name</label>
-            <input type="text" id="name" name="name" placeholder="CI pipeline" maxlength="64" required />
+            <label for="name">@L["account.keys.name"]</label>
+            <input type="text" id="name" name="name" placeholder="@L["account.keys.namePlaceholder"]" maxlength="64" required />
         </div>
         <div class="field" style="flex:0 1 160px">
-            <label for="expiresInDays">Expires in (days)</label>
-            <input type="number" id="expiresInDays" name="expiresInDays" min="1" max="3650" placeholder="never" />
+            <label for="expiresInDays">@L["account.keys.expiresIn"]</label>
+            <input type="number" id="expiresInDays" name="expiresInDays" min="1" max="3650" placeholder="@L["account.keys.expiresPlaceholder"]" />
         </div>
-        <button type="submit" class="btn-primary">Create key</button>
+        <button type="submit" class="btn-primary">@L["account.keys.create"]</button>
     </form>
 
     @if (Model.ApiKeys.Count == 0)
     {
-        <p class="empty">You have no API keys yet.</p>
+        <p class="empty">@L["account.keys.empty"]</p>
     }
     else
     {
@@ -80,11 +79,11 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Name</th>
-                        <th>Key</th>
-                        <th>Created</th>
-                        <th>Last used</th>
-                        <th>Status</th>
+                        <th>@L["account.keys.column.name"]</th>
+                        <th>@L["account.keys.column.key"]</th>
+                        <th>@L["account.keys.column.created"]</th>
+                        <th>@L["account.keys.column.lastUsed"]</th>
+                        <th>@L["account.keys.column.status"]</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -95,31 +94,31 @@
                             <td>@key.Name</td>
                             <td class="mono nowrap">@key.Display</td>
                             <td class="nowrap muted">@key.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd")</td>
-                            <td class="nowrap muted">@(key.LastUsedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
+                            <td class="nowrap muted">@(key.LastUsedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? L["account.keys.neverUsed"].Value)</td>
                             <td>
                                 @if (key.Revoked)
                                 {
-                                    <span class="badge badge-off">revoked</span>
+                                    <span class="badge badge-off">@L["account.keys.status.revoked"]</span>
                                 }
                                 else if (key.IsExpired)
                                 {
-                                    <span class="badge badge-warn">expired</span>
+                                    <span class="badge badge-warn">@L["account.keys.status.expired"]</span>
                                 }
                                 else if (key.ExpiresUtc is { } expires)
                                 {
-                                    <span class="badge">until @expires.ToLocalTime().ToString("yyyy-MM-dd")</span>
+                                    <span class="badge">@L.Text("account.keys.status.until", new { date = expires.ToLocalTime().ToString("yyyy-MM-dd") })</span>
                                 }
                                 else
                                 {
-                                    <span class="badge badge-ok">active</span>
+                                    <span class="badge badge-ok">@L["account.keys.status.active"]</span>
                                 }
                             </td>
                             <td class="actions">
                                 @if (!key.Revoked)
                                 {
-                                    <form method="post" asp-page-handler="RevokeKey" data-confirm="Revoke '@key.Name'? Anything using it will stop working.">
+                                    <form method="post" asp-page-handler="RevokeKey" data-confirm="@L.Text("account.keys.revokeConfirm", new { name = key.Name })">
                                         <input type="hidden" name="keyId" value="@key.Id" />
-                                        <button type="submit" class="btn-link danger">Revoke</button>
+                                        <button type="submit" class="btn-link danger">@L["account.keys.revoke"]</button>
                                     </form>
                                 }
                             </td>

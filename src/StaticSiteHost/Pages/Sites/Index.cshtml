@@ -1,29 +1,25 @@
 @page
 @model StaticSiteHost.Pages.Sites.IndexModel
 @{
-    ViewData["Title"] = "Sites";
+    ViewData["Title"] = L["sites.title"];
 }
 
 <div class="page-head">
-    <h1>Sites</h1>
-    <p>Every domain this server answers for.</p>
+    <h1>@L["sites.title"]</h1>
+    <p>@L["sites.intro"]</p>
 </div>
 
 <div class="card">
-    <h2>New site</h2>
-    <p class="hint">
-        Creates a site with no files. Use it for a site made of proxy routes that forward paths to other servers,
-        such as Docker containers or services on a private network, or to set a site up before its first deploy.
-        To publish files, <a asp-page="/Index">deploy a zip</a> instead: that creates the site as well.
-    </p>
+    <h2>@L["sites.new.title"]</h2>
+    <p class="hint">@L.Html("sites.new.hint", new { deployUrl = Url.Page("/Index") })</p>
     <form method="post" asp-page-handler="Create">
         <div class="row">
             <div class="field">
-                <label for="new-domain">Domain</label>
-                <input id="new-domain" name="domain" type="text" placeholder="app.example.com"
+                <label for="new-domain">@L["sites.new.domain"]</label>
+                <input id="new-domain" name="domain" type="text" placeholder="@L["sites.new.domainPlaceholder"]"
                        autocomplete="off" autocapitalize="off" spellcheck="false" required />
             </div>
-            <button type="submit" class="btn-primary">Create site</button>
+            <button type="submit" class="btn-primary">@L["sites.new.create"]</button>
         </div>
     </form>
 </div>
@@ -31,7 +27,7 @@
 <div class="card">
     @if (Model.Sites.Count == 0)
     {
-        <p class="empty">There are no sites yet. <a asp-page="/Index">Deploy your first site</a>, or create one above.</p>
+        <p class="empty">@L.Html("sites.empty", new { deployUrl = Url.Page("/Index") })</p>
     }
     else
     {
@@ -39,11 +35,11 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Domain</th>
-                        <th>Files</th>
-                        <th>Size</th>
-                        <th>Updated</th>
-                        <th>By</th>
+                        <th>@L["sites.column.domain"]</th>
+                        <th>@L["sites.column.files"]</th>
+                        <th>@L["sites.column.size"]</th>
+                        <th>@L["sites.column.updated"]</th>
+                        <th>@L["sites.column.by"]</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -56,11 +52,11 @@
                                 <a href="@SiteLinks.For(Request, site.Domain)" target="_blank" rel="noopener">@site.Domain</a>
                                 @if (site.IsPasscodeProtected)
                                 {
-                                    <span class="badge badge-warn" title="Visitors must enter a passcode">passcode</span>
+                                    <span class="badge badge-warn" title="@L["sites.badge.passcodeTitle"]">@L["sites.badge.passcode"]</span>
                                 }
                                 @if (site.Proxy.Count > 0)
                                 {
-                                    <span class="badge" title="Paths forwarded to other servers">@site.Proxy.Count proxy route@(site.Proxy.Count == 1 ? "" : "s")</span>
+                                    <span class="badge" title="@L["sites.badge.routesTitle"]">@L.Plural("sites.badge.routes", site.Proxy.Count)</span>
                                 }
                             </td>
                             <td>@(release?.FileCount.ToString("N0") ?? "—")</td>
@@ -68,7 +64,7 @@
                             <td class="nowrap muted">@(site.UpdatedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
                             <td class="muted">@(site.LastDeployedBy ?? "—")</td>
                             <td class="actions">
-                                <a class="btn btn-sm" asp-page="Details" asp-route-domain="@site.Domain">Details</a>
+                                <a class="btn btn-sm" asp-page="Details" asp-route-domain="@site.Domain">@L["sites.manage"]</a>
                             </td>
                         </tr>
                     }

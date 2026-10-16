@@ -1,0 +1,28 @@
+{
+  "deploy.pageTitle": "Desplegar",
+  "deploy.title": "Desplegar un sitio",
+  "deploy.intro": "Sube un archivo zip y elige el dominio donde desplegarlo.",
+
+  "deploy.domain.label": "Dominio",
+  "deploy.domain.existing": "Desplegar en un sitio existente",
+  "deploy.domain.new": "— Dominio nuevo —",
+  "deploy.domain.hint": "Apunta el DNS del dominio a este servidor. Desplegar en un sitio existente reemplaza sus archivos por la nueva versión.",
+
+  "deploy.archive.label": "Archivo zip",
+  "deploy.archive.choose": "Elegir un archivo zip",
+  "deploy.archive.drop": "Suelta un archivo zip aquí",
+  "deploy.archive.dropHint": "o haz clic para elegir un archivo",
+  "deploy.archive.hint": "Hasta {size}. Si todo está dentro de una carpeta, este servidor sirve el contenido de esa carpeta en la raíz.",
+  "deploy.submit": "Desplegar",
+
+  "deploy.noFile": "Elige un archivo zip para desplegar.",
+  "deploy.done.one": "{count} archivo ({size}) desplegado en {domain}.",
+  "deploy.done.other": "{count} archivos ({size}) desplegados en {domain}.",
+
+  "deploy.resolve.title": "Cómo responde un sitio a las solicitudes",
+  "deploy.resolve.hint": "Cada sitio responde como un alojamiento estático para aplicaciones de una sola página.",
+  "deploy.resolve.folder": "Sirve `{file}`.",
+  "deploy.resolve.page": "Sirve `{htmlFile}` si existe. Si no, sirve el `index.html` más cercano, desde `{folderIndex}` hasta `{rootIndex}`.",
+  "deploy.resolve.asset": "Se sirve tal cual. Si no existe, la respuesta es un `404`, no una página HTML.",
+  "deploy.resolve.notFound": "Si el sitio tiene este archivo, responde a toda ruta que no coincida con nada."
+}

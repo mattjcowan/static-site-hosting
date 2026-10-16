@@ -1,0 +1,22 @@
+{
+  "proxy.pageTitle": "代理",
+  "proxy.title": "全服务器路由",
+  "proxy.intro": "一次为多个站点转发同一路径，例如为 `*.apps.example.com` 下的所有站点转发 `/api`。路由适用于域名与其**站点**字段匹配的所有站点。",
+
+  "proxy.routes.title": "路由",
+  "proxy.routes.count.one": "{count} 条路由",
+  "proxy.routes.count.other": "{count} 条路由",
+  "proxy.routes.none": "无",
+  "proxy.routes.hint": "站点自己在相同路径上的路由优先，站点也可以在自己的页面上关闭全服务器路由。两条全服务器路由使用相同路径时，**站点**匹配最精确的优先：先是单个域名，然后是 `*.something`，最后是 `*`。",
+
+  "proxy.route.off": "已关闭",
+  "proxy.route.streaming": "流式传输",
+  "proxy.route.noMatch": "此服务器上还没有与之匹配的站点。",
+  "proxy.route.matches": "匹配的站点：",
+  "proxy.route.added": "{sites} 上的 {path} 现在转发到 {target}。",
+  "proxy.route.saved": "已保存 {path} 处适用于 {sites} 的全服务器路由。",
+  "proxy.route.removed": "已移除全服务器路由。其路径将交回各站点自己的文件和路由。",
+  "proxy.route.notFound": "该全服务器路由已不存在。",
+
+  "proxy.add": "添加全服务器路由"
+}

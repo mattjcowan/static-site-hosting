@@ -49,6 +49,14 @@
     });
   }
 
+  // A string with values that are HTML: the string's own text is escaped, then each {name} in
+  // html is put in as it is.
+  function withHtml(text, html) {
+    var out = escapeHtml(text);
+    Object.keys(html).forEach(function (name) { out = out.split('{' + name + '}').join(html[name]); });
+    return out;
+  }
+
   // Plain text with `code` and **bold**: the model is asked for plain text, and these two read well.
   function formatText(text) {
     return escapeHtml(text)
@@ -80,21 +88,25 @@
         '<span class="mono">' + escapeHtml(entry.summary) + '</span>' +
         (entry.detail ? '<div class="assistant-detail">' + escapeHtml(entry.detail) + '</div>' : '');
     } else if (entry.kind === 'confirm') {
-      el.innerHTML = '<div>Run <span class="mono">' + escapeHtml(entry.summary) + '</span>? It cannot be undone.</div>';
+      el.innerHTML = '<div>' + withHtml(siteHost.t('js.assistant.confirm.question'), {
+        step: '<span class="mono">' + escapeHtml(entry.summary) + '</span>'
+      }) + '</div>';
       if (!entry.answered) {
         var actions = document.createElement('div');
         actions.className = 'assistant-actions';
-        actions.innerHTML = '<button type="button" class="btn-danger" data-run>Run</button> <button type="button" data-cancel>Cancel</button>';
+        actions.innerHTML = '<button type="button" class="btn-danger" data-run>' + escapeHtml(siteHost.t('js.assistant.confirm.run')) + '</button> ' +
+          '<button type="button" data-cancel>' + escapeHtml(siteHost.t('js.assistant.confirm.cancel')) + '</button>';
         actions.querySelector('[data-run]').addEventListener('click', function () { decide(entry, 'run'); });
         actions.querySelector('[data-cancel]').addEventListener('click', function () { decide(entry, 'cancel'); });
         el.appendChild(actions);
       } else {
-        el.insertAdjacentHTML('beforeend', '<div class="muted">' + (entry.answered === 'run' ? 'Run.' : 'Cancelled.') + '</div>');
+        el.insertAdjacentHTML('beforeend', '<div class="muted">' +
+          escapeHtml(siteHost.t(entry.answered === 'run' ? 'js.assistant.confirm.ran' : 'js.assistant.confirm.cancelled')) + '</div>');
       }
     } else if (entry.kind === 'changed') {
       // Shown only when the page was not brought up to date by itself: it has unsaved edits.
-      el.innerHTML = 'Changes were made. This page was left as it is, so nothing you typed on it is lost. ' +
-        '<button type="button" class="btn-link">Update it anyway</button>';
+      el.innerHTML = escapeHtml(siteHost.t('js.assistant.changed.text')) + ' ' +
+        '<button type="button" class="btn-link">' + escapeHtml(siteHost.t('js.assistant.changed.update')) + '</button>';
       el.querySelector('button').addEventListener('click', function () {
         if (document.querySelector('main [data-no-swap]')) {
           location.reload();
@@ -153,7 +165,7 @@
     }).then(function (response) {
       if (!response.ok || !response.body) {
         return response.json().catch(function () { return {}; }).then(function (data) {
-          add({ kind: 'error', text: data.error || ('The assistant could not answer (' + response.status + ').') });
+          add({ kind: 'error', text: data.error || siteHost.t('js.assistant.noAnswer', { status: response.status }) });
         });
       }
 
@@ -201,8 +213,11 @@
             if (event.inputTokens || event.outputTokens) {
               add({
                 kind: 'usage',
-                text: event.inputTokens.toLocaleString() + ' tokens in, ' + event.outputTokens.toLocaleString() + ' out, ' +
-                  event.rounds + ' call' + (event.rounds === 1 ? '' : 's')
+                text: siteHost.t('js.assistant.usage.summary', {
+                  tokensIn: siteHost.tp('js.assistant.usage.tokens', event.inputTokens, { number: event.inputTokens.toLocaleString() }),
+                  tokensOut: siteHost.tp('js.assistant.usage.tokens', event.outputTokens, { number: event.outputTokens.toLocaleString() }),
+                  calls: siteHost.tp('js.assistant.usage.calls', event.rounds)
+                })
               });
             }
             break;
@@ -225,7 +240,7 @@
 
       return pump();
     }).catch(function () {
-      add({ kind: 'error', text: 'The connection to the server was lost.' });
+      add({ kind: 'error', text: siteHost.t('js.assistant.connectionLost') });
     }).then(function () {
       setBusy(false);
     });
@@ -252,7 +267,7 @@
 
   // Brings the page under the panel up to date without reloading it: fetches it again and swaps
   // in its content, inside a view transition where the browser has them, so it cross-fades rather
-  // than flashing. The top bar, the panel and the scroll position stay as they are; sections the
+  // than flashing. The sidebar, the panel and the scroll position stay as they are; sections the
   // user had opened stay open. A page that now redirects (its site was deleted or renamed) is
   // followed with an ordinary navigation, which CSS view transitions also smooth.
   var refreshing = null;
@@ -313,7 +328,10 @@
 
     var waiting = state.entries.length && state.entries[state.entries.length - 1];
     if (waiting && waiting.kind === 'confirm' && !waiting.answered) {
-      add({ kind: 'error', text: 'Choose Run or Cancel first.' });
+      add({
+        kind: 'error',
+        text: siteHost.t('js.assistant.chooseFirst', { run: siteHost.t('js.assistant.confirm.run'), cancel: siteHost.t('js.assistant.confirm.cancel') })
+      });
       return;
     }
 

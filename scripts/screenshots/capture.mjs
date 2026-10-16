@@ -23,12 +23,12 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, dev
 page.setDefaultTimeout(180_000); // the first function build restores NuGet packages
 page.on('dialog', (dialog) => dialog.accept());
 
-// The management UI's top bar is sticky, so in a screenshot of something scrolled into view
-// it would sit over the top of it. Pinned to the top of the page instead, for pictures only.
+// A site page's tabs stay at the top as it scrolls, so in a screenshot of something scrolled into
+// view they would sit over the top of it. Pinned to the top of the page instead, for pictures only.
 await page.addInitScript(() => {
   document.addEventListener('DOMContentLoaded', () => {
     const style = document.createElement('style');
-    style.textContent = '.topbar { position: static !important; }';
+    style.textContent = '.tabs, .mobilebar { position: static !important; }';
     document.head.append(style);
   });
 });
@@ -63,7 +63,7 @@ await page.goto(`${base}/sites`);
 await shot('sites', page, { clip: { x: 0, y: 0, width: 1280, height: 390 } });
 
 // Functions on the demo site, uploaded through the Functions card's drop zone.
-await page.goto(`${base}/sites/details/demo.localhost`);
+await page.goto(`${base}/sites/details/demo.localhost/app`);
 await page.setInputFiles('#function-file', join(repo, 'samples/functions/SampleFunctions.cs'));
 await Promise.all([page.waitForNavigation(), page.click('text=Compile and deploy')]);
 await page.locator('#functions').scrollIntoViewIfNeeded();
@@ -124,10 +124,10 @@ await addRoute(`${base}/admin/proxy`, { Sites: '*.localhost', Path: '/auth', Tar
 await page.goto(`${base}/sites`);
 await page.fill('#new-domain', 'app.localhost');
 await Promise.all([page.waitForNavigation(), page.locator('form:has(#new-domain) button[type=submit]').click()]);
-await addRoute(`${base}/sites/details/app.localhost`, { Path: '/', Target: 'http://web:3000' });
-await addRoute(`${base}/sites/details/app.localhost`, { Path: '/api', Target: 'http://api:8080' }, ['WebSockets']);
+await addRoute(`${base}/sites/details/app.localhost/routing`, { Path: '/', Target: 'http://web:3000' });
+await addRoute(`${base}/sites/details/app.localhost/routing`, { Path: '/api', Target: 'http://api:8080' }, ['WebSockets']);
 
-await page.goto(`${base}/sites/details/app.localhost`);
+await page.goto(`${base}/sites/details/app.localhost/routing`);
 await page.locator('#proxy').scrollIntoViewIfNeeded();
 await shot('proxy', page.locator('#proxy'));
 
@@ -137,6 +137,31 @@ await page.evaluate(() => { document.querySelector('#proxy details.proxy-route')
 const card = await page.locator('#proxy').boundingBox();
 const reach = await page.locator('#proxy .proxy-reach').boundingBox();
 await shot('server-proxy', page, { clip: { x: card.x, y: card.y, width: card.width, height: reach.y + reach.height + 150 - card.y } });
+
+// ---- the Files tab: the live release open, then a copy's change beside the live file ----------
+await page.goto(`${base}/sites/details/demo.localhost/files?file=index.html`);
+await page.waitForSelector('.files-editor .monaco-editor');
+await page.click('.files-row[data-path="blog"]');
+await page.click('.files-row[data-path="index.html"]');
+await page.waitForSelector('.files-editor .monaco-editor');
+await shot('files', page, { clip: { x: 0, y: 0, width: 1280, height: 860 } });
+
+// A copy to work on: the live site stays as it is for the pictures after this one.
+await page.click('[data-files-duplicate]');
+await page.click('.files-notice-actions button');
+await page.waitForSelector('[data-files-make-live]:not([hidden])');
+await page.click('.files-row[data-path="index.html"]');
+await page.waitForSelector('.files-editor .monaco-editor');
+await page.evaluate(() => {
+  const model = monaco.editor.getModels().find((m) => m.uri.path === '/index.html');
+  model.setValue(model.getValue().replace('<h1>', '<h1 class="spring">').replace('</h1>', ' Spring sale this week.</h1>'));
+});
+await page.click('button[data-files-save]');
+await page.waitForSelector('.files-notice:has-text("Saved index.html")');
+await page.click('[data-files-compare]');
+await page.waitForSelector('.files-editor .monaco-diff-editor');
+await page.waitForTimeout(1000); // the diff is worked out in a worker
+await shot('files-compare', page, { clip: { x: 0, y: 0, width: 1280, height: 860 } });
 
 // ---- the assistant (only with a model to talk to) ---------------------------------
 
@@ -153,7 +178,7 @@ if (process.env.ANTHROPIC_API_KEY) {
   await Promise.all([page.waitForNavigation(), page.locator('#assistant-settings button[type=submit]').click()]);
 
   await page.goto(`${base}/sites/details/demo.localhost`);
-  await page.locator('.nav-assistant').click();
+  await page.locator('.sidebar [data-assistant-toggle]').click();
   await page.fill('#assistant textarea', 'Change the heading on the home page to say "Welcome back."');
   await page.locator('#assistant .assistant-form button[type=submit]').click();
   await page.waitForFunction(() => !document.getElementById('assistant').classList.contains('is-busy') &&
@@ -165,8 +190,8 @@ if (process.env.ANTHROPIC_API_KEY) {
   console.log('  assistant.png skipped: set ANTHROPIC_API_KEY to take it');
 }
 
-// The releases, each with Download: the assistant's change above made the second one.
-await page.goto(`${base}/sites/details/demo.localhost`);
+// The releases: the live one the assistant changed, and the copy made on the Files tab.
+await page.goto(`${base}/sites/details/demo.localhost/releases`);
 const releases = page.locator('.card', { has: page.locator('h2', { hasText: 'Releases' }) });
 await releases.scrollIntoViewIfNeeded();
 await shot('releases', releases);
@@ -197,5 +222,22 @@ await Promise.all([page.waitForURL('**/studio'), page.click('#password-form butt
 await page.goto(`${blog}/studio#edit=reading-the-terminator`);
 await page.waitForFunction(() => document.getElementById('post-preview').innerHTML.length > 0);
 await shot('blog-studio');
+
+// ---- branding: a theme starter applied, then a private site's passcode screen in it --------------
+
+await page.goto(`${base}/admin/branding`);
+await page.fill('[data-brand-name]', 'Acme Hosting');
+await page.click('[data-starter=ocean]');
+await shot('branding');
+await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save branding' }).click()]);
+
+await page.goto(`${base}/sites/details/demo.localhost/security`);
+await page.fill('details[data-section=visibility] input[name=passcode]', 'screenshots-only');
+await Promise.all([page.waitForNavigation(), page.locator('details[data-section=visibility] button[type=submit]').first().click()]);
+const gate = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+await gate.goto(`${site('demo.localhost')}/`);
+await gate.screenshot({ path: join(out, 'passcode.png') });
+console.log('  passcode.png');
+await gate.close();
 
 await browser.close();

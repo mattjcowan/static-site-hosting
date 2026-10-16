@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Tls;
 
 namespace StaticSiteHost.Pages.Admin;
@@ -14,10 +16,12 @@ namespace StaticSiteHost.Pages.Admin;
 public class HttpsModel : PageModel
 {
     private readonly CertificateManager _certificates;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public HttpsModel(CertificateManager certificates, IOptions<SiteHostingOptions> options)
+    public HttpsModel(CertificateManager certificates, IOptions<SiteHostingOptions> options, IStringLocalizer<Strings> strings)
     {
         _certificates = certificates;
+        _strings = strings;
         Tls = options.Value.Tls;
     }
 
@@ -45,12 +49,12 @@ public class HttpsModel : PageModel
         var status = Enabled ? _certificates.Status().FirstOrDefault(s => s.Host == host) : null;
         if (status is null)
         {
-            TempData["ErrorMessage"] = "That host is not one this server answers for.";
+            TempData["ErrorMessage"] = _strings.Text("https.hosts.unknown");
             return RedirectToPage();
         }
 
         _certificates.RenewNow(status.Host);
-        TempData["StatusMessage"] = $"Asked for a new certificate for {status.Host}. Reload in a few seconds to see it.";
+        TempData["StatusMessage"] = _strings.Text("https.hosts.renewAsked", new { host = status.Host });
         return RedirectToPage();
     }
 
@@ -64,22 +68,19 @@ public class HttpsModel : PageModel
             return Page();
         }
 
-        TempData["StatusMessage"] = $"Saved the certificate for {string.Join(", ", info.Names)}. Sites it covers that are on automatic use it now.";
+        TempData["StatusMessage"] = _strings.Text("https.shared.saved", new { names = string.Join(", ", info.Names) });
         return RedirectToPage();
     }
 
     public async Task<IActionResult> OnPostRemoveSharedAsync(string? id)
     {
         if (await _certificates.RemoveSharedAsync(id ?? "", User.Identity?.Name ?? "unknown"))
-            TempData["StatusMessage"] = "The shared certificate was removed. The sites it covered get their own.";
+            TempData["StatusMessage"] = _strings.Text("https.shared.removed");
         else
-            TempData["ErrorMessage"] = "That shared certificate no longer exists.";
+            TempData["ErrorMessage"] = _strings.Text("https.shared.notFound");
         return RedirectToPage();
     }
 
-    public static string Days(DateTimeOffset notAfter)
-    {
-        var days = (int)Math.Floor((notAfter - DateTimeOffset.UtcNow).TotalDays);
-        return days < 0 ? "expired" : days == 1 ? "1 day" : $"{days} days";
-    }
+    /// <summary>Whole days until a certificate expires; below 0 once it has.</summary>
+    public static int DaysLeft(DateTimeOffset notAfter) => (int)Math.Floor((notAfter - DateTimeOffset.UtcNow).TotalDays);
 }

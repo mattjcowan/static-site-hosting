@@ -2,32 +2,27 @@
 @model StaticSiteHost.Pages.Admin.ProxyModel
 @using StaticSiteHost.Models
 @{
-    ViewData["Title"] = "Proxy";
+    ViewData["Title"] = L["proxy.pageTitle"].Value;
 }
 
 <div class="page-head">
-    <h1>Server-wide proxy routes</h1>
-    <p>One route for many sites: every site whose domain matches the route's Sites gets it, without setting it on each one.</p>
+    <h1>@L["proxy.title"]</h1>
+    <p>@L.Html("proxy.intro")</p>
 </div>
 
 <div class="card" id="proxy">
     <h2>
-        Routes
+        @L["proxy.routes.title"]
         @if (Model.Editors.Count(e => !e.IsNew) > 0)
         {
-            <span class="badge badge-ok">@Model.Editors.Count(e => !e.IsNew) route@(Model.Editors.Count(e => !e.IsNew) == 1 ? "" : "s")</span>
+            <span class="badge badge-ok">@L.Plural("proxy.routes.count", Model.Editors.Count(e => !e.IsNew))</span>
         }
         else
         {
-            <span class="badge">none</span>
+            <span class="badge">@L["proxy.routes.none"]</span>
         }
     </h2>
-    <p class="hint">
-        A route here works like a site's own proxy route on every site it names, such as <span class="mono">/api</span> on <span class="mono">*.apps.example.com</span> forwarded to one
-        API. A site's own route at the same path wins, so one site can point at a staging API, and a site can turn a server-wide route
-        off on its own page. When two server-wide routes share a path, the one whose Sites names the site most closely wins: a domain
-        over <span class="mono">*.something</span>, and both over <span class="mono">*</span>.
-    </p>
+    <p class="hint">@L.Html("proxy.routes.hint")</p>
 
     @foreach (var editor in Model.Editors.Where(e => !e.IsNew))
     {
@@ -41,7 +36,7 @@
                 <span class="badge">@route.Sites</span>
                 @if (!route.Enabled)
                 {
-                    <span class="badge badge-warn">off</span>
+                    <span class="badge badge-warn">@L["proxy.route.off"]</span>
                 }
                 @if (route.WebSockets)
                 {
@@ -49,7 +44,7 @@
                 }
                 @if (route.Streaming)
                 {
-                    <span class="badge">streaming</span>
+                    <span class="badge">@L["proxy.route.streaming"]</span>
                 }
                 @if (route.GrpcWeb)
                 {
@@ -59,16 +54,16 @@
             <p class="hint proxy-reach">
                 @if (reach.Count == 0)
                 {
-                    <text>No site on this server matches it yet.</text>
+                    <text>@L["proxy.route.noMatch"]</text>
                 }
                 else
                 {
-                    <text>Sites it matches: </text>
+                    <text>@L["proxy.route.matches"] </text>
                     @for (var i = 0; i < reach.Count; i++)
                     {
                         var (domain, state) = reach[i];
-                        <a asp-page="/Sites/Details" asp-route-domain="@domain" asp-fragment="proxy" class="mono">@domain</a>
-                        <span class="muted">(@state)</span>@(i < reach.Count - 1 ? ", " : "")
+                        <a asp-page="/Sites/Details" asp-route-domain="@domain" asp-route-tab="routing" asp-fragment="proxy" class="mono">@domain</a>
+                        <span class="muted">(@ProxyStateNames.Of(L, state))</span>@(i < reach.Count - 1 ? ", " : "")
                     }
                 }
             </p>
@@ -78,7 +73,7 @@
 
     @{ var adding = Model.Editors.Single(e => e.IsNew); }
     <details class="proxy-route proxy-add" open="@(Model.Editors.Count == 1 || adding.Errors.Count > 0)">
-        <summary>Add a server-wide route</summary>
+        <summary>@L["proxy.add"]</summary>
         <partial name="/Pages/Sites/_ProxyRoute.cshtml" model="adding" />
     </details>
 </div>

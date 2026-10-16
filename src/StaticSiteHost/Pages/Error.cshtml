@@ -1,19 +1,19 @@
 @page
 @model ErrorModel
 @{
-    ViewData["Title"] = "Something went wrong";
+    ViewData["Title"] = L["auth.error.title"].Value;
 }
 
 <div class="narrow">
     <div class="page-head">
-        <h1>Something went wrong</h1>
-        <p>The request could not be completed.</p>
+        <h1>@L["auth.error.title"]</h1>
+        <p>@L["auth.error.intro"]</p>
     </div>
 
     @if (Model.ShowRequestId)
     {
-        <p class="muted">Request ID: <code>@Model.RequestId</code></p>
+        <p class="muted">@L["auth.error.requestId"] <code>@Model.RequestId</code></p>
     }
 
-    <p class="right"><a asp-page="/Index">Back to deploy</a></p>
+    <p class="right"><a asp-page="/Index">@L["auth.error.back"]</a></p>
 </div>

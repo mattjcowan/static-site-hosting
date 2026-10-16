@@ -1,0 +1,22 @@
+{
+  "proxy.pageTitle": "Proxy",
+  "proxy.title": "Rutas para todo el servidor",
+  "proxy.intro": "Reenvía una ruta de acceso en muchos sitios a la vez, como `/api` en todos los sitios de `*.apps.example.com`. Cada ruta se aplica a los sitios cuyo dominio coincide con su campo **Sitios**.",
+
+  "proxy.routes.title": "Rutas",
+  "proxy.routes.count.one": "{count} ruta",
+  "proxy.routes.count.other": "{count} rutas",
+  "proxy.routes.none": "ninguna",
+  "proxy.routes.hint": "Si un sitio tiene su propia ruta en la misma ruta de acceso, se usa la del sitio, y un sitio puede desactivar una ruta para todo el servidor en su propia página. Si dos rutas para todo el servidor comparten ruta de acceso, gana la que tiene el campo **Sitios** más preciso: un dominio, luego `*.something` y luego `*`.",
+
+  "proxy.route.off": "desactivada",
+  "proxy.route.streaming": "streaming",
+  "proxy.route.noMatch": "Todavía no coincide con ningún sitio de este servidor.",
+  "proxy.route.matches": "Sitios con los que coincide:",
+  "proxy.route.added": "{path} en {sites} ahora se reenvía a {target}.",
+  "proxy.route.saved": "Se guardó la ruta para todo el servidor en {path}, para {sites}.",
+  "proxy.route.removed": "Se quitó la ruta para todo el servidor. Su ruta de acceso vuelve a servir los archivos y las rutas propios de cada sitio.",
+  "proxy.route.notFound": "Esa ruta para todo el servidor ya no existe.",
+
+  "proxy.add": "Añadir una ruta para todo el servidor"
+}

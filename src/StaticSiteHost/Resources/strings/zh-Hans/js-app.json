@@ -1,0 +1,24 @@
+{
+  "js.app.copy.done": "已复制",
+
+  "js.app.dropzone.files.one": "{count} 个文件：{names}",
+  "js.app.dropzone.files.other": "{count} 个文件：{names}",
+  "js.app.dropzone.skipped": "已跳过 {names}。只接受 {types} 文件。",
+  "js.app.dropzone.change": "点击以选择其他文件",
+  "js.app.dropzone.empty": "请先选择或拖放至少一个文件。",
+
+  "js.app.deploy.drop": "将 zip 压缩包拖放到此处",
+  "js.app.deploy.dropHint": "或点击选择文件",
+  "js.app.deploy.chosen": "{size}。点击以选择其他文件。",
+  "js.app.deploy.noFile": "请先选择 zip 压缩包。",
+  "js.app.deploy.noDomain": "请输入要部署到的域名。",
+  "js.app.deploy.uploading": "正在上传…",
+  "js.app.deploy.unpacking": "正在解压…",
+  "js.app.deploy.submit": "部署",
+  "js.app.deploy.badAnswer": "服务器返回了意外的响应（HTTP {status}）。请重试。",
+  "js.app.deploy.failed": "部署失败。",
+  "js.app.deploy.done.one": "已将 {count} 个文件（{size}）部署到 {domain}。",
+  "js.app.deploy.done.other": "已将 {count} 个文件（{size}）部署到 {domain}。",
+  "js.app.deploy.functions": "来自 {folder} 的函数现已上线：{routes}",
+  "js.app.deploy.uploadFailed": "上传未完成。请检查网络连接后重试。"
+}

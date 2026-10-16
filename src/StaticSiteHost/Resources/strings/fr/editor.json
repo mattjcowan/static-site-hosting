@@ -1,0 +1,32 @@
+{
+  "editor.pageTitle.global": "Éditeur des fonctions globales",
+  "editor.pageTitle.site": "Fonctions — {domain}",
+  "editor.title": "Éditeur de fonctions",
+  "editor.intro.global": "Fonctions globales : chaque site répond avec celles-ci après ses propres fonctions. [Retour aux fonctions globales](backUrl)",
+  "editor.intro.site": "Fonctions de **{domain}**. [Retour au site](backUrl)",
+
+  "editor.files": "Fichiers",
+  "editor.check": "Vérifier",
+  "editor.deploy": "Déployer",
+  "editor.hint.check": "**Vérifier** compile les fichiers comme le ferait un déploiement, sans les mettre en ligne, pour que vous puissiez les tester ci-dessous.",
+  "editor.hint.deploySite": "**Déployer** les compile de nouveau et en fait les fonctions en ligne.",
+  "editor.hint.deploySiteReplacing": "**Déployer** les compile de nouveau et en fait les fonctions en ligne, à la place de {label}.",
+  "editor.hint.deployGlobal": "**Déployer** les compile de nouveau et en fait les fonctions en ligne de tous les sites.",
+  "editor.hint.deployGlobalReplacing": "**Déployer** les compile de nouveau et en fait les fonctions en ligne de tous les sites, à la place de {label}.",
+
+  "editor.test.title": "Test",
+  "editor.test.hint": "Exécute une requête en mémoire, avec votre vrai code et les vraies données du site, donc tout ce qu'elle écrit ou envoie se produit réellement. Le middleware de la compilation s'exécute d'abord : si un contrôle refuse la requête, ajoutez ce qu'il demande, comme un cookie ou un jeton, dans **En-têtes**.",
+  "editor.test.build": "Compilation",
+  "editor.test.checkedBuild": "Compilation vérifiée (vérifiez d'abord)",
+  "editor.test.liveBuild": "Compilation en ligne",
+  "editor.test.route": "Route",
+  "editor.test.method": "Méthode",
+  "editor.test.path": "Chemin",
+  "editor.test.query": "Chaîne de requête",
+  "editor.test.domain": "Domaine",
+  "editor.test.headers": "En-têtes, un par ligne",
+  "editor.test.body": "Corps",
+  "editor.test.run": "Exécuter",
+
+  "editor.noSite": "Il n'y a aucun site à l'adresse {domain}."
+}

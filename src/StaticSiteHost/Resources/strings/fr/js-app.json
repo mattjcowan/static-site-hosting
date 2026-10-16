@@ -1,0 +1,24 @@
+{
+  "js.app.copy.done": "Copié",
+
+  "js.app.dropzone.files.one": "{count} fichier : {names}",
+  "js.app.dropzone.files.other": "{count} fichiers : {names}",
+  "js.app.dropzone.skipped": "Fichiers ignorés : {names}. Seuls les fichiers {types} sont acceptés.",
+  "js.app.dropzone.change": "Cliquez pour choisir d'autres fichiers",
+  "js.app.dropzone.empty": "Choisissez ou déposez d'abord au moins un fichier.",
+
+  "js.app.deploy.drop": "Déposez un fichier zip ici",
+  "js.app.deploy.dropHint": "ou cliquez pour choisir un fichier",
+  "js.app.deploy.chosen": "{size}. Cliquez pour choisir un autre fichier.",
+  "js.app.deploy.noFile": "Choisissez d'abord un fichier zip.",
+  "js.app.deploy.noDomain": "Saisissez le domaine sur lequel déployer.",
+  "js.app.deploy.uploading": "Envoi en cours…",
+  "js.app.deploy.unpacking": "Décompression…",
+  "js.app.deploy.submit": "Déployer",
+  "js.app.deploy.badAnswer": "Le serveur a envoyé une réponse inattendue (HTTP {status}). Réessayez.",
+  "js.app.deploy.failed": "Le déploiement a échoué.",
+  "js.app.deploy.done.one": "{count} fichier ({size}) déployé sur {domain}.",
+  "js.app.deploy.done.other": "{count} fichiers ({size}) déployés sur {domain}.",
+  "js.app.deploy.functions": "Les fonctions de {folder} sont maintenant en ligne : {routes}",
+  "js.app.deploy.uploadFailed": "L'envoi ne s'est pas terminé. Vérifiez votre connexion et réessayez."
+}

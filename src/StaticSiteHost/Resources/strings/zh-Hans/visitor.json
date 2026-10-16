@@ -1,0 +1,33 @@
+{
+  "visitor.passcode.pageTitle": "需要访问码 — {domain}",
+  "visitor.passcode.title": "此站点为私密站点",
+  "visitor.passcode.hint": "请输入访问码以查看此站点。如果你没有访问码，请向站点所有者索取。",
+  "visitor.passcode.wrong": "访问码不正确。请检查后重试。",
+  "visitor.passcode.tooManyTries.one": "访问码错误次数过多。请在 {count} 分钟后重试。",
+  "visitor.passcode.tooManyTries.other": "访问码错误次数过多。请在 {count} 分钟后重试。",
+  "visitor.passcode.label": "访问码",
+  "visitor.passcode.submit": "查看站点",
+
+  "visitor.page.title": "{status} — {title}",
+
+  "visitor.notFound.title": "找不到页面",
+  "visitor.notFound.detail": "地址 {address} 没有对应的页面。请检查地址是否正确。",
+  "visitor.notFound.detailNoAddress": "此地址没有对应的页面。请检查地址是否正确。",
+
+  "visitor.unavailable.title": "这里还没有内容",
+  "visitor.unavailable.detail": "{domain} 还没有页面。请稍后再试。",
+
+  "visitor.proxy.notSetUp.title": "此页面无法正常工作",
+  "visitor.proxy.notSetUp.detail": "站点没有为此页面正确设置。请稍后再试。",
+  "visitor.proxy.unreachable.title": "此页面暂不可用",
+  "visitor.proxy.unreachable.detail": "站点暂时无法加载此页面。请过几分钟再试。",
+  "visitor.proxy.timedOut.title": "此页面加载时间过长",
+  "visitor.proxy.timedOut.detail": "站点未能及时响应。请过几分钟再试。",
+  "visitor.proxy.refused.title": "不允许连接",
+  "visitor.proxy.refused.detail": "此地址不接受此请求。",
+  "visitor.proxy.webSocketsOff": "此地址不接受 WebSocket 连接。",
+  "visitor.proxy.webSocketsCrossSite": "只有此站点自己的页面才能向此地址建立 WebSocket 连接。",
+
+  "visitor.noSite.title": "此地址上没有站点",
+  "visitor.noSite.detail": "**{domain}** 上没有站点。请检查地址是否正确。"
+}

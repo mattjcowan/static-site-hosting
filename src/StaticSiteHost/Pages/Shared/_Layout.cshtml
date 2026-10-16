@@ -1,5 +1,7 @@
 @inject StaticSiteHost.Services.Assistant.AssistantSettingsStore AssistantSettings
 @inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
+@inject StringCatalog Catalog
+@inject StaticSiteHost.Services.BrandingService Branding
 @{
     var path = (Context.Request.Path.Value ?? "/").ToLowerInvariant();
     bool Active(string prefix) => prefix == "/" ? path == "/" : path.StartsWith(prefix, StringComparison.Ordinal);
@@ -12,96 +14,226 @@
     var assistant = signedIn && await AssistantSettings.IsAvailableToAsync(isAdmin);
     var pageDomain = Context.Request.RouteValues["domain"] as string ?? Context.Request.Query["domain"].FirstOrDefault();
 
+    var brand = await Branding.ViewAsync(null, Brand.DefaultName);
+
     var status = TempData["StatusMessage"] as string;
     var error = TempData["ErrorMessage"] as string;
 }
 <!DOCTYPE html>
-<html lang="en">
+<html lang="@Catalog.Resolve(System.Globalization.CultureInfo.CurrentUICulture).Name" data-theme="@ThemePreference.Of(Context)">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>@ViewData["Title"] — Static Site Host</title>
-    <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
+    <meta name="color-scheme" content="light dark" />
+    <title>@ViewData["Title"] — @brand.Name</title>
+    @if (brand.Favicon is { } favicon)
+    {
+        <link rel="icon" href="@favicon" />
+    }
+    else
+    {
+        <link rel="icon" href="~/favicon.svg" type="image/svg+xml" />
+    }
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-</head>
-<body>
-    <header class="topbar">
-        <div class="topbar-inner">
-            <a class="brand" asp-page="/Index">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                    <path d="m3.3 7 8.7 5 8.7-5M12 22V12" />
-                </svg>
-                Static Site Host
-            </a>
-
-            @if (signedIn)
-            {
-                <nav class="nav">
-                    <a asp-page="/Index" class="@(Active("/") ? "active" : null)">Deploy</a>
-                    <a asp-page="/Sites/Index" class="@(Active("/sites") ? "active" : null)">Sites</a>
-                    <a asp-page="/Account/Index" class="@(Active("/account") ? "active" : null)">Account</a>
-                    @if (isAdmin)
-                    {
-                        <a asp-page="/Admin/Users" class="@(Active("/admin/users") ? "active" : null)">Users</a>
-                        <a asp-page="/Admin/Functions" class="@(Active("/admin/functions") ? "active" : null)">Functions</a>
-                        <a asp-page="/Admin/Proxy" class="@(Active("/admin/proxy") ? "active" : null)">Proxy</a>
-                        <a asp-page="/Admin/Https" class="@(Active("/admin/https") ? "active" : null)">HTTPS</a>
-                        <a asp-page="/Admin/Ai" class="@(Active("/admin/ai") ? "active" : null)">AI</a>
-                    }
-                    @if (assistant)
-                    {
-                        <button type="button" class="nav-assistant" data-assistant-toggle aria-controls="assistant" aria-expanded="false">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                            </svg>
-                            Assistant
-                        </button>
-                    }
-                    <span class="nav-user">
-                        @displayName
-                        <form method="post" asp-page="/Logout" data-sign-out>
-                            <button type="submit" class="btn-link">Sign out</button>
-                        </form>
-                    </span>
-                </nav>
+    @* The branding's values over site.css's: set under Branding. *@
+    <link rel="stylesheet" href="@brand.StylesheetUrl" />
+    @* The sidebar's collapsed state is this browser's own, so it is set before the first paint. *@
+    <script>try { if (localStorage.getItem('ssh.sidebar') === 'collapsed') document.documentElement.classList.add('sidebar-collapsed'); } catch (e) { }</script>
+    @* The text scripts show, in the viewer's language: siteHost.t(key, values) and siteHost.tp(key, count, values). *@
+    <script type="application/json" id="ssh-strings">@Html.Raw(System.Text.Json.JsonSerializer.Serialize(Catalog.WithPrefix("js.", System.Globalization.CultureInfo.CurrentUICulture).ToDictionary()))</script>
+    <script>
+        window.siteHost = window.siteHost || {};
+        (function () {
+            var strings = {};
+            try { strings = JSON.parse(document.getElementById('ssh-strings').textContent); } catch (e) { }
+            var plural = window.Intl && Intl.PluralRules ? new Intl.PluralRules(document.documentElement.lang) : null;
+            // Marks come out of the text before values go in, so a value keeps any backtick or ** it holds.
+            function fill(text, values) {
+                return text.replace(/\[([^\]]+)\]\([A-Za-z][A-Za-z0-9]*\)/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/\*\*(.+?)\*\*/g, '$1')
+                    .replace(/\{([A-Za-z][A-Za-z0-9]*|\d+)\}/g, function (m, k) { return values && k in values ? values[k] : m; });
             }
-        </div>
-    </header>
+            siteHost.t = function (key, values) { return fill(key in strings ? strings[key] : key, values); };
+            // The language picker: the choice goes in the ssh.lang cookie, read by the server, and the page reloads in it.
+            document.addEventListener('click', function (event) {
+                var button = event.target.closest && event.target.closest('[data-language]');
+                if (!button) return;
+                var code = button.getAttribute('data-language');
+                document.cookie = 'ssh.lang=' + encodeURIComponent('c=' + code + '|uic=' + code) + '; path=/; SameSite=Lax; max-age=31536000' +
+                    (location.protocol === 'https:' ? '; Secure' : '');
+                location.reload();
+            });
+            siteHost.tp = function (key, count, values) {
+                var form = plural ? plural.select(count) : (count === 1 ? 'one' : 'other');
+                var name = (key + '.' + form) in strings ? key + '.' + form : key + '.other';
+                var all = {}; for (var k in values || {}) all[k] = values[k]; all.count = count;
+                return siteHost.t(name, all);
+            };
+        })();
+    </script>
+</head>
+<body class="@(signedIn ? "app" : "screen")">
+@if (signedIn)
+{
+    NavLink[] main =
+    [
+        new("/Index", "/", "deploy", L["common.menu.deploy"]),
+        new("/Sites/Index", "/sites", "sites", L["common.menu.sites"])
+    ];
+    NavLink[] server = isAdmin
+        ?
+        [
+            new("/Admin/Users", "/admin/users", "users", L["common.menu.users"]),
+            new("/Admin/Functions", "/admin/functions", "functions", L["common.menu.functions"]),
+            new("/Admin/Proxy", "/admin/proxy", "proxy", L["common.menu.proxy"]),
+            new("/Admin/Https", "/admin/https", "https", L["common.menu.https"]),
+            new("/Admin/Ai", "/admin/ai", "ai", L["common.menu.ai"]),
+            new("/Admin/Branding", "/admin/branding", "branding", L["common.menu.branding"])
+        ]
+        : [];
 
-    <main>
+    <div class="shell">
+        <aside class="sidebar" id="sidebar" aria-label="@L["common.menu.label"]">
+            <div class="sidebar-head">
+                <a class="brand" asp-page="/Index" title="@brand.Name">
+                    <partial name="_BrandMark" model="brand" />
+                </a>
+                <button type="button" class="icon-btn sidebar-collapse" data-sidebar-collapse aria-label="@L["common.menu.collapse"]" title="@L["common.menu.collapse"]">
+                    @Icons.Get("collapse")
+                </button>
+            </div>
+
+            <button type="button" class="palette-open" data-palette-open>
+                @Icons.Get("search")
+                <span class="nav-label">@L["common.goTo.open"]</span>
+                <kbd class="nav-label">@L["common.goTo.shortcut"]</kbd>
+            </button>
+
+            <nav class="side-nav">
+                @foreach (var link in main)
+                {
+                    <a asp-page="@link.Page" class="@(Active(link.Prefix) ? "active" : null)" aria-current="@(Active(link.Prefix) ? "page" : null)" title="@link.Label">
+                        @Icons.Get(link.Icon)<span class="nav-label">@link.Label</span>
+                    </a>
+                }
+                @if (server.Length > 0)
+                {
+                    <p class="side-group nav-label">@L["common.menu.server"]</p>
+                    @foreach (var link in server)
+                    {
+                        <a asp-page="@link.Page" class="@(Active(link.Prefix) ? "active" : null)" aria-current="@(Active(link.Prefix) ? "page" : null)" title="@link.Label">
+                            @Icons.Get(link.Icon)<span class="nav-label">@link.Label</span>
+                        </a>
+                    }
+                }
+            </nav>
+
+            <div class="sidebar-foot">
+                @if (assistant)
+                {
+                    <button type="button" class="side-action" data-assistant-toggle aria-controls="assistant" aria-expanded="false" title="@L["common.menu.assistant"]">
+                        @Icons.Get("assistant")<span class="nav-label">@L["common.menu.assistant"]</span>
+                    </button>
+                }
+                <button type="button" class="side-action" data-theme-switch title="@L[ThemePreference.Of(Context) switch { "light" => "common.theme.lightTitle", "dark" => "common.theme.darkTitle", _ => "common.theme.systemTitle" }]">
+                    <span data-theme-icon>@Icons.Get(ThemePreference.Of(Context) switch { "light" => "theme-light", "dark" => "theme-dark", _ => "theme-system" })</span>
+                    <span class="nav-label" data-theme-label>@L[ThemePreference.Of(Context) switch { "light" => "common.theme.light", "dark" => "common.theme.dark", _ => "common.theme.system" }]</span>
+                </button>
+                @if (Catalog.Languages.Count > 1)
+                {
+                    var current = Catalog.Resolve(System.Globalization.CultureInfo.CurrentUICulture);
+                    <button type="button" class="side-action" popovertarget="language-menu" title="@L.Text("common.language.title", new { name = LanguageName(current) })">
+                        @Icons.Get("language")<span class="nav-label">@LanguageName(current)</span>
+                    </button>
+                    <div id="language-menu" class="language-menu" popover aria-label="@L["common.language.label"]">
+                        @foreach (var language in Catalog.Languages)
+                        {
+                            <button type="button" class="side-action" data-language="@language.Name" lang="@language.Name"
+                                    aria-current="@(language.Name == current.Name ? "true" : null)">@LanguageName(language)</button>
+                        }
+                    </div>
+                }
+                <a asp-page="/Account/Index" class="side-action @(Active("/account") ? "active" : null)" title="@L.Text("common.menu.accountOf", new { name = displayName })">
+                    @Icons.Get("account")<span class="nav-label side-user">@displayName</span>
+                </a>
+                <form method="post" asp-page="/Logout" data-sign-out>
+                    <button type="submit" class="side-action" title="@L["common.menu.signOut"]">
+                        @Icons.Get("sign-out")<span class="nav-label">@L["common.menu.signOut"]</span>
+                    </button>
+                </form>
+            </div>
+        </aside>
+
+        <div class="content">
+            <header class="mobilebar">
+                <button type="button" class="icon-btn" data-sidebar-open aria-controls="sidebar" aria-expanded="false" aria-label="@L["common.menu.open"]">
+                    @Icons.Get("menu")
+                </button>
+                <a class="brand" asp-page="/Index"><partial name="_BrandMark" model="brand" /></a>
+                <button type="button" class="icon-btn" data-palette-open aria-label="@L["common.goTo.open"]">@Icons.Get("search")</button>
+            </header>
+
+            <main>
+                @if (!string.IsNullOrEmpty(status))
+                {
+                    <div class="alert alert-success" role="status">@status</div>
+                }
+                @if (!string.IsNullOrEmpty(error))
+                {
+                    <div class="alert alert-error" role="alert">@error</div>
+                }
+
+                @RenderBody()
+            </main>
+        </div>
+    </div>
+
+    <dialog class="palette" data-palette data-sites-url="@Url.Page("/Sites/Index", "Palette")" aria-label="@L["common.goTo.title"]">
+        <form method="dialog" class="palette-form" role="search">
+            @Icons.Get("search")
+            <input type="search" placeholder="@L["common.goTo.placeholder"]" aria-label="@L["common.goTo.placeholder"]" autocomplete="off" spellcheck="false" data-palette-input />
+            <kbd>@L["common.goTo.close"]</kbd>
+        </form>
+        <ul class="palette-list" role="listbox" aria-label="@L["common.goTo.list"]" data-palette-list>
+            @foreach (var link in main.Concat(server).Append(new NavLink("/Account/Index", "/account", "account", L["common.menu.account"])))
+            {
+                <li role="option" data-href="@Url.Page(link.Page)" data-text="@link.Label">@Icons.Get(link.Icon)<span>@link.Label</span></li>
+            }
+        </ul>
+    </dialog>
+}
+else
+{
+    <main class="screen-main">
+        <a class="brand screen-brand" href="/"><partial name="_BrandMark" model="brand" /></a>
         @if (!string.IsNullOrEmpty(status))
         {
-            <div class="alert alert-success">@status</div>
+            <div class="alert alert-success" role="status">@status</div>
         }
         @if (!string.IsNullOrEmpty(error))
         {
-            <div class="alert alert-error">@error</div>
+            <div class="alert alert-error" role="alert">@error</div>
         }
-
         @RenderBody()
     </main>
+}
 
     @if (assistant)
     {
-        <aside id="assistant" class="assistant" hidden aria-label="Assistant"
+        <aside id="assistant" class="assistant" hidden aria-label="@L["common.assistant.title"]"
                data-csrf="@Antiforgery.GetAndStoreTokens(Context).RequestToken" data-domain="@pageDomain"
                data-user="@User.FindFirstValue(ClaimTypes.NameIdentifier)">
             <header class="assistant-head">
-                <strong>Assistant</strong>
+                <strong>@L["common.assistant.title"]</strong>
                 <span class="assistant-where muted">@(pageDomain is null ? "" : pageDomain)</span>
-                <button type="button" class="btn-link" data-assistant-new title="Start a new conversation">New</button>
-                <button type="button" class="assistant-close" data-assistant-toggle aria-label="Close the assistant">×</button>
+                <button type="button" class="btn-link" data-assistant-new title="@L["common.assistant.newTitle"]">@L["common.assistant.new"]</button>
+                <button type="button" class="assistant-close" data-assistant-toggle aria-label="@L["common.assistant.close"]">×</button>
             </header>
             <div class="assistant-log" aria-live="polite">
-                <p class="assistant-empty muted">
-                    Tell it what to set up. For example: <em>“Create shop.example.com, send / to http://web:3000 and /api to
-                    http://api:8080 with WebSockets.”</em> It acts as you, and asks before deleting anything.
-                </p>
+                <p class="assistant-empty muted">@L["common.assistant.empty"]</p>
             </div>
             <form class="assistant-form">
-                <textarea rows="2" placeholder="Ask, or tell it what to do…" aria-label="Message" maxlength="8000"></textarea>
-                <button type="submit" class="btn-primary">Send</button>
+                <textarea rows="2" placeholder="@L["common.assistant.placeholder"]" aria-label="@L["common.assistant.message"]" maxlength="8000"></textarea>
+                <button type="submit" class="btn-primary">@L["common.assistant.send"]</button>
             </form>
         </aside>
         <script src="~/js/assistant.js" asp-append-version="true"></script>
@@ -115,3 +247,11 @@
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
+
+@functions {
+    private sealed record NavLink(string Page, string Prefix, string Icon, string Label);
+
+    /// <summary>A language by its own name, as its speakers write it: English, Français, Español, 中文（简体）.</summary>
+    private static string LanguageName(System.Globalization.CultureInfo culture) =>
+        culture.TextInfo.ToTitleCase(culture.NativeName);
+}

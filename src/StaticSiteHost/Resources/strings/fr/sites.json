@@ -1,0 +1,25 @@
+{
+  "sites.title": "Sites",
+  "sites.intro": "Tous les domaines auxquels ce serveur répond.",
+
+  "sites.new.title": "Nouveau site",
+  "sites.new.hint": "Crée un site sans fichiers : pour un site fait de routes proxy, ou pour en préparer un avant son premier déploiement. Pour ajouter des fichiers, [déployez un fichier zip](deployUrl) à la place. Cela crée aussi le site.",
+  "sites.new.domain": "Domaine",
+  "sites.new.domainPlaceholder": "app.example.com",
+  "sites.new.create": "Créer le site",
+  "sites.new.createdAdmin": "Le site {domain} a été créé sans fichiers. Ajoutez-y des routes proxy ici, ou déployez-y un fichier zip.",
+  "sites.new.createdMember": "Le site {domain} a été créé sans fichiers. Déployez-y un fichier zip, ou demandez à un administrateur d'y ajouter des routes proxy.",
+
+  "sites.empty": "Il n'y a encore aucun site. [Déployez votre premier site](deployUrl), ou créez-en un ci-dessus.",
+  "sites.column.domain": "Domaine",
+  "sites.column.files": "Fichiers",
+  "sites.column.size": "Taille",
+  "sites.column.updated": "Mis à jour",
+  "sites.column.by": "Par",
+  "sites.badge.passcode": "code d'accès",
+  "sites.badge.passcodeTitle": "Les visiteurs doivent saisir un code d'accès",
+  "sites.badge.routes.one": "{count} route proxy",
+  "sites.badge.routes.other": "{count} routes proxy",
+  "sites.badge.routesTitle": "Chemins transférés vers d'autres serveurs",
+  "sites.manage": "Gérer"
+}

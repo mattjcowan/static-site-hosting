@@ -1,0 +1,13 @@
+{
+  "js.ai.models.show": "显示模型",
+  "js.ai.models.chooseProvider": "请先选择服务商。",
+  "js.ai.models.loading": "正在向服务商获取模型列表…",
+  "js.ai.models.none": "服务商没有列出聊天模型。请输入模型名称。",
+  "js.ai.models.found.one": "服务商提供了 {count} 个模型。你可以输入任意名称。",
+  "js.ai.models.found.other": "服务商提供了 {count} 个模型。你可以输入任意名称。",
+  "js.ai.models.foundFastFirst.one": "服务商提供了 {count} 个模型，快速模型排在前面。你可以输入任意名称。",
+  "js.ai.models.foundFastFirst.other": "服务商提供了 {count} 个模型，快速模型排在前面。你可以输入任意名称。",
+  "js.ai.models.failed": "无法列出模型。请输入模型名称。",
+  "js.ai.models.noMatch": "没有与“{typed}”匹配的模型。你仍可使用它。",
+  "js.ai.models.fast": "快速"
+}

@@ -72,6 +72,12 @@ public sealed class SiteRecord
     /// </summary>
     public SiteTlsSettings? Tls { get; set; }
 
+    /// <summary>
+    /// This site's own look for its visitor screens (passcode, not found, errors), over the server's
+    /// branding. Null uses the server's as it is. Administrators only.
+    /// </summary>
+    public Branding? Branding { get; set; }
+
     /// <summary>Every function bundle some retained release still runs.</summary>
     public List<FunctionBundle> FunctionBundles { get; set; } = [];
 
@@ -108,9 +114,20 @@ public sealed class ReleaseRecord
     /// </summary>
     public string Source { get; set; } = "web";
 
+    /// <summary>The <see cref="Source"/> of a release made as a copy of another (<see cref="CopiedFrom"/>).</summary>
+    public const string CopySource = "copy";
+
     public int FileCount { get; set; }
     public long TotalBytes { get; set; }
     public string? ArchiveName { get; set; }
+
+    /// <summary>The release this one was copied from, for a copy; null otherwise.</summary>
+    public string? CopiedFrom { get; set; }
+
+    /// <summary>When its files were last changed where they are, after it was made, and by whom. Null when never.</summary>
+    public DateTimeOffset? EditedUtc { get; set; }
+
+    public string? EditedBy { get; set; }
 
     /// <summary>True when the archive wrapped everything in a single folder that was unwrapped.</summary>
     public bool StrippedRootFolder { get; set; }

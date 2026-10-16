@@ -1,0 +1,22 @@
+{
+  "proxy.pageTitle": "Proxy",
+  "proxy.title": "Server-wide routes",
+  "proxy.intro": "Forward a path on many sites at once, such as `/api` on every site under `*.apps.example.com`. A route applies to every site whose domain matches its **Sites** field.",
+
+  "proxy.routes.title": "Routes",
+  "proxy.routes.count.one": "{count} route",
+  "proxy.routes.count.other": "{count} routes",
+  "proxy.routes.none": "none",
+  "proxy.routes.hint": "A site's own route at the same path wins, and a site can turn a server-wide route off on its own page. When two server-wide routes share a path, the closest **Sites** match wins: a domain, then `*.something`, then `*`.",
+
+  "proxy.route.off": "off",
+  "proxy.route.streaming": "streaming",
+  "proxy.route.noMatch": "No site on this server matches it yet.",
+  "proxy.route.matches": "Sites it matches:",
+  "proxy.route.added": "{path} on {sites} now forwards to {target}.",
+  "proxy.route.saved": "Saved the server-wide route at {path} for {sites}.",
+  "proxy.route.removed": "Removed the server-wide route. Its path goes back to each site's own files and routes.",
+  "proxy.route.notFound": "That server-wide route no longer exists.",
+
+  "proxy.add": "Add a server-wide route"
+}

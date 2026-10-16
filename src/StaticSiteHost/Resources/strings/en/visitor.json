@@ -1,0 +1,33 @@
+{
+  "visitor.passcode.pageTitle": "Passcode needed — {domain}",
+  "visitor.passcode.title": "This site is private",
+  "visitor.passcode.hint": "Enter the passcode to view this site. If you do not have it, ask the site's owner.",
+  "visitor.passcode.wrong": "That passcode is not correct. Check it and try again.",
+  "visitor.passcode.tooManyTries.one": "Too many wrong passcodes. Try again in {count} minute.",
+  "visitor.passcode.tooManyTries.other": "Too many wrong passcodes. Try again in {count} minutes.",
+  "visitor.passcode.label": "Passcode",
+  "visitor.passcode.submit": "View site",
+
+  "visitor.page.title": "{status} — {title}",
+
+  "visitor.notFound.title": "Page not found",
+  "visitor.notFound.detail": "There is no page at {address}. Check that the address is correct.",
+  "visitor.notFound.detailNoAddress": "There is no page at this address. Check that the address is correct.",
+
+  "visitor.unavailable.title": "Nothing here yet",
+  "visitor.unavailable.detail": "{domain} has no pages yet. Try again later.",
+
+  "visitor.proxy.notSetUp.title": "This page is not working",
+  "visitor.proxy.notSetUp.detail": "The site is not set up correctly for this page. Try again later.",
+  "visitor.proxy.unreachable.title": "This page is not available",
+  "visitor.proxy.unreachable.detail": "The site cannot load this page right now. Try again in a few minutes.",
+  "visitor.proxy.timedOut.title": "This page took too long to load",
+  "visitor.proxy.timedOut.detail": "The site did not answer in time. Try again in a few minutes.",
+  "visitor.proxy.refused.title": "Connection not allowed",
+  "visitor.proxy.refused.detail": "This address does not accept this request.",
+  "visitor.proxy.webSocketsOff": "This address does not accept WebSocket connections.",
+  "visitor.proxy.webSocketsCrossSite": "Only this site's own pages can open WebSocket connections to this address.",
+
+  "visitor.noSite.title": "No site at this address",
+  "visitor.noSite.detail": "There is no site at **{domain}**. Check that the address is correct."
+}

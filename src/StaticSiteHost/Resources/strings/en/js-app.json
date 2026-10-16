@@ -1,0 +1,24 @@
+{
+  "js.app.copy.done": "Copied",
+
+  "js.app.dropzone.files.one": "{count} file: {names}",
+  "js.app.dropzone.files.other": "{count} files: {names}",
+  "js.app.dropzone.skipped": "Skipped {names}. Only {types} files are accepted.",
+  "js.app.dropzone.change": "Click to choose different files",
+  "js.app.dropzone.empty": "Choose or drop at least one file first.",
+
+  "js.app.deploy.drop": "Drop a zip file here",
+  "js.app.deploy.dropHint": "or click to choose a file",
+  "js.app.deploy.chosen": "{size}. Click to choose a different file.",
+  "js.app.deploy.noFile": "Choose a zip file first.",
+  "js.app.deploy.noDomain": "Enter the domain to deploy to.",
+  "js.app.deploy.uploading": "Uploading…",
+  "js.app.deploy.unpacking": "Unpacking…",
+  "js.app.deploy.submit": "Deploy",
+  "js.app.deploy.badAnswer": "The server sent an unexpected answer (HTTP {status}). Try again.",
+  "js.app.deploy.failed": "The deploy failed.",
+  "js.app.deploy.done.one": "Deployed {count} file ({size}) to {domain}.",
+  "js.app.deploy.done.other": "Deployed {count} files ({size}) to {domain}.",
+  "js.app.deploy.functions": "Functions from {folder} are now live: {routes}",
+  "js.app.deploy.uploadFailed": "The upload did not finish. Check your connection and try again."
+}

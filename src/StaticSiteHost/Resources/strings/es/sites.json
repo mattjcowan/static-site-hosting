@@ -1,0 +1,25 @@
+{
+  "sites.title": "Sitios",
+  "sites.intro": "Todos los dominios a los que responde este servidor.",
+
+  "sites.new.title": "Sitio nuevo",
+  "sites.new.hint": "Crea un sitio sin archivos: para un sitio hecho de rutas de proxy, o para configurarlo antes de su primer despliegue. Para publicar archivos, [despliega un archivo zip](deployUrl) en su lugar. Eso también crea el sitio.",
+  "sites.new.domain": "Dominio",
+  "sites.new.domainPlaceholder": "app.example.com",
+  "sites.new.create": "Crear sitio",
+  "sites.new.createdAdmin": "Se creó {domain} sin archivos. Añade rutas de proxy aquí o despliega un archivo zip en él.",
+  "sites.new.createdMember": "Se creó {domain} sin archivos. Despliega un archivo zip en él o pide a un administrador que añada rutas de proxy.",
+
+  "sites.empty": "Todavía no hay sitios. [Despliega tu primer sitio](deployUrl) o crea uno arriba.",
+  "sites.column.domain": "Dominio",
+  "sites.column.files": "Archivos",
+  "sites.column.size": "Tamaño",
+  "sites.column.updated": "Actualizado",
+  "sites.column.by": "Por",
+  "sites.badge.passcode": "código de acceso",
+  "sites.badge.passcodeTitle": "Los visitantes deben escribir un código de acceso",
+  "sites.badge.routes.one": "{count} ruta de proxy",
+  "sites.badge.routes.other": "{count} rutas de proxy",
+  "sites.badge.routesTitle": "Rutas reenviadas a otros servidores",
+  "sites.manage": "Administrar"
+}

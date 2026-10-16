@@ -1,0 +1,17 @@
+{
+  "js.assistant.confirm.question": "Run {step}? It cannot be undone.",
+  "js.assistant.confirm.run": "Run",
+  "js.assistant.confirm.cancel": "Cancel",
+  "js.assistant.confirm.ran": "You chose to run it.",
+  "js.assistant.confirm.cancelled": "You cancelled it.",
+  "js.assistant.changed.text": "The assistant made changes. This page was not updated, so nothing you typed on it is lost.",
+  "js.assistant.changed.update": "Update this page anyway",
+  "js.assistant.noAnswer": "The assistant could not answer (HTTP {status}). Try again.",
+  "js.assistant.usage.summary": "{tokensIn} in, {tokensOut} out, {calls}",
+  "js.assistant.usage.tokens.one": "{number} token",
+  "js.assistant.usage.tokens.other": "{number} tokens",
+  "js.assistant.usage.calls.one": "{count} call",
+  "js.assistant.usage.calls.other": "{count} calls",
+  "js.assistant.connectionLost": "The connection to the server was lost.",
+  "js.assistant.chooseFirst": "Choose {run} or {cancel} first."
+}

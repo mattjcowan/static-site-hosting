@@ -13,6 +13,8 @@
   <ItemGroup>
     <!-- The manual, for the read_docs tool (Tools/Manual.cs): the container has no repository to read it from. -->
     <EmbeddedResource Include="../../README.md" LogicalName="README.md" Link="README.md" />
+    <!-- Every language's text (Localization/StringCatalog.cs): strings/{language}/{area}.json. -->
+    <EmbeddedResource Include="Resources/strings/**/*.json" LogicalName="strings/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

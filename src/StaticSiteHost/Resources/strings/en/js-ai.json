@@ -1,0 +1,13 @@
+{
+  "js.ai.models.show": "Show the models",
+  "js.ai.models.chooseProvider": "Choose a provider first.",
+  "js.ai.models.loading": "Asking the provider for its models…",
+  "js.ai.models.none": "The provider listed no chat models. Type the model name.",
+  "js.ai.models.found.one": "{count} model from the provider. You can type any name.",
+  "js.ai.models.found.other": "{count} models from the provider. You can type any name.",
+  "js.ai.models.foundFastFirst.one": "{count} model from the provider, fast ones first. You can type any name.",
+  "js.ai.models.foundFastFirst.other": "{count} models from the provider, fast ones first. You can type any name.",
+  "js.ai.models.failed": "The models could not be listed. Type the model name.",
+  "js.ai.models.noMatch": "No model matches “{typed}”. You can still use it.",
+  "js.ai.models.fast": "fast"
+}

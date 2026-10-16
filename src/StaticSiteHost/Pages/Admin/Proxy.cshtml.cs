@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Pages.Sites;
 using StaticSiteHost.Serving;
@@ -16,11 +18,13 @@ public class ProxyModel : PageModel
 {
     private readonly SiteProxyService _proxy;
     private readonly SiteStore _sites;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public ProxyModel(SiteProxyService proxy, SiteStore sites)
+    public ProxyModel(SiteProxyService proxy, SiteStore sites, IStringLocalizer<Strings> strings)
     {
         _proxy = proxy;
         _sites = sites;
+        _strings = strings;
     }
 
     /// <summary>One form per route, in path order, then the one for adding.</summary>
@@ -71,8 +75,8 @@ public class ProxyModel : PageModel
             if (ok)
             {
                 TempData["StatusMessage"] = routeId is null
-                    ? $"{saved!.Path} on {saved.Sites} now forwards to {saved.Target}."
-                    : $"The server-wide route at {saved!.Path} for {saved.Sites} was saved.";
+                    ? _strings.Text("proxy.route.added", new { path = saved!.Path, sites = saved.Sites, target = saved.Target })
+                    : _strings.Text("proxy.route.saved", new { path = saved!.Path, sites = saved.Sites });
                 return RedirectToPage();
             }
 
@@ -93,9 +97,9 @@ public class ProxyModel : PageModel
     public async Task<IActionResult> OnPostRemoveProxyRouteAsync(string? id)
     {
         if (await _proxy.RemoveServerRouteAsync(id, User.Identity?.Name ?? "unknown"))
-            TempData["StatusMessage"] = "The server-wide route was removed. Its paths go back to each site's own files and routes.";
+            TempData["StatusMessage"] = _strings.Text("proxy.route.removed");
         else
-            TempData["ErrorMessage"] = "That server-wide route no longer exists.";
+            TempData["ErrorMessage"] = _strings.Text("proxy.route.notFound");
 
         return RedirectToPage();
     }
@@ -105,7 +109,7 @@ public class ProxyModel : PageModel
         var route = (await _proxy.ServerRoutesAsync()).FirstOrDefault(r => r.Id == id);
         if (route is null)
         {
-            TempData["ErrorMessage"] = "That server-wide route no longer exists.";
+            TempData["ErrorMessage"] = _strings.Text("proxy.route.notFound");
             return RedirectToPage();
         }
 

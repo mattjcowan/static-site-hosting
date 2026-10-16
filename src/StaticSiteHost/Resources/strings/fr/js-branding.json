@@ -1,0 +1,14 @@
+{
+  "js.branding.pair.textOnBg": "Texte sur le fond de page",
+  "js.branding.pair.textOnSurface": "Texte sur les cartes",
+  "js.branding.pair.mutedOnSurface": "Texte plus discret sur les cartes",
+  "js.branding.pair.accentOnSurface": "Accent sur les cartes",
+  "js.branding.pair.accentTextOnAccent": "Texte sur l'accent",
+  "js.branding.pair.dangerOnSurface": "Erreurs sur les cartes",
+  "js.branding.ratio": "{ratio}:1",
+  "js.branding.pass": "facile à lire",
+  "js.branding.large": "seulement pour les grands textes",
+  "js.branding.fail": "difficile à lire",
+  "js.branding.applied": "Thème {name} appliqué. Enregistrez pour le garder.",
+  "js.branding.notHex": "Écrivez une couleur au format #rrggbb, comme #2f5be8."
+}

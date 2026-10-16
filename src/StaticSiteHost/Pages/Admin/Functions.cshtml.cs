@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Pages.Shared;
 using StaticSiteHost.Services;
@@ -11,11 +13,13 @@ public class FunctionsModel : PageModel
 {
     private readonly FunctionDeploymentService _functions;
     private readonly FunctionHost _host;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public FunctionsModel(FunctionDeploymentService functions, FunctionHost host)
+    public FunctionsModel(FunctionDeploymentService functions, FunctionHost host, IStringLocalizer<Strings> strings)
     {
         _functions = functions;
         _host = host;
+        _strings = strings;
     }
 
     public FunctionBundle? Current { get; private set; }
@@ -35,14 +39,14 @@ public class FunctionsModel : PageModel
 
     public async Task<IActionResult> OnPostAsync(List<IFormFile> files, string? mode, CancellationToken ct)
     {
-        var (uploaded, readError) = await FunctionUploads.ReadAsync(files, ct);
+        var (uploaded, readError) = await FunctionUploads.ReadAsync(files, _strings, ct);
         var result = uploaded is null
             ? FunctionDeployResult.Failed(readError!)
             : await _functions.DeployAsync(null, uploaded, User.Identity?.Name ?? "unknown", "web", replace: mode == "replace", ct);
 
         if (result.Ok)
         {
-            TempData["StatusMessage"] = FunctionUploads.Describe(result, "every site");
+            TempData["StatusMessage"] = FunctionUploads.Describe(result, null, _strings);
             return RedirectToPage();
         }
 
@@ -57,7 +61,7 @@ public class FunctionsModel : PageModel
         var result = await _functions.RemoveFileAsync(null, fileName ?? "", User.Identity?.Name ?? "unknown", "web", ct);
         if (result.Ok)
         {
-            TempData["StatusMessage"] = $"Removed {fileName}. " + FunctionUploads.Describe(result, "every site");
+            TempData["StatusMessage"] = FunctionUploads.DescribeRemoved(result, fileName ?? "", null, _strings);
             return RedirectToPage();
         }
 
@@ -70,7 +74,7 @@ public class FunctionsModel : PageModel
     public async Task<IActionResult> OnPostRemoveAsync()
     {
         var (ok, _) = await _functions.RemoveAsync(null, User.Identity?.Name ?? "unknown");
-        if (ok) TempData["StatusMessage"] = "Global functions were removed. Sites still run their own.";
+        if (ok) TempData["StatusMessage"] = _strings.Text("functions.remove.done");
 
         return RedirectToPage();
     }

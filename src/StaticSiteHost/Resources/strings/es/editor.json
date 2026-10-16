@@ -1,0 +1,32 @@
+{
+  "editor.pageTitle.global": "Editor de funciones globales",
+  "editor.pageTitle.site": "Funciones — {domain}",
+  "editor.title": "Editor de funciones",
+  "editor.intro.global": "Funciones globales: cada sitio responde con ellas después de sus propias funciones. [Volver a las funciones globales](backUrl)",
+  "editor.intro.site": "Funciones de **{domain}**. [Volver al sitio](backUrl)",
+
+  "editor.files": "Archivos",
+  "editor.check": "Comprobar",
+  "editor.deploy": "Desplegar",
+  "editor.hint.check": "**Comprobar** compila los archivos como lo haría un despliegue, sin publicarlos, para que puedas probarlos abajo.",
+  "editor.hint.deploySite": "**Desplegar** los vuelve a compilar y los convierte en las funciones publicadas.",
+  "editor.hint.deploySiteReplacing": "**Desplegar** los vuelve a compilar y los convierte en las funciones publicadas, en lugar de {label}.",
+  "editor.hint.deployGlobal": "**Desplegar** los vuelve a compilar y los convierte en las funciones publicadas de todos los sitios.",
+  "editor.hint.deployGlobalReplacing": "**Desplegar** los vuelve a compilar y los convierte en las funciones publicadas de todos los sitios, en lugar de {label}.",
+
+  "editor.test.title": "Prueba",
+  "editor.test.hint": "Ejecuta una solicitud en memoria, con tu código real y los datos reales del sitio, así que todo lo que escriba o envíe ocurre de verdad. El middleware de la compilación se ejecuta primero: si un filtro rechaza la solicitud, añade lo que necesita, como una cookie o un token, en **Encabezados**.",
+  "editor.test.build": "Compilación",
+  "editor.test.checkedBuild": "Compilación comprobada (comprueba primero)",
+  "editor.test.liveBuild": "Compilación publicada",
+  "editor.test.route": "Ruta",
+  "editor.test.method": "Método",
+  "editor.test.path": "Ruta de acceso",
+  "editor.test.query": "Cadena de consulta",
+  "editor.test.domain": "Dominio",
+  "editor.test.headers": "Encabezados, uno por línea",
+  "editor.test.body": "Cuerpo",
+  "editor.test.run": "Ejecutar",
+
+  "editor.noSite": "No hay ningún sitio en {domain}."
+}

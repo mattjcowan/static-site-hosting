@@ -20,7 +20,13 @@ containers or services on a private network, with WebSockets, streaming and HTTP
 And the whole server can be run without the UI, from scripts, CI jobs or an AI agent over
 [MCP](#automation-and-ai-agents).
 
-Every deploy replaces the site's code in place. Nothing needs a restart.
+Every deploy replaces the site's code in place. Nothing needs a restart. Small changes need no zip
+at all: edit the files on the site's [Files tab](#changing-files-without-a-zip), live, or in a
+copy of the release that you make live when it is ready.
+
+The management app and the screens visitors see can carry your own name, logos, colours and fonts
+([branding](#branding)), and come in English, French, Spanish and Simplified Chinese
+([languages](#languages)).
 
 ![Deploying a site: drop a zip, pick a domain, and it is live](docs/screenshots/deploy.png)
 
@@ -126,21 +132,22 @@ zip.
 
 | Capability | What it is for | How you turn it on | Who may | Read more |
 | ---------- | -------------- | ------------------ | ------- | --------- |
-| Static files | Serve HTML, CSS, scripts and images from a zip | Upload the zip on the **Deploy** page, or `POST /api/v1/sites/{domain}/deploy`. Change some files with `PATCH /api/v1/sites/{domain}/files` or the [assistant](#the-assistant) | Member or administrator | [How hosting works](#how-hosting-works) |
-| Header rules | Set response headers, such as `Cache-Control`, per path | A `_headers` file in the zip, **Sites → the domain → Header rules**, or `PUT /api/v1/sites/{domain}/headers` | Member or administrator | [Header rules](#header-rules) |
-| Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
-| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming, HTTP/2, gRPC and gRPC-Web | **Sites → New site** for a site with no files, then **Sites → the domain → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the top bar | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
-| Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
-| HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
-| Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
+| Static files | Serve HTML, CSS, scripts and images from a zip | Upload the zip on the **Deploy** page, or `POST /api/v1/sites/{domain}/deploy`. Change some files on the site's **Files** tab, with `PATCH /api/v1/sites/{domain}/files`, or with the [assistant](#the-assistant) | Member or administrator | [How hosting works](#how-hosting-works) |
+| Header rules | Set response headers, such as `Cache-Control`, per path | A `_headers` file in the zip, **Sites → the domain → Routing → Header rules**, or `PUT /api/v1/sites/{domain}/headers` | Member or administrator | [Header rules](#header-rules) |
+| Redirects and rewrites | Send a visitor to another address, or answer a path with another file | A `_redirects` file in the zip, **Sites → the domain → Routing → Redirects and rewrites**, or `PUT /api/v1/sites/{domain}/redirects` | Member or administrator | [Redirects and rewrites](#redirects-and-rewrites) |
+| Proxy routes | Forward paths to other servers, such as Docker containers or services on a private network, with per-path WebSockets, streaming, HTTP/2, gRPC and gRPC-Web | **Sites → New site** for a site with no files, then **Sites → the domain → Routing → Proxy routes**, or `PUT /api/v1/sites/{domain}/proxy`. For many sites at once, **Proxy** in the menu | Administrator (members may create the site and see its routes) | [Proxy routes](#proxy-routes) |
+| Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → App → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
+| HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → Security → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
+| Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Security → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
 | Functions | Answer requests with C# code | A `_functions/` folder in the zip, an upload on the site's **Functions** card, the browser editor, or `PUT /api/v1/sites/{domain}/functions` | Administrator | [Functions](#functions) |
 | Middleware | Run code before every request to the site, files included | A `[Middleware]` method in a function file | Administrator | [Middleware](#middleware) |
 | Services and jobs | Register services; run code in the background or on a timetable | `[ConfigureServices]`, `[BackgroundService]`, `[Schedule]` or `[Every]` on a method in a function file | Administrator | [Services and jobs](#services-and-jobs) |
 | Realtime | Send events from the server to the pages open on the site | On for every site. Pages use `site.realtime` from `/_host/site.js`; functions use `IRealtime`; anything else uses `POST /api/v1/sites/{domain}/realtime/publish`. `[RealtimeConnect]` and `[RealtimeJoin]` hooks decide who may connect and join | Any page may listen; any API key may publish; administrators write the hooks | [Realtime](#realtime) |
-| AI | Chat with an AI model through the server, which keeps the API key | Add a provider under **AI** in the top bar, then choose it under **Sites → the domain → AI**. Pages use `site.ai.chat`; functions use `IAiChat`; an `[AiAccess]` hook decides which visitors may chat | Administrator | [AI](#ai) |
+| Branding | Your name, logos, colours and fonts on the management app and on every site's passcode, not-found and error screens; a site can have its own for its screens | **Branding** in the menu; a site's own under **Sites → the domain → Settings → Visitor screens**, or `PUT /api/v1/branding` | Administrator | [Branding](#branding) |
+| AI | Chat with an AI model through the server, which keeps the API key | Add a provider under **AI** in the menu, then choose it under **Sites → the domain → App → AI**. Pages use `site.ai.chat`; functions use `IAiChat`; an `[AiAccess]` hook decides which visitors may chat | Administrator | [AI](#ai) |
 | The API | Deploy and manage sites from scripts and CI jobs | Create an API key under **Account → API keys**, or give a new server one in `Bootstrap:ApiKey` | Member or administrator (a key can do what its owner can do) | [API](#api) |
 | MCP | Let an AI agent set up and manage sites by conversation | Connect the agent to `/mcp` with an API key | Member or administrator (as the key's owner) | [Automation and AI agents](#automation-and-ai-agents) |
-| The assistant | Set up and manage sites by conversation, inside this UI | Choose a provider under **AI → Assistant**, then open **Assistant** in the top bar | Administrators; members too if allowed | [The assistant](#the-assistant) |
+| The assistant | Set up and manage sites by conversation, inside this UI | Choose a provider under **AI → Assistant**, then open **Assistant** in the menu | Administrators; members too if allowed | [The assistant](#the-assistant) |
 | Accounts | Give people access to the management UI and the API | An administrator creates accounts under **Users** | Administrator | [Accounts](#accounts) |
 
 **The deploy loop.** A deploy works the same way for every capability. You upload a zip, in the
@@ -168,8 +175,16 @@ itself (variable values, the passcode, rules saved in the UI, AI settings) stays
     <td><a href="docs/screenshots/server-proxy.png"><img src="docs/screenshots/server-proxy.png" alt="A server-wide proxy route and the sites it reaches"></a><br><sub><b>Server-wide routes</b>: one route for every site under a domain, and where it is in effect.</sub></td>
   </tr>
   <tr>
+    <td><a href="docs/screenshots/files.png"><img src="docs/screenshots/files.png" alt="A site's Files tab with the live release's index.html open in the code editor"></a><br><sub><b>Files</b>: edit a site's files where they are, in the live release or in a copy.</sub></td>
+    <td><a href="docs/screenshots/files-compare.png"><img src="docs/screenshots/files-compare.png" alt="A file in a copy of the release, compared with the live one"></a><br><sub><b>Compare with live</b>: a copy's file beside the live one, still editable.</sub></td>
+  </tr>
+  <tr>
     <td><a href="docs/screenshots/assistant.png"><img src="docs/screenshots/assistant.png" alt="The assistant changing a page's heading"></a><br><sub><b>Assistant</b>: asked to change a heading, it reads the page and edits that one line.</sub></td>
-    <td><a href="docs/screenshots/releases.png"><img src="docs/screenshots/releases.png" alt="A site's releases with Download and Make live"></a><br><sub><b>Releases</b>: the assistant's edit is a release of its own; any release downloads as a zip.</sub></td>
+    <td><a href="docs/screenshots/releases.png"><img src="docs/screenshots/releases.png" alt="A site's releases with Download, Edit files, Duplicate and Make live"></a><br><sub><b>Releases</b>: a copy made with Duplicate, to go back to or to work on; any release downloads as a zip.</sub></td>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/branding.png"><img src="docs/screenshots/branding.png" alt="The Branding page with the Ocean theme applied and its light and dark preview"></a><br><sub><b>Branding</b>: a theme starter applied, with the contrast checked and a light and dark preview.</sub></td>
+    <td><a href="docs/screenshots/passcode.png"><img src="docs/screenshots/passcode.png" alt="A private site's passcode screen in the server's branding"></a><br><sub><b>Visitor screens</b>: a private site's passcode screen, in the server's branding.</sub></td>
   </tr>
   <tr>
     <td><a href="docs/screenshots/blog-home.png"><img src="docs/screenshots/blog-home.png" alt="Night Sky Field Notes home page"></a><br><sub><b>blog-site.zip</b>: an astronomy journal with a live Moon phase and a starfield.</sub></td>
@@ -207,7 +222,7 @@ not your sign-in page.
 port 80.
 
 **Changing a site's domain.** An administrator can move a site to another domain under
-**Sites → the domain → Change domain**, with `POST /api/v1/sites/{domain}/rename`, or by asking the
+**Sites → the domain → Settings → Change domain**, with `POST /api/v1/sites/{domain}/rename`, or by asking the
 [assistant](#the-assistant). The site keeps its releases, rules, passcode, variables, proxy routes,
 AI settings, functions and data folder; its functions restart under the new name. The old domain
 stops answering at once, and nothing redirects from it. Point DNS at the server first, and update
@@ -303,19 +318,45 @@ deploy with no `index.html` at the root still goes live, with a warning.
 
 ### Changing files without a zip
 
-**What it is.** A way to change some of a site's files and leave the rest alone. The server copies
-the live release, writes and deletes what you name, and makes the copy a new release. Nothing
-else changes: the other files, the release's `_headers`, `_redirects` and `_variables.json`, and
-its functions all carry over. It is a release like any other, so a rollback undoes it.
+**What it is.** A way to change some of a site's files and leave the rest alone, right in a
+release. A change to the live release reaches visitors at once. Nothing else changes: the other
+files, the release's `_headers`, `_redirects` and `_variables.json`, and its functions stay as
+they are.
+
+**The way back is a copy.** **Duplicate** copies a release (files, rules, variable declarations
+and functions) as a new release that is not live. Duplicate the live release before a change you
+may want to undo, and **Make live** on the copy undoes it. Or edit the copy, where visitors see
+nothing, and make it live when it is ready. The server keeps the most recent releases
+(`SiteHosting:ReleasesToKeep`) and the live one; copies count among them.
 
 **How to use it.**
 
+* **The Files tab** on a site's page opens on the live release, and its **Release** menu opens any
+  other. Choose a file to edit it: text opens in a code editor that colours it by its type (HTML,
+  CSS, JavaScript, JSON, Markdown and many more), and images show as a picture.
+  * **Save** (or <kbd>Ctrl</kbd> <kbd>S</kbd>) writes the file into the release you have open. A
+    line above the files says whether that is the live one.
+  * You can also create a file (type a path such as `blog/post.html`, and the folders are made
+    for you), upload files or drop them on a folder, rename or delete a file or a folder, and
+    upload a new version of one.
+  * **Compare with saved** shows your edits beside what is saved; in a release that is not live,
+    **Compare with live** shows the file beside the live one.
+  * **Duplicate** and **Make live** are beside the **Release** menu, and on each release of the
+    Releases tab, with **Edit files**.
+  * Nobody is stopped from saving over someone else's change: agree who edits what.
+  * A `_headers`, `_redirects` or `_variables.json` that does not read is refused, with the line
+    that is wrong, so a typo never drops the site's rules.
+  * Text files up to 5 MB open in the editor; larger ones and other files can be downloaded and
+    replaced. The code editor loads from jsDelivr; without it, a plain text box does the same job.
 * **The API:** `PATCH /api/v1/sites/{domain}/files` with
-  `{"files":[{"path":"index.html","content":"…"}],"delete":["old.html"]}`. Binary content is sent
-  as base64 with `"base64": true`. `GET /api/v1/sites/{domain}/files` lists the files and
-  `GET /api/v1/sites/{domain}/files/{path}` returns one; add `?release=` to read an older release.
+  `{"files":[{"path":"index.html","content":"…"}],"delete":["old.html"]}` changes the live release;
+  add `?release=` to change another. Binary content is sent as base64 with `"base64": true`, and a
+  path to delete may be a folder. `POST /api/v1/sites/{domain}/releases/{release}/duplicate` makes a
+  copy. `GET /api/v1/sites/{domain}/files` lists the files and `GET /api/v1/sites/{domain}/files/{path}`
+  returns one, both with `?release=` for another release.
 * **MCP and the assistant:** `read_site_file` then `edit_site_file` (find and replace) for a small
-  change, `write_site_files` for whole files, `delete_site_files` to remove some. Ask the
+  change, `write_site_files` for whole files, `delete_site_files` to remove some, each with an
+  optional `release`. `duplicate_release` makes a copy first. Ask the
   [assistant](#the-assistant), for example: *"Make the heading on shop.example.com say Spring
   sale."*
 * **Download:** each release on the site's page has a **Download** link, and
@@ -325,15 +366,22 @@ its functions all carry over. It is a release like any other, so a rollback undo
 
 **Rules and limits.**
 
+* Each file is replaced in one step (written beside the old one, then renamed over it), so a
+  visitor gets the old file or the new one, never half of one. Saving several files one by one
+  can show visitors some saved and not others.
 * Writing `_headers`, `_redirects` or `_variables.json` replaces that release's rules or
-  declarations; deleting one removes them.
+  declarations; deleting one removes them. A secret declared again with no default keeps the
+  default it had, since reading the file back never shows it.
 * Files under `_functions/` cannot be written this way. Use the site's **Functions** card,
   `PUT /api/v1/sites/{domain}/functions` or `deploy_functions`.
-* The deploy limits apply to the new release as a whole.
+* The deploy limits apply to the release as a whole.
+* A site with no release gets its first, live, from the first file written.
 * A download leaves out the functions, which download from the **Functions** card, and the
   default value of a secret variable.
 * Members and administrators may do it, as with a deploy. A `_variables.json` written by a member
-  is checked as one in a member's zip is.
+  is checked as one in a member's zip is: it cannot read the server's environment.
+* After a change to the live release, open pages on the site get a `site.deployed` event with
+  `"source": "edit"` (see [Realtime](#when-a-new-version-goes-live)).
 
 ### Header rules
 
@@ -368,7 +416,7 @@ by browsers for an hour. A header rule fixes that:
 | Where | Scope | Good for |
 | ----- | ----- | -------- |
 | a `_headers` file at the root of the zip | that release; a rollback brings back that release's rules | rules that belong to the build and live in the repo |
-| **Sites → the domain → Header rules** (or the [API](#api)) | the site; a rollback does not change them | fixing caching on something already deployed |
+| **Sites → the domain → Routing → Header rules** (or the [API](#api)) | the site; a rollback does not change them | fixing caching on something already deployed |
 
 **Order.** The server applies the release's rules first, then the site's rules, top to bottom.
 When two rules set the same header, the last one wins. So a rule you save in the UI replaces a
@@ -408,7 +456,7 @@ nothing.
 different file, and the address in the browser does not change.
 
 **How to use it.** Write the rules in a `_redirects` file at the root of the zip, or under
-**Sites → the domain → Redirects and rewrites**. Each line is one rule: the path it matches, the
+**Sites → the domain → Routing → Redirects and rewrites**. Each line is one rule: the path it matches, the
 target, and the status.
 
 ```
@@ -484,7 +532,7 @@ call their API on their own host so they never need CORS. A site can be nothing 
 
 1. **Sites → New site.** Enter the domain. The site is created with no files. (Deploying a zip
    creates a site too; a site can have files and routes.)
-2. **Sites → the domain → Proxy routes → Add a route.** Enter a path and a target, then
+2. **Sites → the domain → Routing → Proxy routes → Add a route.** Enter a path and a target, then
    **Add route**:
 
    | Path   | Target                       | What it does |
@@ -669,7 +717,7 @@ own ports.
 matches its **Sites** pattern, so a path like `/api` can be forwarded to one API for every site
 under a domain, without setting the route on each site.
 
-**How to use it.** **Proxy** in the top bar, then **Add a server-wide route**. It has a route's
+**How to use it.** **Proxy** in the menu, then **Add a server-wide route**. It has a route's
 usual settings (see [Proxy routes](#proxy-routes)), plus **Sites**:
 
 | Sites | Applies to |
@@ -744,7 +792,7 @@ one for a value that must not be in the repo, such as an API key.
    A variable that is neither public nor secret is for functions only. The file may contain
    comments and trailing commas.
 
-2. Set values under **Sites → the domain → Variables**, or with the [API](#api). Any signed-in
+2. Set values under **Sites → the domain → App → Variables**, or with the [API](#api). Any signed-in
    user may set plain values. Only administrators may set, change or remove secrets and values
    that use `${env:…}` (below). The card lists every variable the live release declares, with
    its description and its value. It also shows where the value comes from: set on the site,
@@ -896,7 +944,7 @@ visitor ──GET abc.def.com/report ──▶  401 + passcode form
 is a visibility gate. Content that would cause harm if disclosed needs a real account system, not
 a shared passcode.
 
-**How to use it.** Set the passcode under **Sites → the domain → Visibility**, or with
+**How to use it.** Set the passcode under **Sites → the domain → Security → Visibility**, or with
 `PUT /api/v1/sites/{domain}/passcode`. Remove it the same way.
 
 **Rules and limits.**
@@ -928,7 +976,7 @@ LINQPad `.linq` queries. They run inside this server.
 There are two kinds:
 
 * **A site's functions** answer requests to that site only.
-* **Global functions** answer on every site. You upload them under **Functions** in the top bar.
+* **Global functions** answer on every site. You upload them under **Functions** in the menu.
 
 **When to use it.** Use functions when a site needs code on the server: to store data, check a
 sign-in, call another service with a key, or build a response such as an image.
@@ -938,7 +986,7 @@ sign-in, call another service with a key, or build a response such as an image.
 **How to use it.** There are three ways to deploy functions:
 
 * **Upload** `.cs` and `.linq` files, or a `.zip` of them (such as the one **Download source**
-  gives you). Use **Sites → the domain → Functions** for a site, or **Functions** in the top bar
+  gives you). Use **Sites → the domain → App → Functions** for a site, or **Functions** in the menu
   for global functions. By default an upload **adds or updates**: a file with the same name is
   replaced, and the other live files stay. Choose **Replace all files** to make the upload the
   complete list of files.
@@ -976,7 +1024,7 @@ public static class Handlers
 so it also runs as-is in LINQPad 9. `samples/functions/AllFeatures.cs` is the reference file: one
 file that uses every attribute and every parameter type in the tables below, each with a comment
 that says why. `samples/global-functions/` has global functions to upload under **Functions** in
-the top bar: default security headers and a log line for every site, a `/whoami` handler, and a
+the menu: default security headers and a log line for every site, a `/whoami` handler, and a
 job.
 
 **Handlers and routes.** A handler is a `public static` method of a `public` class, with a route
@@ -1582,9 +1630,10 @@ two roles: **Member** and **Administrator**.
 * **New link** on any user creates a fresh private link. This is also how to reset a password.
 * Everyone can change their own password at any time under **Account**. A new password must have
   at least `SiteHosting:MinPasswordLength` characters (12).
-* Disabling or deleting an account, or changing its password, changes the account's security
-  stamp. This ends every open session for that user on their next request. Deleting an account
-  also deletes its API keys, and the API keys of a disabled account stop working.
+* **Block sign-in** (the API calls it disabling), deleting an account, or changing its password
+  changes the account's security stamp. This ends every open session for that user on their next
+  request. Deleting an account also deletes its API keys, and the API keys of a blocked account
+  stop working until **Allow sign-in**.
 
 **What each role can do**
 
@@ -1623,6 +1672,93 @@ counters are in memory:
   attempt: 1 second, then 2, then 4, then 8 seconds at most.
 * A loopback address is not counted per address. Behind a proxy, set
   `SiteHosting:TrustForwardedHeaders`, so the server sees the real client address.
+
+### Finding your way around
+
+* **The menu** on the left has your pages, then the server's (administrators only). The button
+  beside the name folds it down to icons; on a phone it opens from the button at the top.
+* **Go to…** (<kbd>Ctrl</kbd> <kbd>K</kbd>, or <kbd>⌘</kbd> <kbd>K</kbd> on a Mac) jumps to any page,
+  site or site tab: type part of a name, such as `shop rout`, and press Enter.
+* **A site's page has tabs:** Overview, Files, Security, Routing, App, Releases and Settings. Each has
+  its own address (`/sites/details/shop.example.com/routing`), so a link or the back button
+  lands on it.
+* **Sections open and close** from their heading. What you close stays closed, after a reload
+  and on every site, until you open it again.
+* **Colours** follow your system's light or dark setting. The button at the bottom of the menu
+  picks light or dark instead, for this browser.
+* **Language** follows your browser's. When the server has more than one, the button at the
+  bottom of the menu picks another, for this browser. The screens visitors see on a site
+  (a passcode page, a page that is not found) follow each visitor's browser. The API, MCP and
+  log lines stay in English.
+
+These choices are kept in cookies on the management domain (`ssh.theme`, `ssh.lang`,
+`ssh.collapsed`), never passed on by proxy routes; the menu's folded state is kept in the
+browser's local storage. Adding a language is adding a folder of text files: see
+[Languages](#languages).
+
+---
+
+## Branding
+
+**What it is.** Your own name, logos, colours and fonts, on the management app (the menu, the
+browser tab, the sign-in screen) and on the screens visitors see on every site: the passcode
+form, not found, nothing deployed yet, a proxy route that failed, a domain with no site. A site
+can have its own branding for its visitor screens, so one server can carry several brands.
+
+**How to use it.** **Branding** in the menu (administrators only):
+
+1. **Name and logo.** The name, a sign-in message (one line, in your own words, not translated),
+   a logo for light colours and one for dark (the light one is used for both when there is only
+   one), and a browser icon. Images are SVG, PNG, WebP, JPEG, GIF or ICO, up to 1 MB; an SVG stays
+   sharp. Tick **The logo includes the name** for a wordmark, so the name is not written beside it.
+2. **Start from a theme.** Default, Graphite, Ocean, Forest, Sunset, Plum, Paper or High contrast
+   fills in every colour, both fonts and every size. It is a starting point: nothing is saved until
+   you save, and which theme you started from is not kept.
+3. **Colours.** Eleven colours, each with a light and a dark value, with a colour picker and a
+   `#rrggbb` box. **Easy to read?** checks the contrast of each pair that matters (text on the
+   background, text on the accent…) as you change them: body text needs 4.5:1, links and buttons
+   3:1.
+4. **Fonts and sizes.** A heading font and a text font, the text size, the heading weight, the
+   corners and the spacing.
+5. The preview beside the form shows a piece of the app in light and in dark, as you change it.
+   **Save branding** applies it everywhere at once.
+
+A site's own branding is under **Sites → the domain → Settings → Visitor screens**: the same form,
+starting from what the site gets now. Whatever you leave as it is follows the server's branding,
+so a later change there still shows; **Use the server's branding** removes the site's own.
+
+**Fonts.**
+
+* **System fonts** (sans-serif, serif, rounded, monospace) look native on each device and need no
+  download.
+* **The font library** holds the fonts the branding can choose from. **Upload a font**: give it a
+  name and its files (WOFF2 best; WOFF, TTF, OTF), with each file named for its weight and style,
+  such as `BrandSans-Bold.woff2` or `BrandSans-600-Italic.woff2`.
+* **Google Fonts** are off until an administrator selects **Allow Google Fonts**. Then each font
+  from Google is either **downloaded to this server** (recommended: visitors' browsers never
+  contact Google, which suits privacy rules such as the GDPR) or **loaded from Google** (nothing is
+  stored here, but every visitor's browser contacts Google). Stopping Google Fonts stops every
+  font loaded from Google at once; downloaded ones keep working.
+* **Chinese, Japanese and Korean.** Every font is followed by the device's own Chinese, Japanese
+  and Korean fonts, so a character a font lacks still shows. A CJK font from Google downloads as
+  several hundred small pieces, one per range of characters (Noto Sans SC: about 400 files,
+  18 MB), and a page fetches only the pieces for the characters it shows.
+
+**How it works.** The branding becomes one small stylesheet, `/_host/brand/brand.css`, that sets
+the same values the app's own stylesheet uses, each colour as `light-dark(light, dark)`, so light
+and dark follow the viewer's choice as before. It, the logos (`/_host/brand/a/…`) and the font
+files (`/_host/brand/f/…`) are served on every domain, ahead of any passcode, and cached for a year
+under addresses that change when they do. An SVG is served with a policy that stops any script in
+it from running. If the branding cannot be read (a damaged `config/branding/branding.json`), every
+page uses the built-in look and the server logs why; no page fails because of its branding.
+
+Over the API and the tools, a branding is JSON with the same fields as the form, the colours named
+`bg`, `surface`, `surface2`, `border`, `text`, `muted`, `accent`, `accentText`, `danger`,
+`success` and `warning`; a field it does not know is refused rather than ignored.
+
+**Who may change it.** Administrators, on the page, with the [API](#api) (`/api/v1/branding`) and
+the [tools](#mcp) (`get_branding`, `set_branding` and the others). Every change is in the audit
+log.
 
 ---
 
@@ -1813,6 +1949,7 @@ each of these:
 
 * a deploy goes live;
 * a rollback goes live;
+* files of the live release are changed (the Files tab, the API or a tool);
 * the site's functions are deployed or removed.
 
 The payload:
@@ -1825,7 +1962,7 @@ The payload:
 | ----- | ------- |
 | `release` | the release now live |
 | `functions` | the id of the functions it runs, or `null` for none |
-| `source` | `deploy`, `rollback` or `functions` |
+| `source` | `deploy`, `rollback`, `edit` or `functions` |
 
 **How to use it.** A page can offer the new version to a visitor who has the old one open. The
 deploy job needs no extra step:
@@ -1861,7 +1998,7 @@ curl -X POST -H "X-Api-Key: $SSH_KEY" -H "Content-Type: application/json" \
 
 `delivered` is the number of connections the event was sent to.
 
-**Sites → the domain → Realtime** shows the same call, ready to paste. It also shows how many
+**Sites → the domain → App → Realtime** shows the same call, ready to paste. It also shows how many
 pages are connected, and in which groups. `GET /api/v1/sites/{domain}/realtime` returns the same
 numbers.
 
@@ -1999,7 +2136,7 @@ Azure and others, and LiteLLM keeps budgets and logs per key.
 
 ### Per site
 
-**How to use it.** Under **Sites → the domain → AI**, an administrator chooses:
+**How to use it.** Under **Sites → the domain → App → AI**, an administrator chooses:
 
 * **Provider**, and a **model** if not the provider's default.
 * **System prompt**, up to 8 KB. It goes first in every chat, from pages and from functions. A
@@ -2331,9 +2468,10 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `POST`   | `/api/v1/sites/{domain}/deploy`             | upload a zip                |
 | `POST`   | `/api/v1/sites/{domain}/rollback/{release}` | make an earlier release live |
 | `GET`    | `/api/v1/sites/{domain}/releases/{release}/download` | the release as a zip that deploys back as it was; `current` for the live one |
+| `POST`   | `/api/v1/sites/{domain}/releases/{release}/duplicate` | copy a release as a new one that is not live: the way back before changing files ([more](#changing-files-without-a-zip)) |
 | `GET`    | `/api/v1/sites/{domain}/files`              | the live release's files; `?release=` for another |
 | `GET`    | `/api/v1/sites/{domain}/files/{path}`       | one file; `?release=` for another release |
-| `PATCH`  | `/api/v1/sites/{domain}/files`              | `{"files":[{"path":"…","content":"…"}],"delete":["…"]}` — write and delete some files; the rest carry over ([more](#changing-files-without-a-zip)) |
+| `PATCH`  | `/api/v1/sites/{domain}/files`              | `{"files":[{"path":"…","content":"…"}],"delete":["…"]}` — write and delete some files of the live release, where they are; `?release=` for another ([more](#changing-files-without-a-zip)) |
 | `PUT`    | `/api/v1/sites/{domain}/passcode`           | `{"passcode":"…"}` — make it private |
 | `DELETE` | `/api/v1/sites/{domain}/passcode`           | make it public again        |
 | `GET`    | `/api/v1/sites/{domain}/headers`            | header rules, site and release |
@@ -2355,6 +2493,17 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `POST`   | `/api/v1/tls/renew/{host}`                  | a new certificate now for any host, a management host included; administrators only |
 | `POST`   | `/api/v1/tls/shared`                        | `{"certificate":"…","privateKey":"…"}`: a certificate for every host it covers; administrators only |
 | `DELETE` | `/api/v1/tls/shared/{id}`                   | remove a shared certificate; administrators only |
+| `GET`    | `/api/v1/branding`                          | the server's [branding](#branding), the font library, whether Google Fonts are allowed, and colour pairs that are hard to read; administrators only |
+| `PUT`    | `/api/v1/branding`                          | `{"name":"Acme","light":{"accent":"#0b7285"},"radius":10}`: replace the server's branding; administrators only |
+| `DELETE` | `/api/v1/branding`                          | the built-in look again; administrators only |
+| `POST`   | `/api/v1/branding/images`                   | an image as the form field `file`: its id, for `logoLight`, `logoDark` or `favicon`; administrators only |
+| `PUT`    | `/api/v1/branding/google-fonts`             | `{"allow":true}`: allow fonts from Google Fonts, or stop; administrators only |
+| `POST`   | `/api/v1/branding/fonts/google`             | `{"family":"Inter","download":true}`: add a font from Google Fonts, stored here or loaded from Google; administrators only |
+| `POST`   | `/api/v1/branding/fonts`                    | a form with `family` and one or more `files`: upload a font; administrators only |
+| `DELETE` | `/api/v1/branding/fonts/{id}`               | remove a font from the library; administrators only |
+| `GET`    | `/api/v1/sites/{domain}/branding`           | a site's own branding for its visitor screens, beside the server's; administrators only |
+| `PUT`    | `/api/v1/sites/{domain}/branding`           | a branding as for the server, without `signInMessage`; administrators only |
+| `DELETE` | `/api/v1/sites/{domain}/branding`           | the site's visitor screens use the server's branding again; administrators only |
 | `GET`    | `/api/v1/proxy`                             | the [server-wide routes](#server-wide-routes); request header values for administrators only |
 | `PUT`    | `/api/v1/proxy`                             | `{"routes":[{"sites":"*.apps.example.com","path":"/api","target":"http://api:8080"}]}` — replace them all; a route with an `id` keeps it, one without gets one; administrators only |
 | `DELETE` | `/api/v1/proxy`                             | remove them all; administrators only |
@@ -2440,7 +2589,7 @@ curl -H "X-Api-Key: $SSH_KEY" \
      https://deploy.example.com/api/v1/sites/abc.def.com/deploy
 ```
 
-You do not have to write either command yourself. **Sites → the domain → Deploy from the command
+You do not have to write either command yourself. **Sites → the domain → Overview → Deploy from the command
 line** shows both: a multipart upload, and a command that zips a folder and streams it up. Both
 already name that domain and this server, and each has a copy button.
 
@@ -2614,7 +2763,7 @@ log entries.
 | Area | Tools |
 | ---- | ----- |
 | You and the server | `who_am_i`, `read_docs` (this manual, section by section), `read_audit_log` |
-| Sites | `list_sites`, `get_site`, `create_site`, `deploy_files`, `rollback_site`, `rename_site`, `delete_site` |
+| Sites | `list_sites`, `get_site`, `create_site`, `deploy_files`, `duplicate_release`, `rollback_site`, `rename_site`, `delete_site` |
 | Files | `list_site_files`, `read_site_file`, `edit_site_file`, `write_site_files`, `delete_site_files` |
 | Visibility and rules | `set_passcode`, `remove_passcode`, `get_rules`, `set_header_rules`, `set_redirect_rules` |
 | Variables | `get_variables`, `set_variable`, `remove_variable` |
@@ -2622,6 +2771,7 @@ log entries.
 | Functions | `get_functions`, `read_function_files`, `edit_function_file`, `check_functions`, `test_functions`, `deploy_functions`, `remove_function_file`, `remove_functions` |
 | AI | `list_ai_providers`, `list_ai_models`, `add_ai_provider`, `update_ai_provider`, `remove_ai_provider`, `test_ai_provider`, `set_site_ai`, `remove_site_ai`, `get_assistant_settings`, `set_assistant_settings` |
 | HTTPS | `get_tls`, `set_site_tls`, `renew_certificate` |
+| Branding | `get_branding`, `set_branding`, `reset_branding`, `upload_branding_image`, `set_google_fonts`, `add_google_font`, `remove_font` |
 | Realtime | `get_realtime`, `publish_realtime_event` |
 | Users | `list_users`, `create_user`, `invite_user`, `set_user_role`, `disable_user`, `delete_user` |
 
@@ -2661,7 +2811,7 @@ http://web.railway.internal:3000 and /api to http://api.railway.internal:8080 wi
 1. **AI → Assistant.** Choose a provider and, if you like, a model. A fast, inexpensive model
    works well, such as Claude Haiku. Tick **Members may use it too** to let
    members use it. A member's assistant can only do what a member can.
-2. Open **Assistant** in the top bar. On a site's page it knows which site you mean by "this
+2. Open **Assistant** in the menu. On a site's page it knows which site you mean by "this
    site".
 
 What you see:
@@ -2798,6 +2948,8 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 │   ├── assistant-conversations/   the assistant's open conversations (encrypted; gone 2 hours after their last use)
 │   ├── proxy-routes.json          server-wide proxy routes
 │   ├── certs/                     HTTPS certificates, per host and source, and shared ones; keys encrypted
+│   ├── branding/                  branding.json (the server's branding, Google Fonts on or off, the font library),
+│   │                              assets/ (logos and icons, named for their content) and fonts/<id>/ (font files)
 │   ├── audit.log                  JSON lines: deploys, logins, user and key changes
 │   ├── keys/                      data-protection keys: sessions, secret variables and AI keys need them
 │   ├── functions.json             which global functions are live
@@ -2807,7 +2959,8 @@ With Docker Compose, `.env` sets these names (see `.env.example`):
 ├── sites/
 │   └── abc.def.com/
 │       ├── site.json              which release is live, plus history, rules, variable values
-│       │                          (secrets encrypted), proxy routes, AI settings and any passcode hash
+│       │                          (secrets encrypted), proxy routes, AI settings, its own branding
+│       │                          and any passcode hash
 │       ├── data/                  functions' own data (SQLite, uploads…); never served
 │       ├── releases/
 │       │   └── 20260803-041429-5ab6/   the files being served
@@ -2846,7 +2999,7 @@ themselves, leave it off.
    With Compose: `TLS_ENABLED=true`, `ACME_EMAIL=…`, `HTTP_PORT=80` and `HTTPS_PORT=443` in `.env`.
    Do not set `TRUST_FORWARDED_HEADERS` when nothing is in front.
 3. **That is it.** Within a minute of starting, and of each new site, the certificates arrive.
-   **HTTPS** in the top bar lists every host with its certificate, its expiry and any error; a
+   **HTTPS** in the menu lists every host with its certificate, its expiry and any error; a
    site's **HTTPS** card shows its own. HTTP requests are sent to HTTPS (308) once a host has a
    certificate.
 
@@ -3055,6 +3208,35 @@ anywhere you would rather not publish ports 80 and 443. It needs the domain's DN
 * This setup was checked as far as Compose and the server go; the Cloudflare side follows
   Cloudflare's documentation.
 
+## Languages
+
+The management app and the visitor screens come in **English, French, Spanish and Simplified
+Chinese**. Each person sees the language their browser asks for, or the one they pick with the
+language button at the bottom of the menu. A visitor on a site sees its passcode and error screens
+in their browser's language.
+
+Every word lives in `src/StaticSiteHost/Resources/strings/{language}/*.json` (`en`, `fr`, `es`,
+`zh-Hans`), built into the server. English is complete, and any other language falls back to it
+word by word, so a translation can be added a piece at a time. The French, Spanish and Chinese
+were translated from the English to one glossary per language; have a native speaker read them
+before you rely on them for your own users.
+
+* **The format.** Each file is a flat JSON object, key to text, such as
+  `"site.proxy.title": "Proxy routes"`. Text may hold `{name}` for a value, `` `code` `` for a file
+  name or header that is never translated, `**bold**`, and `[words](name)` for a link. Counts have
+  two keys, `.one` and `.other`.
+* **Adding a language.** Copy the `en` folder to a folder named for the language (`de`,
+  `pt-BR`, `zh-Hant`), translate the values, and keep the keys, placeholders and `` `code` ``
+  spans as they are. `dotnet test tests/StaticSiteHost.Tests` checks that every key and
+  placeholder matches English. The language then appears in the menu's language button.
+* **Writing the English.** `.claude/skills/ui-copy/SKILL.md` has the rules and the glossary:
+  short sentences, plain words, one term for one thing.
+* **What stays English:** the API's answers, MCP tool descriptions, log lines, this README, and
+  for now the validation messages the API and the UI share. Sizes are written as `KB`, `MB` and
+  `GB` in every language.
+
+---
+
 ## Local development
 
 ```bash
@@ -3153,7 +3335,7 @@ the Actions tab for a version that is already tagged, for example after a push t
 | Term | Meaning |
 | ---- | ------- |
 | **site** | Everything published at one domain: its releases, rules, variables, passcode, proxy routes, functions, data folder and AI settings. |
-| **release** | One uploaded zip, unpacked into its own directory. One release is live at a time. |
+| **release** | One uploaded zip, unpacked into its own directory, or a copy of another release. Its files can be changed where they are. One release is live at a time. |
 | **functions** | A site's C# code (`.cs` and `.linq` files), compiled by the server. **Global functions** answer on every site. |
 | **handler** | A `public static` method in the functions with a route attribute, such as `[HttpGet("/path")]`. It answers requests. |
 | **middleware** | A `[Middleware]` method that runs before handlers and files on every request to the site. |

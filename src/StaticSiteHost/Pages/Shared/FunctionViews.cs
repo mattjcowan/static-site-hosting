@@ -1,4 +1,6 @@
 using System.Globalization;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -61,7 +63,7 @@ public sealed record FunctionBundleView(
 
     /// <summary>
     /// A time for the jobs table, in UTC like the schedules: the time alone when it is today,
-    /// otherwise the date too.
+    /// otherwise the date too, written the same way in every language.
     /// </summary>
     public static string When(DateTimeOffset? utc)
     {
@@ -70,7 +72,7 @@ public sealed record FunctionBundleView(
         var at = value.ToUniversalTime();
         return at.Date == DateTime.UtcNow.Date
             ? at.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
-            : at.ToString("MMM d HH:mm", CultureInfo.InvariantCulture);
+            : at.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
     }
 
     /// <summary>How long a run took: "12 ms", "3.4 s", "2 min 5 s".</summary>
@@ -89,44 +91,85 @@ public sealed record FunctionErrorsView(string? Error, IReadOnlyList<FunctionDia
 public static class FunctionUploads
 {
     /// <summary>Reads the files picked in an upload form, .zip files included, with the same limits as the API.</summary>
-    public static async Task<(List<FunctionFile>? Files, string? Error)> ReadAsync(
-        IReadOnlyList<IFormFile> uploads, CancellationToken ct)
+    public static Task<(List<FunctionFile>? Files, string? Error)> ReadAsync(
+        IReadOnlyList<IFormFile> uploads, IStringLocalizer strings, CancellationToken ct) =>
+        ReadAsync(uploads,
+            (file, limit) => strings.Text("functions.upload.tooLarge", new { file, limit }),
+            strings.Text("functions.upload.noFiles"), ct);
+
+    private static async Task<(List<FunctionFile>? Files, string? Error)> ReadAsync(
+        IReadOnlyList<IFormFile> uploads, Func<string, string, string> tooLarge, string noFiles, CancellationToken ct)
     {
         var files = new List<FunctionFile>();
 
         foreach (var upload in uploads.Where(u => u.Length > 0))
         {
             if (upload.Length > FunctionBundleBuilder.MaxTotalBytes)
-                return (null, $"{upload.FileName} is over the {Format.Bytes(FunctionBundleBuilder.MaxTotalBytes)} upload limit.");
+                return (null, tooLarge(upload.FileName, Format.Bytes(FunctionBundleBuilder.MaxTotalBytes)));
 
             using var buffer = new MemoryStream();
             await upload.CopyToAsync(buffer, ct);
             if (FunctionUploadReader.Read(upload.FileName, buffer.ToArray(), files) is { } error) return (null, error);
         }
 
-        return files.Count == 0 ? (null, "Choose .cs or .linq files, or a .zip of them, to upload.") : (files, null);
+        return files.Count == 0 ? (null, noFiles) : (files, null);
     }
 
-    /// <summary>The status line after an upload: what went live, and what a merge kept.</summary>
-    public static string Describe(FunctionDeployResult result, string where)
+    /// <summary>
+    /// The status line after an upload, in the viewer's language: what went live where, and what
+    /// a merge kept. <paramref name="domain"/> is null for the global functions.
+    /// </summary>
+    public static string Describe(FunctionDeployResult result, string? domain, IStringLocalizer strings)
     {
         var bundle = result.Bundle!;
-        var kept = result.Kept is { Count: > 0 } k ? $" Kept {string.Join(", ", k)} as it was." : "";
-        var warnings = bundle.Warnings > 0 ? $" {bundle.Warnings} compiler warning(s)." : "";
-        return $"{Contents(bundle)} live on {where} from {bundle.Label}.{kept}{warnings}";
+        var sentences = new List<string>
+        {
+            strings.Text(domain is null ? "functions.deployed.global" : "functions.deployed.site",
+                new { label = Label(bundle, strings), domain, contents = Contents(bundle, strings) })
+        };
+        if (result.Kept is { Count: > 0 } kept)
+            sentences.Add(strings.Plural("functions.deployed.kept", kept.Count, new { files = JoinList(kept, strings) }));
+        if (bundle.Warnings > 0)
+            sentences.Add(strings.Plural("functions.deployed.warnings", bundle.Warnings));
+
+        return string.Join(" ", sentences);
     }
 
-    /// <summary>"3 route(s), 1 middleware, 2 job(s) and 1 hook(s)": the routes always, the rest when there are any.</summary>
-    public static string Contents(FunctionBundle bundle)
+    /// <summary>The status line after one file was removed and the rest deployed again.</summary>
+    public static string DescribeRemoved(FunctionDeployResult result, string fileName, string? domain, IStringLocalizer strings) =>
+        strings.Text("functions.files.removed", new { file = fileName, summary = Describe(result, domain, strings) });
+
+    /// <summary>How a bundle reads in a table or a message, in the viewer's language: "Orders.cs", or "Orders.cs + 2 more".</summary>
+    public static string Label(FunctionBundle bundle, IStringLocalizer strings) => bundle.Files.Count switch
     {
-        var parts = new List<string> { $"{bundle.Routes.Count} route(s)" };
-        if (bundle.Middleware.Count > 0) parts.Add($"{bundle.Middleware.Count} middleware");
-        if (bundle.BackgroundServices.Count > 0) parts.Add($"{bundle.BackgroundServices.Count} background service(s)");
-        if (bundle.Jobs.Count > 0) parts.Add($"{bundle.Jobs.Count} job(s)");
-        if (bundle.Hooks.Count > 0) parts.Add($"{bundle.Hooks.Count} hook(s)");
+        0 => strings.Text("functions.bundle.noFiles"),
+        1 => bundle.Files[0],
+        _ => strings.Plural("functions.bundle.more", bundle.Files.Count - 1, new { first = bundle.Files[0] })
+    };
 
-        return parts.Count == 1 ? parts[0] : $"{string.Join(", ", parts[..^1])} and {parts[^1]}";
+    /// <summary>"3 routes, 1 middleware and 2 jobs": the routes always, the rest when there are any.</summary>
+    public static string Contents(FunctionBundle bundle, IStringLocalizer strings)
+    {
+        var parts = new List<string> { strings.Plural("functions.contents.routes", bundle.Routes.Count) };
+        if (bundle.Middleware.Count > 0) parts.Add(strings.Plural("functions.contents.middleware", bundle.Middleware.Count));
+        if (bundle.BackgroundServices.Count > 0) parts.Add(strings.Plural("functions.contents.backgroundServices", bundle.BackgroundServices.Count));
+        if (bundle.Jobs.Count > 0) parts.Add(strings.Plural("functions.contents.jobs", bundle.Jobs.Count));
+        if (bundle.Hooks.Count > 0) parts.Add(strings.Plural("functions.contents.hooks", bundle.Hooks.Count));
+
+        return JoinList(parts, strings);
     }
+
+    /// <summary>"a, b and c", joined the way the viewer's language joins a list.</summary>
+    private static string JoinList(IReadOnlyList<string> items, IStringLocalizer strings)
+    {
+        if (items.Count == 0) return "";
+
+        var text = items[0];
+        for (var i = 1; i < items.Count; i++)
+            text = strings.Text(i == items.Count - 1 ? "functions.list.last" : "functions.list.next", new { list = text, item = items[i] });
+        return text;
+    }
+
 }
 
 /// <summary>What _FunctionUpload renders: where the form posts and what it offers.</summary>

@@ -28,6 +28,9 @@ public sealed class SiteDeployedNotifier
     /// <summary>The site's functions were deployed or removed, and its content is unchanged.</summary>
     public const string FromFunctions = "functions";
 
+    /// <summary>Files of the live release were changed where they are (the Files tab, the API or a tool).</summary>
+    public const string FromEdit = "edit";
+
     private readonly SiteStore _sites;
     private readonly SiteRealtimeFactory _realtime;
     private readonly RealtimeRegistry _registry;

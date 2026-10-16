@@ -1,0 +1,10 @@
+{
+  "js.common.theme.system": "系统配色",
+  "js.common.theme.light": "浅色",
+  "js.common.theme.dark": "深色",
+  "js.common.theme.systemTitle": "配色：跟随系统",
+  "js.common.theme.lightTitle": "配色：浅色",
+  "js.common.theme.darkTitle": "配色：深色",
+  "js.common.goTo.site": "站点",
+  "js.common.goTo.nothing": "没有匹配项。"
+}

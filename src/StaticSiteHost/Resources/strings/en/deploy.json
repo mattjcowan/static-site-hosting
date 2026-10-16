@@ -1,0 +1,28 @@
+{
+  "deploy.pageTitle": "Deploy",
+  "deploy.title": "Deploy a site",
+  "deploy.intro": "Upload a zip and choose the domain to publish it at.",
+
+  "deploy.domain.label": "Domain",
+  "deploy.domain.existing": "Deploy to an existing site",
+  "deploy.domain.new": "— New domain —",
+  "deploy.domain.hint": "Point the domain's DNS at this server. Deploying to an existing site replaces its files with the new release.",
+
+  "deploy.archive.label": "Zip file",
+  "deploy.archive.choose": "Choose a zip file",
+  "deploy.archive.drop": "Drop a zip file here",
+  "deploy.archive.dropHint": "or click to choose a file",
+  "deploy.archive.hint": "Up to {size}. If everything is inside one folder, this server publishes that folder's contents at the root.",
+  "deploy.submit": "Deploy",
+
+  "deploy.noFile": "Choose a zip file to deploy.",
+  "deploy.done.one": "Deployed {count} file ({size}) to {domain}.",
+  "deploy.done.other": "Deployed {count} files ({size}) to {domain}.",
+
+  "deploy.resolve.title": "How a site answers requests",
+  "deploy.resolve.hint": "Every site answers like a static host for single-page apps.",
+  "deploy.resolve.folder": "Serves `{file}`.",
+  "deploy.resolve.page": "Serves `{htmlFile}` if it exists. If not, serves the nearest `index.html`, from `{folderIndex}` up to `{rootIndex}`.",
+  "deploy.resolve.asset": "Served as it is. If it is missing, the answer is a `404`, not an HTML page.",
+  "deploy.resolve.notFound": "If the site has one, it answers every path that matches nothing."
+}

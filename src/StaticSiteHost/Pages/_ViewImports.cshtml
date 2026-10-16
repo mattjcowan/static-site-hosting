@@ -4,5 +4,8 @@
 @using StaticSiteHost.Pages
 @using StaticSiteHost.Serving
 @using StaticSiteHost.Services
+@using StaticSiteHost.Localization
+@using Microsoft.Extensions.Localization
 @namespace StaticSiteHost.Pages
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@inject IStringLocalizer<Strings> L

@@ -1,0 +1,25 @@
+{
+  "sites.title": "站点",
+  "sites.intro": "此服务器响应的所有域名。",
+
+  "sites.new.title": "新建站点",
+  "sites.new.hint": "创建一个没有文件的站点：适用于由代理路由组成的站点，或在首次部署前预先设置。如需放入文件，请改为[部署 zip 压缩包](deployUrl)，这样同样会创建站点。",
+  "sites.new.domain": "域名",
+  "sites.new.domainPlaceholder": "app.example.com",
+  "sites.new.create": "创建站点",
+  "sites.new.createdAdmin": "已创建 {domain}，其中没有文件。请在此添加代理路由，或向它部署 zip 压缩包。",
+  "sites.new.createdMember": "已创建 {domain}，其中没有文件。请向它部署 zip 压缩包，或请管理员添加代理路由。",
+
+  "sites.empty": "还没有站点。[部署你的第一个站点](deployUrl)，或在上方创建一个。",
+  "sites.column.domain": "域名",
+  "sites.column.files": "文件",
+  "sites.column.size": "大小",
+  "sites.column.updated": "更新时间",
+  "sites.column.by": "更新者",
+  "sites.badge.passcode": "访问码",
+  "sites.badge.passcodeTitle": "访客必须输入访问码",
+  "sites.badge.routes.one": "{count} 条代理路由",
+  "sites.badge.routes.other": "{count} 条代理路由",
+  "sites.badge.routesTitle": "转发到其他服务器的路径",
+  "sites.manage": "管理"
+}

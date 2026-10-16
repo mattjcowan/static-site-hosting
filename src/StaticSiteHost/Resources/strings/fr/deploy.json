@@ -1,0 +1,28 @@
+{
+  "deploy.pageTitle": "Déployer",
+  "deploy.title": "Déployer un site",
+  "deploy.intro": "Envoyez un fichier zip et choisissez le domaine où le déployer.",
+
+  "deploy.domain.label": "Domaine",
+  "deploy.domain.existing": "Déployer sur un site existant",
+  "deploy.domain.new": "— Nouveau domaine —",
+  "deploy.domain.hint": "Faites pointer le DNS du domaine vers ce serveur. Un déploiement sur un site existant remplace ses fichiers par la nouvelle version.",
+
+  "deploy.archive.label": "Fichier zip",
+  "deploy.archive.choose": "Choisir un fichier zip",
+  "deploy.archive.drop": "Déposez un fichier zip ici",
+  "deploy.archive.dropHint": "ou cliquez pour choisir un fichier",
+  "deploy.archive.hint": "Jusqu'à {size}. Si tout est dans un seul dossier, ce serveur sert le contenu de ce dossier à la racine.",
+  "deploy.submit": "Déployer",
+
+  "deploy.noFile": "Choisissez un fichier zip à déployer.",
+  "deploy.done.one": "{count} fichier ({size}) déployé sur {domain}.",
+  "deploy.done.other": "{count} fichiers ({size}) déployés sur {domain}.",
+
+  "deploy.resolve.title": "Comment un site répond aux requêtes",
+  "deploy.resolve.hint": "Chaque site répond comme un hébergeur statique pour applications monopages.",
+  "deploy.resolve.folder": "Sert `{file}`.",
+  "deploy.resolve.page": "Sert `{htmlFile}` s'il existe. Sinon, sert le fichier `index.html` le plus proche, de `{folderIndex}` jusqu'à `{rootIndex}`.",
+  "deploy.resolve.asset": "Servi tel quel. S'il manque, la réponse est une erreur `404`, pas une page HTML.",
+  "deploy.resolve.notFound": "Si le site a cette page, elle répond à tout chemin qui ne correspond à rien."
+}

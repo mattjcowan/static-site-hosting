@@ -1,0 +1,18 @@
+@model StaticSiteHost.Services.BrandingView
+@* The logo, or the built-in mark, and the name: one logo for light colours and one for dark, the stylesheet showing the right one. *@
+@if (Model.LogoLight is not null)
+{
+    <img class="brand-logo brand-logo-light" src="@Model.LogoLight" alt="@(Model.LogoHasName ? Model.Name : "")" />
+    @if (Model.LogoDark != Model.LogoLight)
+    {
+        <img class="brand-logo brand-logo-dark" src="@Model.LogoDark" alt="@(Model.LogoHasName ? Model.Name : "")" />
+    }
+}
+else
+{
+    @Icons.Get("brand")
+}
+@if (!Model.LogoHasName)
+{
+    <span class="brand-name">@Model.Name</span>
+}

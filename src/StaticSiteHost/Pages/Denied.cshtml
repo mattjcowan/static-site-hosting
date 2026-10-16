@@ -1,12 +1,12 @@
 @page
 @{
-    ViewData["Title"] = "Not allowed";
+    ViewData["Title"] = L["auth.denied.title"].Value;
 }
 
 <div class="narrow">
     <div class="page-head">
-        <h1>Not allowed</h1>
-        <p>Your account does not have access to that page.</p>
+        <h1>@L["auth.denied.title"]</h1>
+        <p>@L["auth.denied.intro"]</p>
     </div>
-    <p class="right"><a asp-page="/Index">Back to deploy</a></p>
+    <p class="right"><a asp-page="/Index">@L["auth.denied.back"]</a></p>
 </div>

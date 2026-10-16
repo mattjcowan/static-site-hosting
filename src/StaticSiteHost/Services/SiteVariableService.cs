@@ -617,6 +617,21 @@ public sealed partial class SiteVariableService
     }
 
     /// <summary>
+    /// A secret declared again with no default keeps the default <paramref name="live"/> gave it.
+    /// Reading <c>_variables.json</c> back never shows a secret's default (<see cref="VariableFileText.Format"/>),
+    /// so a file read, changed and written again would otherwise drop it. Run after
+    /// <see cref="PrepareForRelease"/>: the default carried over is already protected.
+    /// </summary>
+    public static void KeepSecretDefaults(List<VariableDefinition> definitions, IReadOnlyList<VariableDefinition> live)
+    {
+        foreach (var definition in definitions)
+        {
+            if (!definition.Secret || definition.Default is not null) continue;
+            if (live.FirstOrDefault(d => d.Name == definition.Name) is { Secret: true, Default: { } kept }) definition.Default = kept;
+        }
+    }
+
+    /// <summary>
     /// Readies the definitions a deploy read from <c>_variables.json</c> for the release record. A
     /// secret's default is protected like any other secret, so neither site.json nor the API ever
     /// holds it in the clear. A default that reads the server's environment is kept only when an

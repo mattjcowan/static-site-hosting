@@ -8,13 +8,13 @@
     var hasMiddleware = bundle.Middleware.Count > 0;
     var hasOthers = hasMiddleware || bundle.Services.Count > 0 || bundle.BackgroundServices.Count > 0 || bundle.Jobs.Count > 0 ||
                     bundle.Hooks.Count > 0;
-    var closed = Model.IsGlobal ? "every site answers" : "the site answers";
-    var work = (bundle.BackgroundServices.Count > 0, bundle.Jobs.Count > 0) switch
+    // The sentences that differ by what the functions run in the background, and by scope.
+    var (loadedKey, notLoadedKey) = (bundle.BackgroundServices.Count > 0, bundle.Jobs.Count > 0) switch
     {
-        (true, true) => "background services and jobs",
-        (true, false) => "background services",
-        (false, true) => "jobs",
-        _ => null,
+        (true, true) => ("functions.status.loadedBoth", "functions.status.notLoadedBoth"),
+        (true, false) => ("functions.status.loadedBackground", "functions.status.notLoadedBackground"),
+        (false, true) => ("functions.status.loadedJobs", "functions.status.notLoadedJobs"),
+        _ => ("functions.status.loaded", "functions.status.notLoaded"),
     };
 
     // Where a handler or middleware method is written: a link into the editor when it may be edited.
@@ -28,7 +28,7 @@
             }
             else if (Model.EditorLink(source.File, source.Line) is { } sourceLink)
             {
-                <a href="@sourceLink" title="Open in the editor at line @source.Line">@source.File:@source.Line</a>
+                <a href="@sourceLink" title="@L.Text("functions.source.openAt", new { line = source.Line })">@source.File:@source.Line</a>
             }
             else
             {
@@ -37,13 +37,13 @@
         </td>
     }
 }
-<ul class="fn-files" aria-label="Live files">
+<ul class="fn-files" aria-label="@L["functions.files.label"]">
     @foreach (var file in bundle.Files)
     {
         <li class="fn-file">
             @if (Model.EditorLink(file) is { } link)
             {
-                <a class="mono" href="@link" title="Open in the editor">@file</a>
+                <a class="mono" href="@link" title="@L["functions.files.open"]">@file</a>
             }
             else
             {
@@ -54,26 +54,26 @@
                 @* Removing a file redeploys the rest straight away: a bundle is compiled as a whole,
                    so there is no state in which a file is deleted but still running. *@
                 <form method="post" action="@Model.RemoveFileAction" asp-antiforgery="true"
-                      data-confirm="Remove @file? The other @(bundle.Files.Count - 1) file(s) are compiled and deployed without it. If anything in them uses it, nothing changes and you get the error."
+                      data-confirm="@L.Plural("functions.files.removeConfirm", bundle.Files.Count - 1, new { file })"
                       data-busy="…">
                     <input type="hidden" name="fileName" value="@file" />
-                    <button type="submit" class="fn-file-remove" aria-label="Remove @file" title="Remove @file and redeploy the rest">×</button>
+                    <button type="submit" class="fn-file-remove" aria-label="@L.Text("functions.files.remove", new { file })" title="@L.Text("functions.files.removeTitle", new { file })">×</button>
                 </form>
             }
         </li>
     }
 </ul>
 <p class="muted fn-meta">
-    Uploaded @bundle.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") by @(bundle.UploadedBy ?? "unknown")
+    @L.Text("functions.meta.uploaded", new { time = bundle.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), name = bundle.UploadedBy ?? L["functions.meta.unknownUser"].Value })
     @if (bundle.AbstractionsVersion is { } abstractions)
     {
-        <span>· Compiled against <span class="mono">StaticSiteHost.Abstractions</span> @abstractions</span>
+        <span>· @L.Html("functions.meta.compiledAgainst", new { version = abstractions })</span>
     }
     @if (bundle.Warnings > 0)
     {
-        <span>· @bundle.Warnings compiler warning(s)</span>
+        <span>· @L.Plural("functions.meta.warnings", bundle.Warnings)</span>
     }
-    · <a href="@Model.SourceUrl">Download source</a>
+    · <a href="@Model.SourceUrl">@L["functions.meta.downloadSource"]</a>
 </p>
 @if (status is not null && !Model.NeedsNewerServer)
 {
@@ -82,30 +82,26 @@
     switch (status.State)
     {
         case FunctionLoadState.Loaded:
-            <p class="muted fn-status">
-                Loaded @(status.LoadedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))@(work is null ? "." : $"; its {work} are running.")
-            </p>
+            <p class="muted fn-status">@L.Text(loadedKey, new { time = status.LoadedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") })</p>
             break;
         case FunctionLoadState.Loading:
-            <p class="muted fn-status">Loading…</p>
+            <p class="muted fn-status">@L["functions.status.loading"]</p>
             break;
         case FunctionLoadState.NotLoaded:
-            <p class="muted fn-status">
-                Not loaded yet: it loads on the first request@(work is null ? "" : $", or as soon as the server has started, for the sake of its {work}").
-            </p>
+            <p class="muted fn-status">@L[notLoadedKey]</p>
             break;
         case FunctionLoadState.Failed:
             <div class="alert alert-error">
-                These functions could not be loaded, so they answer nothing: @status.Message
+                @L.Html("functions.status.failed", new { message = status.Message })
                 @if (hasMiddleware)
                 {
-                    <text>Because they include middleware, @closed <span class="mono">503</span> until they are fixed and deployed again, rather than letting requests past a gate that is not there.</text>
+                    @L.Html(Model.IsGlobal ? "functions.status.failedClosedGlobal" : "functions.status.failedClosedSite")
                 }
                 else
                 {
-                    <text>Fix them and deploy them again.</text>
+                    @L["functions.status.failedFix"]
                 }
-                The details are in the server log.
+                @L["functions.status.failedLog"]
             </div>
             break;
     }
@@ -115,23 +111,22 @@
     @* A server rolled back past the version the functions were built on. They could call members
        this server's copy lacks, so FunctionHost does not load them at all. *@
     <div class="alert alert-warning">
-        These functions were compiled against <span class="mono">StaticSiteHost.Abstractions</span> @bundle.AbstractionsVersion,
-        newer than the @Model.HostAbstractionsVersion this server runs, so they are not loaded and answer nothing.
-        Redeploy them (open the editor and deploy, or upload the source again) to compile them against this server's copy.
+        @L.Html("functions.newer.message", new { version = bundle.AbstractionsVersion, serverVersion = Model.HostAbstractionsVersion })
+        @L["functions.newer.fix"]
         @if (hasMiddleware)
         {
-            <text>Because they include middleware, @closed <span class="mono">503</span> until then.</text>
+            @L.Html(Model.IsGlobal ? "functions.newer.closedGlobal" : "functions.newer.closedSite")
         }
     </div>
 }
 @if (hasMiddleware)
 {
-    <h3 class="fn-subhead">Middleware</h3>
-    <p class="hint fn-subhint">Runs in this order on every request, files included, before any route answers.</p>
+    <h3 class="fn-subhead">@L["functions.middleware.title"]</h3>
+    <p class="hint fn-subhint">@L["functions.middleware.hint"]</p>
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Order</th><th>Method</th><th>File</th></tr>
+                <tr><th>@L["functions.middleware.order"]</th><th>@L["functions.column.method"]</th><th>@L["functions.column.file"]</th></tr>
             </thead>
             <tbody>
                 @foreach (var middleware in bundle.Middleware)
@@ -151,12 +146,12 @@
 {
     if (hasOthers)
     {
-        <h3 class="fn-subhead">Routes</h3>
+        <h3 class="fn-subhead">@L["functions.routes.title"]</h3>
     }
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Method</th><th>Path</th><th>File</th></tr>
+                <tr><th>@L["functions.routes.method"]</th><th>@L["functions.routes.path"]</th><th>@L["functions.column.file"]</th></tr>
             </thead>
             <tbody>
                 @foreach (var route in bundle.Routes)
@@ -187,12 +182,12 @@
 }
 @if (bundle.Services.Count > 0)
 {
-    <h3 class="fn-subhead">Services</h3>
-    <p class="hint fn-subhint">Run once, in this order, as the functions load, to register what handlers, jobs and background services take.</p>
+    <h3 class="fn-subhead">@L["functions.services.title"]</h3>
+    <p class="hint fn-subhint">@L["functions.services.hint"]</p>
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Method</th><th>File</th></tr>
+                <tr><th>@L["functions.column.method"]</th><th>@L["functions.column.file"]</th></tr>
             </thead>
             <tbody>
                 @foreach (var method in bundle.Services)
@@ -208,18 +203,18 @@
 }
 @if (bundle.BackgroundServices.Count > 0)
 {
-    <h3 class="fn-subhead">Background services</h3>
-    <p class="hint fn-subhint">Run for as long as the functions are live, and start again after a pause if they throw.</p>
+    <h3 class="fn-subhead">@L["functions.background.title"]</h3>
+    <p class="hint fn-subhint">@L["functions.background.hint"]</p>
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
-                    <th>Method</th>
+                    <th>@L["functions.column.method"]</th>
                     @if (status is not null)
                     {
-                        <th>State</th><th>Restarts</th><th>Last error</th>
+                        <th>@L["functions.background.state"]</th><th>@L["functions.background.restarts"]</th><th>@L["functions.column.lastError"]</th>
                     }
-                    <th>File</th>
+                    <th>@L["functions.column.file"]</th>
                 </tr>
             </thead>
             <tbody>
@@ -237,8 +232,15 @@
                                 }
                                 else
                                 {
+                                    var stateKey = service.State switch
+                                    {
+                                        FunctionBackgroundState.Running => "functions.background.running",
+                                        FunctionBackgroundState.Restarting => "functions.background.restarting",
+                                        FunctionBackgroundState.Stopped => "functions.background.stopped",
+                                        _ => "functions.background.finished",
+                                    };
                                     <span class="badge @(service.State switch { FunctionBackgroundState.Running => "badge-ok", FunctionBackgroundState.Restarting => "badge-warn", _ => "" })"
-                                          title="@(service.StartedUtc is { } started ? $"Last started {FunctionBundleView.When(started)} UTC" : "")">@service.State.ToString().ToLowerInvariant()</span>
+                                          title="@(service.StartedUtc is { } started ? L.Text("functions.background.startedTitle", new { time = FunctionBundleView.When(started) }) : "")">@L[stateKey]</span>
                                 }
                             </td>
                             <td class="nowrap">@(service?.Restarts.ToString() ?? "—")</td>
@@ -253,19 +255,16 @@
 }
 @if (bundle.Jobs.Count > 0)
 {
-    <h3 class="fn-subhead">Jobs</h3>
-    <p class="hint fn-subhint">
-        Schedules and times are UTC. A run that comes due while the last one is still going is skipped, and runs missed
-        while the server was down are not made up.
-    </p>
+    <h3 class="fn-subhead">@L["functions.jobs.title"]</h3>
+    <p class="hint fn-subhint">@L["functions.jobs.hint"]</p>
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
-                    <th>Schedule</th><th>Method</th><th>File</th>
+                    <th>@L["functions.jobs.schedule"]</th><th>@L["functions.column.method"]</th><th>@L["functions.column.file"]</th>
                     @if (status is not null)
                     {
-                        <th>Last run</th><th>Next run</th><th>Runs / failures</th><th>Last error</th>
+                        <th>@L["functions.jobs.lastRun"]</th><th>@L["functions.jobs.nextRun"]</th><th>@L["functions.jobs.runs"]</th><th>@L["functions.column.lastError"]</th>
                     }
                 </tr>
             </thead>
@@ -279,7 +278,7 @@
                             @schedule
                             @if (onStart)
                             {
-                                <span class="muted" title="Also runs as the functions load">+ on start</span>
+                                <span class="muted" title="@L["functions.jobs.onStartTitle"]">@L["functions.jobs.onStart"]</span>
                             }
                         </td>
                         <td class="mono">@method</td>
@@ -289,7 +288,7 @@
                             <td class="nowrap">
                                 @if (job is { IsRunning: true })
                                 {
-                                    <span class="badge badge-ok">running</span> <span class="muted">since @FunctionBundleView.When(job.LastStartedUtc)</span>
+                                    <span class="badge badge-ok">@L["functions.jobs.running"]</span> <span class="muted">@L.Text("functions.jobs.since", new { time = FunctionBundleView.When(job.LastStartedUtc) })</span>
                                 }
                                 else if (job?.LastStartedUtc is { } started)
                                 {
@@ -297,7 +296,7 @@
                                 }
                                 else
                                 {
-                                    <span class="muted">not yet</span>
+                                    <span class="muted">@L["functions.jobs.notYet"]</span>
                                 }
                             </td>
                             <td class="nowrap">@FunctionBundleView.When(job?.NextRunUtc)</td>
@@ -305,10 +304,10 @@
                                 @(job?.Runs.ToString() ?? "—") / @(job?.Failures.ToString() ?? "—")
                                 @if (job is { Skipped: > 0 })
                                 {
-                                    <span class="muted" title="Came due while the last run was still going">· @job.Skipped skipped</span>
+                                    <span class="muted" title="@L["functions.jobs.skippedTitle"]">· @L.Plural("functions.jobs.skipped", job.Skipped)</span>
                                 }
                             </td>
-                            <td class="fn-error" title="@(job?.LastErrorUtc is { } failed ? $"At {FunctionBundleView.When(failed)} UTC" : "")">@(job?.LastError ?? "")</td>
+                            <td class="fn-error" title="@(job?.LastErrorUtc is { } failed ? L.Text("functions.jobs.lastErrorTitle", new { time = FunctionBundleView.When(failed) }) : "")">@(job?.LastError ?? "")</td>
                         }
                     </tr>
                 }
@@ -318,21 +317,12 @@
 }
 @if (bundle.Hooks.Count > 0)
 {
-    <h3 class="fn-subhead">Hooks</h3>
-    <p class="hint fn-subhint">
-        @if (Model.IsGlobal)
-        {
-            <text>Global functions' hooks are never asked: only a site's own functions decide who may use its realtime hub or AI.</text>
-        }
-        else
-        {
-            <text>Decide who may use the site's realtime hub and AI. A hook that throws, or functions that cannot be loaded, refuse.</text>
-        }
-    </p>
+    <h3 class="fn-subhead">@L["functions.hooks.title"]</h3>
+    <p class="hint fn-subhint">@L[Model.IsGlobal ? "functions.hooks.hintGlobal" : "functions.hooks.hintSite"]</p>
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Hook</th><th>Method</th><th>Decides</th><th>File</th></tr>
+                <tr><th>@L["functions.hooks.hook"]</th><th>@L["functions.column.method"]</th><th>@L["functions.hooks.decides"]</th><th>@L["functions.column.file"]</th></tr>
             </thead>
             <tbody>
                 @foreach (var hook in bundle.Hooks)
@@ -345,10 +335,10 @@
                         <td>
                             @(kind switch
                             {
-                                "RealtimeConnect" => "who may connect to the realtime hub, and who they are",
-                                "RealtimeJoin" => "which realtime groups a page may join",
-                                "AiAccess" => "who may chat at /_host/ai/chat",
-                                _ => "",
+                                "RealtimeConnect" => L.Html("functions.hooks.realtimeConnect"),
+                                "RealtimeJoin" => L.Html("functions.hooks.realtimeJoin"),
+                                "AiAccess" => L.Html("functions.hooks.aiAccess"),
+                                _ => Microsoft.AspNetCore.Html.HtmlString.Empty,
                             })
                         </td>
                         @{ SourceCell(hook); }

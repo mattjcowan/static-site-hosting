@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.ResponseCompression;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Endpoints;
 using StaticSiteHost.Hubs;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 using StaticSiteHost.Serving;
@@ -130,6 +131,7 @@ builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(Directory.CreateDirectory(Path.Combine(dataRoot, "config", "keys")))
     .SetApplicationName("StaticSiteHost");
 
+builder.Services.AddSiteHostStrings();
 builder.Services.AddSingleton<DataPaths>();
 builder.Services.AddSingleton<UserStore>();
 builder.Services.AddSingleton<ApiKeyStore>();
@@ -144,6 +146,7 @@ builder.Services.AddSingleton<SiteVariableService>();
 builder.Services.AddSingleton<SiteHostEndpoints>();
 builder.Services.AddSingleton<ZipDeploymentService>();
 builder.Services.AddSingleton<SiteFiles>();
+builder.Services.AddSingleton<ReleaseEditor>();
 builder.Services.AddSingleton<FunctionSourceReader>();
 builder.Services.AddSingleton<FunctionProjectGenerator>();
 builder.Services.AddSingleton<FunctionBuildService>();
@@ -156,6 +159,19 @@ builder.Services.AddSingleton<FunctionDeploymentService>();
 builder.Services.AddHostedService<FunctionWarmUp>();
 builder.Services.AddSingleton<BootstrapAdministrator>();
 builder.Services.AddSingleton<UserAdminService>();
+
+// ---------------------------------------------------------------- branding
+
+builder.Services.AddSingleton<BrandingStore>();
+builder.Services.AddSingleton<GoogleFonts>();
+builder.Services.AddSingleton<BrandingService>();
+// Fonts from Google, only once an administrator allows them; only Google's two font hosts are asked.
+builder.Services.AddHttpClient(GoogleFonts.HttpClientName, client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(60);
+        client.MaxResponseContentBufferSize = BrandingStore.MaxFontFileBytes;
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(5) });
 builder.Services.AddSingleton<LoginThrottle>();
 
 // ---------------------------------------------------------------- proxy routes
@@ -289,6 +305,11 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.ExpireTimeSpan = TimeSpan.FromDays(14);
         options.SlidingExpiration = true;
         options.Events.OnValidatePrincipal = ValidatePrincipalAsync;
+
+        // The UI's own requests from scripts (/ui/…) get a status, not the sign-in page: a script
+        // that followed the redirect would take the page for what it asked for.
+        options.Events.OnRedirectToLogin = context => RedirectOrStatus(context, StatusCodes.Status401Unauthorized);
+        options.Events.OnRedirectToAccessDenied = context => RedirectOrStatus(context, StatusCodes.Status403Forbidden);
     })
     .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
         ApiKeyAuthenticationHandler.SchemeName, _ => { });
@@ -373,8 +394,14 @@ else
 
 app.UseResponseCompression();
 
+// The language of every page from here on, the visitor screens on sites' domains included.
+app.UseSiteHostLanguages();
+
 // Let's Encrypt's checks, HTTP to HTTPS, HSTS: before any site or the management app.
 app.UseMiddleware<TlsMiddleware>();
+
+// The branding's stylesheet, logos and fonts, on every domain and ahead of any site's passcode.
+app.UseMiddleware<BrandingMiddleware>();
 
 // Everything above is shared; from here the Host header decides which app answers.
 app.UseHostedSites();
@@ -391,12 +418,20 @@ app.MapApi();
 app.MapHub<SiteHub>(SiteHub.Path);
 app.MapAssistant();
 app.MapModelSuggestions();
+app.MapSiteFileEditor();
 app.MapMcp("/mcp").RequireAuthorization(Policies.ApiUser).DisableAntiforgery();
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
 app.Run();
 
 // ---------------------------------------------------------------- helpers
+
+static Task RedirectOrStatus(RedirectContext<CookieAuthenticationOptions> context, int status)
+{
+    if (context.Request.Path.StartsWithSegments("/ui")) context.Response.StatusCode = status;
+    else context.Response.Redirect(context.RedirectUri);
+    return Task.CompletedTask;
+}
 
 /// <summary>
 /// Re-checks the signed-in user on every request: a disabled account, a deleted account or a

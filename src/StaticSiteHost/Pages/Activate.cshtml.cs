@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Services;
 
 namespace StaticSiteHost.Pages;
@@ -17,11 +19,13 @@ public class ActivateModel : PageModel
 {
     private readonly UserStore _users;
     private readonly AuditLog _audit;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public ActivateModel(UserStore users, AuditLog audit)
+    public ActivateModel(UserStore users, AuditLog audit, IStringLocalizer<Strings> strings)
     {
         _users = users;
         _audit = audit;
+        _strings = strings;
     }
 
     [BindProperty(SupportsGet = true)]
@@ -34,16 +38,14 @@ public class ActivateModel : PageModel
 
     public bool TokenIsValid { get; private set; }
 
+    /// <summary>Both are required and must match: <see cref="OnPostAsync"/> checks them, so the messages are in the viewer's language.</summary>
     public class InputModel
     {
-        [Required(ErrorMessage = "Choose a password.")]
         [DataType(DataType.Password)]
-        public string Password { get; set; } = "";
+        public string? Password { get; set; } = "";
 
-        [Required(ErrorMessage = "Confirm your password.")]
         [DataType(DataType.Password)]
-        [Compare(nameof(Password), ErrorMessage = "The two passwords do not match.")]
-        public string ConfirmPassword { get; set; } = "";
+        public string? ConfirmPassword { get; set; } = "";
     }
 
     public async Task<IActionResult> OnGetAsync()
@@ -57,12 +59,17 @@ public class ActivateModel : PageModel
         var user = await LoadAsync();
         if (user is null) return Page();
 
+        if (string.IsNullOrWhiteSpace(Input.Password)) ModelState.AddModelError("Input.Password", _strings["auth.activate.noPassword"]);
+        if (string.IsNullOrWhiteSpace(Input.ConfirmPassword)) ModelState.AddModelError("Input.ConfirmPassword", _strings["auth.activate.noConfirm"]);
+        if (!string.Equals(Input.ConfirmPassword, Input.Password, StringComparison.Ordinal))
+            ModelState.AddModelError("Input.ConfirmPassword", _strings["auth.activate.mismatch"]);
+
         if (_users.ValidatePassword(Input.Password) is { } passwordError)
             ModelState.AddModelError("Input.Password", passwordError);
 
         if (!ModelState.IsValid) return Page();
 
-        await _users.SetPasswordAsync(user.Id, Input.Password);
+        await _users.SetPasswordAsync(user.Id, Input.Password!);
         await _audit.WriteAsync("user.activate", user.Username);
 
         var refreshed = await _users.FindByIdAsync(user.Id);
@@ -73,7 +80,7 @@ public class ActivateModel : PageModel
             UserStore.CreatePrincipal(refreshed),
             new AuthenticationProperties { IsPersistent = true });
 
-        TempData["StatusMessage"] = "Your password is set. Welcome aboard.";
+        TempData["StatusMessage"] = _strings.Text("auth.activate.done");
         return RedirectToPage("/Index");
     }
 

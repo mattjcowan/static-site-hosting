@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
@@ -49,13 +51,15 @@ public class FunctionEditorModel : PageModel
     private readonly SiteStore _sites;
     private readonly FunctionDeploymentService _functions;
     private readonly FunctionTestService _testService;
+    private readonly IStringLocalizer<Strings> _strings;
 
     public FunctionEditorModel(
-        SiteStore sites, FunctionDeploymentService functions, FunctionTestService testService)
+        SiteStore sites, FunctionDeploymentService functions, FunctionTestService testService, IStringLocalizer<Strings> strings)
     {
         _sites = sites;
         _functions = functions;
         _testService = testService;
+        _strings = strings;
     }
 
     /// <summary>The site being edited; null for the global functions.</summary>
@@ -142,7 +146,7 @@ public class FunctionEditorModel : PageModel
         ok = result.Ok,
         error = result.Error,
         draft,
-        label = result.Bundle?.Label,
+        label = result.Bundle is { } bundle ? Shared.FunctionUploads.Label(bundle, _strings) : null,
         routes = result.Bundle?.Routes ?? [],
         middleware = result.Bundle?.Middleware ?? [],
         backgroundServices = result.Bundle?.BackgroundServices ?? [],
@@ -160,7 +164,7 @@ public class FunctionEditorModel : PageModel
         var (normalized, _) = SiteStore.NormalizeDomain(domain);
         if (normalized is null || _sites.TryGet(normalized) is null)
         {
-            TempData["ErrorMessage"] = $"No site is published at '{domain}'.";
+            TempData["ErrorMessage"] = _strings.Text("editor.noSite", new { domain });
             return false;
         }
 

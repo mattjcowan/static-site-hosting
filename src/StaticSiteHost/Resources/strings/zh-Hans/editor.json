@@ -1,0 +1,32 @@
+{
+  "editor.pageTitle.global": "全局函数编辑器",
+  "editor.pageTitle.site": "函数 — {domain}",
+  "editor.title": "函数编辑器",
+  "editor.intro.global": "全局函数：每个站点在自己的函数之后用这些函数响应请求。[返回全局函数](backUrl)",
+  "editor.intro.site": "**{domain}** 的函数。[返回站点](backUrl)",
+
+  "editor.files": "文件",
+  "editor.check": "检查",
+  "editor.deploy": "部署",
+  "editor.hint.check": "**检查**会像部署一样编译文件，但不会上线，以便你在下方测试。",
+  "editor.hint.deploySite": "**部署**会重新编译它们，并将其设为线上函数。",
+  "editor.hint.deploySiteReplacing": "**部署**会重新编译它们，并将其设为线上函数，替换 {label}。",
+  "editor.hint.deployGlobal": "**部署**会重新编译它们，并将其设为所有站点的线上函数。",
+  "editor.hint.deployGlobalReplacing": "**部署**会重新编译它们，并将其设为所有站点的线上函数，替换 {label}。",
+
+  "editor.test.title": "测试",
+  "editor.test.hint": "在内存中运行一个请求，使用你真实的代码和站点的真实数据，因此它写入或发送的任何内容都会真实发生。构建中的中间件会先运行，因此如果中间件拒绝了请求，请在**请求头**中添加它需要的内容，例如 Cookie 或令牌。",
+  "editor.test.build": "构建",
+  "editor.test.checkedBuild": "已检查的构建（请先检查）",
+  "editor.test.liveBuild": "线上构建",
+  "editor.test.route": "路由",
+  "editor.test.method": "方法",
+  "editor.test.path": "路径",
+  "editor.test.query": "查询字符串",
+  "editor.test.domain": "域名",
+  "editor.test.headers": "请求头（每行一个）",
+  "editor.test.body": "请求体",
+  "editor.test.run": "运行",
+
+  "editor.noSite": "{domain} 上没有站点。"
+}

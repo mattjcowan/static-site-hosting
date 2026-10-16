@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Pages.Shared;
 using StaticSiteHost.Serving;
@@ -14,12 +16,13 @@ namespace StaticSiteHost.Pages.Sites;
 
 /// <summary>
 /// A rule a person can drop straight into an editor on the site page. The point is that
-/// nobody has to work the syntax out from a description before their first rule.
+/// nobody has to work the syntax out from a description before their first rule. The label and
+/// the hint are string keys, shown in the viewer's language; the snippet is the rule itself.
 /// </summary>
-public sealed record RuleExample(string Label, string Hint, string Snippet);
+public sealed record RuleExample(string LabelKey, string HintKey, string Snippet);
 
-/// <summary>A ready-to-run command shown on a site's detail page.</summary>
-public sealed record DeploySnippet(string Id, string Title, string Hint, string Command)
+/// <summary>A ready-to-run command shown on a site's detail page. The title and the hint are string keys.</summary>
+public sealed record DeploySnippet(string Id, string TitleKey, string HintKey, string Command)
 {
     public int Lines => Command.Count(c => c == '\n') + 1;
 }
@@ -28,7 +31,10 @@ public sealed record DeploySnippet(string Id, string Title, string Hint, string 
 /// <param name="Id">Prefix for the form's element ids.</param>
 /// <param name="OriginalPath">The path the route is saved under, or null for a new one.</param>
 /// <param name="HeadersText">The request headers, in the text form the box shows.</param>
-/// <param name="Errors">Why the last save of this form was refused.</param>
+/// <param name="Errors">
+/// Why the last save of this form was refused: the services' messages as they are, or
+/// <see cref="ProxyRouteInput.BodyLimitErrorKey"/>, which the editor shows in the viewer's language.
+/// </param>
 /// <param name="TestResult">What the last test of this route found, and whether it got an answer.</param>
 /// <param name="Domain">The site the route is for, or null for a server-wide route (Admin → Proxy).</param>
 /// <param name="OriginalPath">
@@ -89,11 +95,17 @@ public sealed class ProxyRouteInput
     public static string Megabytes(long? bytes) =>
         bytes is { } b ? (b / Megabyte).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : "";
 
-    /// <summary>Why the body limit typed cannot be used, or null.</summary>
+    /// <summary>The string key of the message that says the body limit typed cannot be used.</summary>
+    public const string BodyLimitErrorKey = "site.route.bodyLimitError";
+
+    /// <summary>
+    /// Why the body limit typed cannot be used, as the key of its message (<see cref="BodyLimitErrorKey"/>),
+    /// or null. It goes into the editor's errors, and _ProxyRoute shows it in the viewer's language.
+    /// </summary>
     public string? BodyLimitError =>
         string.IsNullOrWhiteSpace(MaxRequestBodyMegabytes) || BytesOf(MaxRequestBodyMegabytes) is not null
             ? null
-            : "Largest request body: write a number of megabytes greater than 0 with a dot for decimals, such as 0.5 or 10, or leave it empty.";
+            : BodyLimitErrorKey;
 
     /// <summary>Megabytes as typed, in bytes; null when empty or not a number above 0.</summary>
     public static long? BytesOf(string? megabytes) =>
@@ -158,6 +170,7 @@ public class DetailsModel : PageModel
     private readonly SiteAiSettingsService _aiSettings;
     private readonly RealtimeRegistry _realtime;
     private readonly SiteHostingOptions _options;
+    private readonly IStringLocalizer<Strings> _strings;
 
     public DetailsModel(
         SiteStore sites,
@@ -176,8 +189,12 @@ public class DetailsModel : PageModel
         SiteAiSettingsService aiSettings,
         RealtimeRegistry realtime,
         StaticSiteHost.Tls.CertificateManager certificates,
-        IOptions<SiteHostingOptions> options)
+        BrandingService branding,
+        IOptions<SiteHostingOptions> options,
+        IStringLocalizer<Strings> strings)
     {
+        _strings = strings;
+        _branding = branding;
         _certificates = certificates;
         _functions = functions;
         _functionDeployer = functionDeployer;
@@ -197,7 +214,12 @@ public class DetailsModel : PageModel
         _options = options.Value;
     }
 
+    private readonly BrandingService _branding;
+
     public SiteRecord Site { get; private set; } = null!;
+
+    /// <summary>The editor for this site's own branding of its visitor screens; administrators only.</summary>
+    public BrandingEditor? Branding { get; private set; }
 
     private readonly StaticSiteHost.Tls.CertificateManager _certificates;
 
@@ -212,6 +234,39 @@ public class DetailsModel : PageModel
 
     public bool IsAdministrator => User.IsInRole(Roles.Administrator);
 
+    /// <summary>The tab shown: the one a form's handler belongs to after a post, else the one the address names.</summary>
+    public string Tab { get; private set; } = SiteTabs.Default;
+
+    /// <summary>A number beside a tab's name, or null for none.</summary>
+    public int? TabCount(string tab) => tab switch
+    {
+        "routing" => Site.Proxy.Count,
+        "releases" => Site.Releases.Count,
+        _ => null
+    };
+
+    public override void OnPageHandlerSelected(Microsoft.AspNetCore.Mvc.Filters.PageHandlerSelectedContext context)
+    {
+        var fromHandler = HttpMethods.IsPost(Request.Method) ? SiteTabs.ForHandler(context.HandlerMethod?.Name) : null;
+        Tab = fromHandler ?? SiteTabs.Normalize(RouteData.Values["tab"] as string, IsAdministrator);
+    }
+
+    /// <summary>A form's redirect back to this page lands on its own tab, whatever address it was posted from.</summary>
+    public override void OnPageHandlerExecuted(Microsoft.AspNetCore.Mvc.Filters.PageHandlerExecutedContext context)
+    {
+        if (context.Result is RedirectToPageResult { PageName: null } redirect)
+        {
+            redirect.RouteValues ??= new Microsoft.AspNetCore.Routing.RouteValueDictionary();
+            if (!redirect.RouteValues.ContainsKey("tab")) redirect.RouteValues["tab"] = Tab == SiteTabs.Default ? null : Tab;
+        }
+    }
+
+    /// <summary>The largest text file the Files tab opens in its editor; larger ones can be downloaded and replaced.</summary>
+    public const int MaxEditBytes = 5 * 1024 * 1024;
+
+    /// <summary>How many recent releases the server keeps besides the live one (SiteHosting:ReleasesToKeep).</summary>
+    public int ReleasesToKeep => Math.Max(1, _options.ReleasesToKeep);
+
     public int MinPasscodeLength => _passcodes.MinLength;
 
     /// <summary>The default asset max-age, quoted in the header rule editor.</summary>
@@ -224,8 +279,8 @@ public class DetailsModel : PageModel
         {
             var lifetime = _passcodes.SessionLifetime;
             return lifetime.TotalHours < 48
-                ? $"{Math.Round(lifetime.TotalHours):0} hour(s)"
-                : $"{Math.Round(lifetime.TotalDays):0} day(s)";
+                ? _strings.Plural("site.visibility.hours", (long)Math.Round(lifetime.TotalHours))
+                : _strings.Plural("site.visibility.days", (long)Math.Round(lifetime.TotalDays));
         }
     }
 
@@ -313,10 +368,8 @@ public class DetailsModel : PageModel
 
     public int AiMaxSystemPromptBytes => SiteAiSettings.MaxSystemPromptBytes;
 
-    /// <summary>The per-address limit on visitors' chats, in words, for the warning beside the checkbox.</summary>
-    public string AiVisitorLimit => _options.AiVisitorRequestsPerMinute > 0
-        ? $"Each address is held to {_options.AiVisitorRequestsPerMinute} questions a minute on this site, which slows a stranger down but does not cap the bill."
-        : "This server sets no per-address limit (SiteHosting:AiVisitorRequestsPerMinute is 0), so nothing slows a stranger down.";
+    /// <summary>The per-address limit on visitors' chats (0 for none), for the warning beside the checkbox.</summary>
+    public int AiVisitorRequestsPerMinute => _options.AiVisitorRequestsPerMinute;
 
     /// <summary>How a page on the site chats, for the snippet under the AI form.</summary>
     public string AiSnippet { get; private set; } = "";
@@ -344,61 +397,49 @@ public class DetailsModel : PageModel
 
     /// <summary>How a release's functions read in the releases table and the rollback choice.</summary>
     public string BundleLabel(string? bundleId) =>
-        Site.FindBundle(bundleId)?.Label ?? "no functions";
+        Site.FindBundle(bundleId) is { } bundle ? FunctionUploads.Label(bundle, _strings) : _strings.Text("site.releases.noFunctions");
 
     /// <summary>Starting points offered under the header rule editor.</summary>
     public static IReadOnlyList<RuleExample> HeaderExamples { get; } =
     [
-        new("Stop caching JSON",
-            "For data files rewritten in place on every deploy — the browser revalidates instead of reusing a stale copy.",
+        new("site.headers.example.noCacheJson", "site.headers.example.noCacheJsonHint",
             "/*.json\n  Cache-Control: no-cache"),
 
-        new("Cache fingerprinted assets forever",
-            "Safe only when the filename changes with the content, as app.a1b2c3.js does.",
+        new("site.headers.example.fingerprinted", "site.headers.example.fingerprintedHint",
             "/assets/**\n  Cache-Control: public, max-age=31536000, immutable"),
 
-        new("Never store a folder",
-            "Stronger than no-cache: nothing is written to disk by the browser or any proxy.",
+        new("site.headers.example.noStore", "site.headers.example.noStoreHint",
             "/private/**\n  Cache-Control: no-store"),
 
-        new("Common security headers",
-            "Sensible defaults for a site that embeds nothing and is embedded nowhere.",
+        new("site.headers.example.security", "site.headers.example.securityHint",
             "/**\n  X-Frame-Options: DENY\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: geolocation=(), camera=(), microphone=()"),
 
-        new("Allow cross-origin reads",
-            "Lets another origin fetch these files — fonts and data a second site loads.",
+        new("site.headers.example.cors", "site.headers.example.corsHint",
             "/data/**\n  Access-Control-Allow-Origin: *"),
 
-        new("Short cache on a feed",
-            "A middle ground for something regenerated often but read constantly.",
+        new("site.headers.example.feed", "site.headers.example.feedHint",
             "/feed.xml\n  Cache-Control: public, max-age=300")
     ];
 
     /// <summary>Starting points offered under the redirect editor.</summary>
     public static IReadOnlyList<RuleExample> RedirectExamples { get; } =
     [
-        new("A page moved",
-            "The plainest rule there is. 301 tells browsers and search engines the move is permanent.",
+        new("site.redirects.example.moved", "site.redirects.example.movedHint",
             "/old-page  /new-page  301"),
 
-        new("A whole section moved",
-            ":1 stands for whatever the * matched, so /blog/hello lands on /articles/hello.",
+        new("site.redirects.example.section", "site.redirects.example.sectionHint",
             "/blog/*  /articles/:1  301"),
 
-        new("Send visitors to another site",
-            "** crosses slashes, so the rest of the path comes along. 302 keeps it temporary.",
+        new("site.redirects.example.otherSite", "site.redirects.example.otherSiteHint",
             "/docs/**  https://docs.example.com/:1  302"),
 
-        new("Serve one page for a whole subtree",
-            "A rewrite: the address stays put and the file underneath changes. For a SPA mounted at /app.",
+        new("site.redirects.example.folder", "site.redirects.example.folderHint",
             "/app/**  /app/index.html  200"),
 
-        new("Retire a page",
-            "Answers 404 with your own page rather than pretending the URL still works.",
+        new("site.redirects.example.retire", "site.redirects.example.retireHint",
             "/removed/**  /404.html  404"),
 
-        new("Apply even where a file exists",
-            "The ! overrides the usual behaviour of standing aside for real content.",
+        new("site.redirects.example.force", "site.redirects.example.forceHint",
             "/legacy/*  /new/:1  301!")
     ];
 
@@ -411,9 +452,17 @@ public class DetailsModel : PageModel
         return Page();
     }
 
-    private async Task LoadAsync(SiteRecord site)
+    private async Task LoadAsync(SiteRecord site, IReadOnlyList<string>? brandingErrors = null, Branding? brandingShown = null)
     {
         Site = site;
+        if (IsAdministrator)
+        {
+            var settings = await _branding.Store.ReadAsync(HttpContext.RequestAborted);
+            Branding = new BrandingEditor(
+                BrandingEditor.Filled(brandingShown ?? site.Branding, settings.Server), brandingShown ?? site.Branding ?? new Branding(), settings.Fonts,
+                settings.AllowGoogleFonts, site.Domain, settings.Server, brandingErrors ?? [],
+                Url.Page("/Sites/Details", "Branding", new { domain = site.Domain, tab = "settings" })!);
+        }
         DeploySnippets = BuildDeploySnippets(site.Domain);
         HeaderRules = HeaderRuleText.Format(site.Headers);
         RedirectRules = RedirectRuleText.Format(site.Redirects);
@@ -532,8 +581,8 @@ public class DetailsModel : PageModel
         [
             new DeploySnippet(
                 "deploy-zip",
-                "Upload a zip you already have",
-                "Point file=@ at your archive. The zip's contents land at the root of the site; a single wrapping folder is unwrapped for you.",
+                "site.cli.zipTitle",
+                "site.cli.zipHint",
                 $"""
                  curl -sS --fail-with-body -X POST \
                    -H "X-Api-Key: $SSH_KEY" \
@@ -543,8 +592,8 @@ public class DetailsModel : PageModel
 
             new DeploySnippet(
                 "deploy-folder",
-                "Zip a folder and upload it in one command",
-                "Streams the archive as it is built, so nothing is written to disk on your side. Change dist to your build output.",
+                "site.cli.folderTitle",
+                "site.cli.folderHint",
                 $"""
                  (cd dist && zip -qr - .) | curl -sS --fail-with-body -X POST \
                    -H "X-Api-Key: $SSH_KEY" \
@@ -565,8 +614,21 @@ public class DetailsModel : PageModel
         var keep = functions == "keep";
         var (ok, error) = await _deployer.RollbackAsync(site.Domain, releaseId, actor, keep);
 
-        if (ok) TempData["StatusMessage"] = $"{site.Domain} is now serving release {releaseId}.";
+        if (ok) TempData["StatusMessage"] = _strings.Text("site.releases.rolledBack", new { id = releaseId, domain = site.Domain });
         else TempData["ErrorMessage"] = error;
+
+        return RedirectToPage(new { domain = site.Domain });
+    }
+
+    /// <summary>Copies a release as a new one that is not live: the way back before editing the live one.</summary>
+    public async Task<IActionResult> OnPostDuplicateAsync(string domain, string releaseId)
+    {
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var result = await _deployer.DuplicateReleaseAsync(site.Domain, releaseId, User.Identity?.Name ?? "unknown");
+        if (result.Error is { } error) TempData["ErrorMessage"] = _strings.Text(error.Key, error.Values);
+        else TempData["StatusMessage"] = _strings.Text("site.files.duplicated", new { id = result.Release!.Id, from = releaseId });
 
         return RedirectToPage(new { domain = site.Domain });
     }
@@ -583,8 +645,8 @@ public class DetailsModel : PageModel
         if (ok) _realtime.DisconnectSite(site.Domain);
 
         if (!ok) TempData["ErrorMessage"] = error;
-        else if (replacing) TempData["StatusMessage"] = $"The passcode for {site.Domain} was replaced. Anyone using the old one has to enter the new one.";
-        else TempData["StatusMessage"] = $"{site.Domain} is now private — visitors must enter the passcode.";
+        else if (replacing) TempData["StatusMessage"] = _strings.Text("site.visibility.changed", new { domain = site.Domain });
+        else TempData["StatusMessage"] = _strings.Text("site.visibility.madePrivate", new { domain = site.Domain });
 
         return RedirectToPage(new { domain = site.Domain });
     }
@@ -595,7 +657,7 @@ public class DetailsModel : PageModel
         if (site is null) return RedirectToPage("Index");
 
         if (await _passcodes.ClearAsync(site, User.Identity?.Name ?? "unknown"))
-            TempData["StatusMessage"] = $"{site.Domain} is public again — anyone with the link can read it.";
+            TempData["StatusMessage"] = _strings.Text("site.visibility.madePublic", new { domain = site.Domain });
 
         return RedirectToPage(new { domain = site.Domain });
     }
@@ -613,7 +675,9 @@ public class DetailsModel : PageModel
         var (ok, failures) = await _rules.SetHeadersAsync(site, parsed, User.Identity?.Name ?? "unknown");
         if (!ok) return await RejectAsync(site, headers: rules, redirects: null, failures, []);
 
-        TempData["StatusMessage"] = Saved(parsed.Count, "header rule", site.Domain);
+        TempData["StatusMessage"] = parsed.Count == 0
+            ? _strings.Text("site.headers.removed", new { domain = site.Domain })
+            : _strings.Plural("site.headers.saved", parsed.Count, new { domain = site.Domain });
         return RedirectToPage(new { domain = site.Domain });
     }
 
@@ -628,13 +692,11 @@ public class DetailsModel : PageModel
         var (ok, failures) = await _rules.SetRedirectsAsync(site, parsed, User.Identity?.Name ?? "unknown");
         if (!ok) return await RejectAsync(site, headers: null, redirects: rules, [], failures);
 
-        TempData["StatusMessage"] = Saved(parsed.Count, "redirect", site.Domain);
+        TempData["StatusMessage"] = parsed.Count == 0
+            ? _strings.Text("site.redirects.removed", new { domain = site.Domain })
+            : _strings.Plural("site.redirects.saved", parsed.Count, new { domain = site.Domain });
         return RedirectToPage(new { domain = site.Domain });
     }
-
-    private static string Saved(int count, string noun, string domain) => count == 0
-        ? $"The {noun}s for {domain} were removed."
-        : $"{count} {noun}{(count == 1 ? "" : "s")} saved for {domain}.";
 
     /// <summary>Re-renders the page with the text that was rejected still in its box.</summary>
     private async Task<IActionResult> RejectAsync(
@@ -677,8 +739,8 @@ public class DetailsModel : PageModel
             {
                 var path = ProxyRouteRules.NormalizePath(input.Path);
                 TempData["StatusMessage"] = originalPath is null
-                    ? $"{site.Domain}{path} now forwards to {input.Target?.Trim()}."
-                    : $"The proxy route at {path} was saved.";
+                    ? _strings.Text("site.proxy.added", new { domain = site.Domain, path, target = input.Target?.Trim() })
+                    : _strings.Text("site.proxy.saved", new { path });
                 return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
             }
 
@@ -708,8 +770,8 @@ public class DetailsModel : PageModel
             TempData["ErrorMessage"] = error;
         else
             TempData["StatusMessage"] = enabled
-                ? $"The server-wide route at {ProxyRouteRules.NormalizePath(path)} applies to {site.Domain} again."
-                : $"The server-wide route at {ProxyRouteRules.NormalizePath(path)} is off for {site.Domain}.";
+                ? _strings.Text("site.proxy.serverOn", new { path = ProxyRouteRules.NormalizePath(path), domain = site.Domain })
+                : _strings.Text("site.proxy.serverOff", new { path = ProxyRouteRules.NormalizePath(path), domain = site.Domain });
 
         return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
     }
@@ -722,9 +784,9 @@ public class DetailsModel : PageModel
         if (site is null) return RedirectToPage("Index");
 
         if (await _proxy.RemoveRouteAsync(site, path, User.Identity?.Name ?? "unknown"))
-            TempData["StatusMessage"] = $"The proxy route at {ProxyRouteRules.NormalizePath(path)} was removed from {site.Domain}.";
+            TempData["StatusMessage"] = _strings.Text("site.proxy.removed", new { path = ProxyRouteRules.NormalizePath(path), domain = site.Domain });
         else
-            TempData["ErrorMessage"] = $"{site.Domain} has no proxy route at {ProxyRouteRules.NormalizePath(path)}.";
+            TempData["ErrorMessage"] = _strings.Text("site.proxy.notFound", new { domain = site.Domain, path = ProxyRouteRules.NormalizePath(path) });
 
         return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
     }
@@ -741,7 +803,7 @@ public class DetailsModel : PageModel
         var route = site.Proxy.FirstOrDefault(r => r.Path.Equals(normalized, StringComparison.OrdinalIgnoreCase));
         if (route is null)
         {
-            TempData["ErrorMessage"] = $"{site.Domain} has no proxy route at {normalized}.";
+            TempData["ErrorMessage"] = _strings.Text("site.proxy.notFound", new { domain = site.Domain, path = normalized });
             return RedirectToPage(null, null, new { domain = site.Domain }, "proxy");
         }
 
@@ -769,7 +831,7 @@ public class DetailsModel : PageModel
         // it untouched must not wipe what is stored.
         if (string.IsNullOrEmpty(value) && _variables.Describe(site).Any(v => v.Name == name && v.IsSecret))
         {
-            TempData["StatusMessage"] = $"{name} was left as it was: an empty box keeps a secret's value.";
+            TempData["StatusMessage"] = _strings.Text("site.variables.secretKept", new { name });
             return RedirectToPage(new { domain = site.Domain });
         }
 
@@ -795,7 +857,7 @@ public class DetailsModel : PageModel
             return Page();
         }
 
-        TempData["StatusMessage"] = $"{name} saved for {site.Domain}.";
+        TempData["StatusMessage"] = _strings.Text("site.variables.saved", new { name, domain = site.Domain });
         return RedirectToPage(new { domain = site.Domain });
     }
 
@@ -810,13 +872,13 @@ public class DetailsModel : PageModel
 
         var (removed, error) = await _variables.RemoveAsync(site, name, User.Identity?.Name ?? "unknown", IsAdministrator);
         if (!removed)
-            TempData["ErrorMessage"] = error ?? $"{site.Domain} has no value of its own for {name}.";
+            TempData["ErrorMessage"] = error ?? _strings.Text("site.variables.noOwnValue", new { domain = site.Domain, name });
         else if (definition is null)
-            TempData["StatusMessage"] = $"{name} was removed from {site.Domain}.";
+            TempData["StatusMessage"] = _strings.Text("site.variables.removed", new { name, domain = site.Domain });
         else if (definition.Default is not null)
-            TempData["StatusMessage"] = $"{name} uses the release default again.";
+            TempData["StatusMessage"] = _strings.Text("site.variables.defaultAgain", new { name });
         else
-            TempData["StatusMessage"] = $"{name} no longer has a value: the release gives it no default.";
+            TempData["StatusMessage"] = _strings.Text("site.variables.noValue", new { name });
 
         return RedirectToPage(new { domain = site.Domain });
     }
@@ -849,10 +911,10 @@ public class DetailsModel : PageModel
         var provider = _aiChats.ProviderOf(site);
         TempData["StatusMessage"] =
             AccessHookOf(site) is { } hook
-                ? $"{site.Domain} now chats through {provider?.Name}. Its [AiAccess] hook, {hook}, decides which visitors may use it."
+                ? _strings.Text("site.ai.savedHook", new { domain = site.Domain, provider = provider?.Name, hook })
                 : allowVisitors
-                    ? $"{site.Domain} now chats through {provider?.Name}, and every visitor can use it."
-                    : $"{site.Domain} now chats through {provider?.Name}, for its functions only.";
+                    ? _strings.Text("site.ai.savedVisitors", new { domain = site.Domain, provider = provider?.Name })
+                    : _strings.Text("site.ai.savedFunctions", new { domain = site.Domain, provider = provider?.Name });
 
         return RedirectToPage(new { domain = site.Domain });
     }
@@ -873,8 +935,8 @@ public class DetailsModel : PageModel
         }
 
         TempData["StatusMessage"] = _certificates.Enabled
-            ? $"HTTPS settings saved for {site.Domain}. A new certificate, if it needs one, follows within a minute."
-            : $"HTTPS settings saved for {site.Domain}.";
+            ? _strings.Text("site.https.savedCertificateSoon", new { domain = site.Domain })
+            : _strings.Text("site.https.saved", new { domain = site.Domain });
         return RedirectToPage(null, null, new { domain = site.Domain }, "https");
     }
 
@@ -893,7 +955,7 @@ public class DetailsModel : PageModel
             return Page();
         }
 
-        TempData["StatusMessage"] = $"{site.Domain} now serves the uploaded certificate.";
+        TempData["StatusMessage"] = _strings.Text("site.https.uploaded", new { domain = site.Domain });
         return RedirectToPage(null, null, new { domain = site.Domain }, "https");
     }
 
@@ -905,7 +967,7 @@ public class DetailsModel : PageModel
         if (site is null) return RedirectToPage("Index");
 
         await _certificates.RemoveUploadedAsync(site, User.Identity?.Name ?? "unknown");
-        TempData["StatusMessage"] = $"The uploaded certificate was removed. {site.Domain} is back to automatic.";
+        TempData["StatusMessage"] = _strings.Text("site.https.removed", new { domain = site.Domain });
         return RedirectToPage(null, null, new { domain = site.Domain }, "https");
     }
 
@@ -919,7 +981,7 @@ public class DetailsModel : PageModel
         if (_certificates.Enabled)
         {
             _certificates.RenewNow(site.Domain);
-            TempData["StatusMessage"] = $"Asked for a new certificate for {site.Domain}. Reload in a few seconds to see it.";
+            TempData["StatusMessage"] = _strings.Text("site.https.renewing", new { domain = site.Domain });
         }
 
         return RedirectToPage(null, null, new { domain = site.Domain }, "https");
@@ -934,7 +996,7 @@ public class DetailsModel : PageModel
         if (site is null) return RedirectToPage("Index");
 
         if (await _aiSettings.RemoveAsync(site, User.Identity?.Name ?? "unknown"))
-            TempData["StatusMessage"] = $"{site.Domain} no longer has AI.";
+            TempData["StatusMessage"] = _strings.Text("site.ai.removed", new { domain = site.Domain });
 
         return RedirectToPage(new { domain = site.Domain });
     }
@@ -946,14 +1008,14 @@ public class DetailsModel : PageModel
         var site = Resolve(domain);
         if (site is null) return RedirectToPage("Index");
 
-        var (uploaded, readError) = await FunctionUploads.ReadAsync(files, ct);
+        var (uploaded, readError) = await FunctionUploads.ReadAsync(files, _strings, ct);
         var result = uploaded is null
             ? FunctionDeployResult.Failed(readError!)
             : await _functionDeployer.DeployAsync(site.Domain, uploaded, User.Identity?.Name ?? "unknown", "web", replace: mode == "replace", ct);
 
         if (result.Ok)
         {
-            TempData["StatusMessage"] = FunctionUploads.Describe(result, site.Domain);
+            TempData["StatusMessage"] = FunctionUploads.Describe(result, site.Domain, _strings);
             return RedirectToPage(new { domain = site.Domain });
         }
 
@@ -974,7 +1036,7 @@ public class DetailsModel : PageModel
         var result = await _functionDeployer.RemoveFileAsync(site.Domain, fileName ?? "", User.Identity?.Name ?? "unknown", "web", ct);
         if (result.Ok)
         {
-            TempData["StatusMessage"] = $"Removed {fileName}. " + FunctionUploads.Describe(result, site.Domain);
+            TempData["StatusMessage"] = FunctionUploads.DescribeRemoved(result, fileName ?? "", site.Domain, _strings);
             return RedirectToPage(new { domain = site.Domain });
         }
 
@@ -992,7 +1054,7 @@ public class DetailsModel : PageModel
         if (site is null) return RedirectToPage("Index");
 
         var (ok, error) = await _functionDeployer.RemoveAsync(site.Domain, User.Identity?.Name ?? "unknown");
-        if (ok) TempData["StatusMessage"] = $"{site.Domain} no longer runs any functions. Earlier releases keep theirs.";
+        if (ok) TempData["StatusMessage"] = _strings.Text("site.functions.removed", new { domain = site.Domain });
         else TempData["ErrorMessage"] = error;
 
         return RedirectToPage(new { domain = site.Domain });
@@ -1019,6 +1081,40 @@ public class DetailsModel : PageModel
             : NotFound();
     }
 
+    /// <summary>Saves this site's own branding for its visitor screens. Values the same as the server's are not kept, so later server changes show through.</summary>
+    public async Task<IActionResult> OnPostBrandingAsync(string domain, BrandingInput input)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var settings = await _branding.Store.ReadAsync(HttpContext.RequestAborted);
+        var (branding, errors) = await input.ToBrandingAsync(site.Branding ?? new Branding(), settings.Server, _branding.Store, _strings, HttpContext.RequestAborted);
+        if (errors.Count == 0) errors = await _branding.SetSiteAsync(site, branding, User.Identity?.Name ?? "unknown", HttpContext.RequestAborted);
+
+        if (errors.Count > 0)
+        {
+            await LoadAsync(site, errors, branding);
+            return Page();
+        }
+
+        TempData["StatusMessage"] = _strings.Text(site.Branding is null ? "site.branding.sameAsServer" : "site.branding.saved", new { domain = site.Domain });
+        return RedirectToPage(null, null, new { domain = site.Domain }, "branding");
+    }
+
+    public async Task<IActionResult> OnPostRemoveBrandingAsync(string domain)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        await _branding.SetSiteAsync(site, null, User.Identity?.Name ?? "unknown", HttpContext.RequestAborted);
+        TempData["StatusMessage"] = _strings.Text("site.branding.removed", new { domain = site.Domain });
+        return RedirectToPage(null, null, new { domain = site.Domain }, "branding");
+    }
+
     public async Task<IActionResult> OnPostRenameAsync(string domain, string? newDomain)
     {
         if (!IsAdministrator) return Forbid();
@@ -1036,8 +1132,8 @@ public class DetailsModel : PageModel
         }
 
         TempData["StatusMessage"] = site.IsPasscodeProtected
-            ? $"{from} is now {to}. {from} no longer serves anything, and visitors have to enter the passcode again."
-            : $"{from} is now {to}. {from} no longer serves anything.";
+            ? _strings.Text("site.rename.donePasscode", new { from, to })
+            : _strings.Text("site.rename.done", new { from, to });
 
         return RedirectToPage(new { domain = to });
     }
@@ -1051,7 +1147,7 @@ public class DetailsModel : PageModel
 
         await _deployer.DeleteAsync(site.Domain, User.Identity?.Name ?? "unknown");
 
-        TempData["StatusMessage"] = $"{site.Domain} and all of its content were removed.";
+        TempData["StatusMessage"] = _strings.Text("site.delete.done", new { domain = site.Domain });
         return RedirectToPage("Index");
     }
 
@@ -1060,12 +1156,12 @@ public class DetailsModel : PageModel
         var (normalized, _) = SiteStore.NormalizeDomain(domain);
         if (normalized is null)
         {
-            TempData["ErrorMessage"] = "That is not a valid domain name.";
+            TempData["ErrorMessage"] = _strings.Text("site.lookup.invalidDomain");
             return null;
         }
 
         var site = _sites.TryGet(normalized);
-        if (site is null) TempData["ErrorMessage"] = $"No site is published at '{normalized}'.";
+        if (site is null) TempData["ErrorMessage"] = _strings.Text("site.lookup.notFound", new { domain = normalized });
         return site;
     }
 }

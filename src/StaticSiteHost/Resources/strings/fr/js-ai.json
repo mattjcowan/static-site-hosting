@@ -1,0 +1,13 @@
+{
+  "js.ai.models.show": "Afficher les modèles",
+  "js.ai.models.chooseProvider": "Choisissez d'abord un fournisseur.",
+  "js.ai.models.loading": "Demande de la liste des modèles au fournisseur…",
+  "js.ai.models.none": "Le fournisseur n'a listé aucun modèle de chat. Saisissez le nom du modèle.",
+  "js.ai.models.found.one": "{count} modèle du fournisseur. Vous pouvez saisir n'importe quel nom.",
+  "js.ai.models.found.other": "{count} modèles du fournisseur. Vous pouvez saisir n'importe quel nom.",
+  "js.ai.models.foundFastFirst.one": "{count} modèle du fournisseur, les plus rapides en premier. Vous pouvez saisir n'importe quel nom.",
+  "js.ai.models.foundFastFirst.other": "{count} modèles du fournisseur, les plus rapides en premier. Vous pouvez saisir n'importe quel nom.",
+  "js.ai.models.failed": "Les modèles n'ont pas pu être listés. Saisissez le nom du modèle.",
+  "js.ai.models.noMatch": "Aucun modèle ne correspond à « {typed} ». Vous pouvez quand même l'utiliser.",
+  "js.ai.models.fast": "rapide"
+}

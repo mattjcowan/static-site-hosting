@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -9,11 +11,13 @@ public class IndexModel : PageModel
 {
     private readonly SiteStore _sites;
     private readonly ZipDeploymentService _deployer;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public IndexModel(SiteStore sites, ZipDeploymentService deployer)
+    public IndexModel(SiteStore sites, ZipDeploymentService deployer, IStringLocalizer<Strings> strings)
     {
         _sites = sites;
         _deployer = deployer;
+        _strings = strings;
     }
 
     public IReadOnlyList<SiteRecord> Sites { get; private set; } = [];
@@ -21,6 +25,16 @@ public class IndexModel : PageModel
     public bool IsAdministrator => User.IsInRole(Roles.Administrator);
 
     public void OnGet() => Sites = _sites.List();
+
+    /// <summary>
+    /// The sites and the site page's tabs, for the Go to… palette (Ctrl K). Fetched once, when the
+    /// palette first opens, so a server with many sites does not put them all in every page.
+    /// </summary>
+    public IActionResult OnGetPalette() => new JsonResult(new
+    {
+        sites = _sites.List().Select(site => new { domain = site.Domain, url = Url.Page("/Sites/Details", new { domain = site.Domain }) }),
+        tabs = SiteTabs.For(IsAdministrator).Where(tab => tab.Id != SiteTabs.Default).Select(tab => new { id = tab.Id, label = _strings.Text(tab.LabelKey) })
+    });
 
     /// <summary>
     /// Creates a site with no files, for one made of proxy routes or to set up before the first
@@ -35,9 +49,7 @@ public class IndexModel : PageModel
             return RedirectToPage();
         }
 
-        TempData["StatusMessage"] = IsAdministrator
-            ? $"{created} was created with no files. Add proxy routes below, or deploy a zip to it."
-            : $"{created} was created with no files. Deploy a zip to it, or ask an administrator to add proxy routes.";
-        return RedirectToPage("Details", null, new { domain = created }, IsAdministrator ? "proxy" : null);
+        TempData["StatusMessage"] = _strings.Text(IsAdministrator ? "sites.new.createdAdmin" : "sites.new.createdMember", new { domain = created });
+        return RedirectToPage("Details", null, new { domain = created, tab = IsAdministrator ? "routing" : null }, IsAdministrator ? "proxy" : null);
     }
 }

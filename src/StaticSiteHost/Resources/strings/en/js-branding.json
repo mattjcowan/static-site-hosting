@@ -1,0 +1,14 @@
+{
+  "js.branding.pair.textOnBg": "Text on the page background",
+  "js.branding.pair.textOnSurface": "Text on cards",
+  "js.branding.pair.mutedOnSurface": "Quieter text on cards",
+  "js.branding.pair.accentOnSurface": "Accent on cards",
+  "js.branding.pair.accentTextOnAccent": "Text on the accent",
+  "js.branding.pair.dangerOnSurface": "Errors on cards",
+  "js.branding.ratio": "{ratio}:1",
+  "js.branding.pass": "easy to read",
+  "js.branding.large": "only for large text",
+  "js.branding.fail": "hard to read",
+  "js.branding.applied": "Applied {name}. Save to keep it.",
+  "js.branding.notHex": "Write a colour as #rrggbb, such as #2f5be8."
+}

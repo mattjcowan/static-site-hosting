@@ -1,0 +1,33 @@
+{
+  "visitor.passcode.pageTitle": "Code d'accès requis — {domain}",
+  "visitor.passcode.title": "Ce site est privé",
+  "visitor.passcode.hint": "Saisissez le code d'accès pour voir ce site. Si vous ne l'avez pas, demandez-le au propriétaire du site.",
+  "visitor.passcode.wrong": "Ce code d'accès n'est pas correct. Vérifiez-le et réessayez.",
+  "visitor.passcode.tooManyTries.one": "Trop de codes d'accès erronés. Réessayez dans {count} minute.",
+  "visitor.passcode.tooManyTries.other": "Trop de codes d'accès erronés. Réessayez dans {count} minutes.",
+  "visitor.passcode.label": "Code d'accès",
+  "visitor.passcode.submit": "Voir le site",
+
+  "visitor.page.title": "{status} — {title}",
+
+  "visitor.notFound.title": "Page introuvable",
+  "visitor.notFound.detail": "Il n'y a aucune page à l'adresse {address}. Vérifiez que l'adresse est correcte.",
+  "visitor.notFound.detailNoAddress": "Il n'y a aucune page à cette adresse. Vérifiez que l'adresse est correcte.",
+
+  "visitor.unavailable.title": "Rien ici pour le moment",
+  "visitor.unavailable.detail": "{domain} n'a pas encore de pages. Réessayez plus tard.",
+
+  "visitor.proxy.notSetUp.title": "Cette page ne fonctionne pas",
+  "visitor.proxy.notSetUp.detail": "Le site n'est pas configuré correctement pour cette page. Réessayez plus tard.",
+  "visitor.proxy.unreachable.title": "Cette page n'est pas disponible",
+  "visitor.proxy.unreachable.detail": "Le site ne peut pas charger cette page pour le moment. Réessayez dans quelques minutes.",
+  "visitor.proxy.timedOut.title": "Cette page a mis trop de temps à charger",
+  "visitor.proxy.timedOut.detail": "Le site n'a pas répondu à temps. Réessayez dans quelques minutes.",
+  "visitor.proxy.refused.title": "Connexion non autorisée",
+  "visitor.proxy.refused.detail": "Cette adresse n'accepte pas cette requête.",
+  "visitor.proxy.webSocketsOff": "Cette adresse n'accepte pas les connexions WebSocket.",
+  "visitor.proxy.webSocketsCrossSite": "Seules les pages de ce site peuvent ouvrir des connexions WebSocket vers cette adresse.",
+
+  "visitor.noSite.title": "Aucun site à cette adresse",
+  "visitor.noSite.detail": "Il n'y a aucun site à l'adresse **{domain}**. Vérifiez que l'adresse est correcte."
+}

@@ -1,0 +1,17 @@
+{
+  "js.assistant.confirm.question": "¿Ejecutar {step}? No se puede deshacer.",
+  "js.assistant.confirm.run": "Ejecutar",
+  "js.assistant.confirm.cancel": "Cancelar",
+  "js.assistant.confirm.ran": "Elegiste ejecutarlo.",
+  "js.assistant.confirm.cancelled": "Lo cancelaste.",
+  "js.assistant.changed.text": "El asistente hizo cambios. Esta página no se actualizó, así que no pierdes nada de lo que escribiste en ella.",
+  "js.assistant.changed.update": "Actualizar esta página de todos modos",
+  "js.assistant.noAnswer": "El asistente no pudo responder (HTTP {status}). Vuelve a intentarlo.",
+  "js.assistant.usage.summary": "{tokensIn} de entrada, {tokensOut} de salida, {calls}",
+  "js.assistant.usage.tokens.one": "{number} token",
+  "js.assistant.usage.tokens.other": "{number} tokens",
+  "js.assistant.usage.calls.one": "{count} llamada",
+  "js.assistant.usage.calls.other": "{count} llamadas",
+  "js.assistant.connectionLost": "Se perdió la conexión con el servidor.",
+  "js.assistant.chooseFirst": "Primero elige {run} o {cancel}."
+}

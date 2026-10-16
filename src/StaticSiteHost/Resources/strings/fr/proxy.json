@@ -1,0 +1,22 @@
+{
+  "proxy.pageTitle": "Proxy",
+  "proxy.title": "Routes pour tout le serveur",
+  "proxy.intro": "Transférez un chemin sur de nombreux sites à la fois, comme `/api` sur tous les sites sous `*.apps.example.com`. Une route s'applique à chaque site dont le domaine correspond à son champ **Sites**.",
+
+  "proxy.routes.title": "Routes",
+  "proxy.routes.count.one": "{count} route",
+  "proxy.routes.count.other": "{count} routes",
+  "proxy.routes.none": "aucune",
+  "proxy.routes.hint": "La propre route d'un site au même chemin l'emporte, et un site peut désactiver une route pour tout le serveur sur sa propre page. Quand deux routes pour tout le serveur ont le même chemin, la correspondance **Sites** la plus précise l'emporte : un domaine, puis `*.something`, puis `*`.",
+
+  "proxy.route.off": "désactivée",
+  "proxy.route.streaming": "streaming",
+  "proxy.route.noMatch": "Aucun site de ce serveur ne lui correspond encore.",
+  "proxy.route.matches": "Sites correspondants :",
+  "proxy.route.added": "{path} sur {sites} transfère maintenant vers {target}.",
+  "proxy.route.saved": "La route pour tout le serveur sur {path} pour {sites} est enregistrée.",
+  "proxy.route.removed": "La route pour tout le serveur a été retirée. Son chemin revient aux fichiers et aux routes propres à chaque site.",
+  "proxy.route.notFound": "Cette route pour tout le serveur n'existe plus.",
+
+  "proxy.add": "Ajouter une route pour tout le serveur"
+}

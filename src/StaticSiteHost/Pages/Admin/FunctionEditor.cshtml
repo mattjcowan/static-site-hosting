@@ -2,19 +2,28 @@
 @model StaticSiteHost.Pages.Admin.FunctionEditorModel
 @inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
 @{
-    ViewData["Title"] = Model.Domain is null ? "Global functions editor" : $"Functions — {Model.Domain}";
+    ViewData["Title"] = Model.Domain is null ? L["editor.pageTitle.global"].Value : L.Text("editor.pageTitle.site", new { domain = Model.Domain });
+
+    // What Deploy does differs by scope, and by whether something is live to be replaced.
+    var deployHint = (Model.Domain is null, Model.Live is null) switch
+    {
+        (true, true) => "editor.hint.deployGlobal",
+        (true, false) => "editor.hint.deployGlobalReplacing",
+        (false, true) => "editor.hint.deploySite",
+        (false, false) => "editor.hint.deploySiteReplacing",
+    };
 }
 
 @* Its editor lives in scripts bound at load, so the assistant must not swap this page's content in place. *@
 <div class="page-head" data-no-swap>
-    <h1>Function editor</h1>
+    <h1>@L["editor.title"]</h1>
     @if (Model.Domain is null)
     {
-        <p>Global functions: every site answers these after its own. <a asp-page="/Admin/Functions">Back to global functions</a></p>
+        <p>@L.Html("editor.intro.global", new { backUrl = Url.Page("/Admin/Functions") })</p>
     }
     else
     {
-        <p>Functions for <strong>@Model.Domain</strong>. <a asp-page="/Sites/Details" asp-route-domain="@Model.Domain" asp-fragment="functions">Back to the site</a></p>
+        <p>@L.Html("editor.intro.site", new { domain = Model.Domain, backUrl = Url.Page("/Sites/Details", null, new { domain = Model.Domain, tab = "app" }, null, null, "functions") })</p>
     }
 </div>
 
@@ -22,65 +31,59 @@
 <script id="fe-data" type="application/json">@Html.Raw(Model.BootstrapJson)</script>
 
 <div class="card">
-    <div class="fe-tabs" id="fe-tabs" role="tablist" aria-label="Files"></div>
+    <div class="fe-tabs" id="fe-tabs" role="tablist" aria-label="@L["editor.files"]"></div>
     <div class="fe-editor" id="fe-editor"></div>
 
     <div class="fe-toolbar">
-        <button type="button" id="fe-check">Check</button>
-        <button type="button" id="fe-deploy" class="btn-primary">Deploy</button>
+        <button type="button" id="fe-check">@L["editor.check"]</button>
+        <button type="button" id="fe-deploy" class="btn-primary">@L["editor.deploy"]</button>
         <span id="fe-status" class="muted" role="status"></span>
     </div>
     <p class="hint">
-        <strong>Check</strong> compiles exactly as a deploy would, without going live, so you can test the result below.
-        <strong>Deploy</strong> compiles again and makes these files the live functions@(Model.Domain is null ? " of every site" : "")@(Model.Live is null ? "." : $", replacing {Model.Live.Label}.")
-        Double-click a tab to rename it.
+        @L.Html("editor.hint.check")
+        @L.Html(deployHint, new { label = Model.Live is { } live ? StaticSiteHost.Pages.Shared.FunctionUploads.Label(live, L) : null })
     </p>
     <div id="fe-problems"></div>
 </div>
 
 <div class="card">
-    <h2>Test</h2>
-    <p class="hint">
-        Runs one request in memory against a build: no DNS, passcode or browser in the way. It runs your real code
-        against the site's real data folder, so anything a handler writes or sends, a test writes or sends too.
-        The request goes through the build's own middleware first, as a live one would; if a gate turns it away,
-        put what the gate asks for, such as a cookie or a token, in <strong>Headers</strong>.
-    </p>
+    <h2>@L["editor.test.title"]</h2>
+    <p class="hint">@L.Html("editor.test.hint")</p>
 
     <div class="row">
         <div class="field">
-            <label for="fe-target">Build</label>
+            <label for="fe-target">@L["editor.test.build"]</label>
             <select id="fe-target">
-                <option value="" disabled>Checked build (check first)</option>
-                <option value="live">Live</option>
+                <option value="" disabled>@L["editor.test.checkedBuild"]</option>
+                <option value="live">@L["editor.test.liveBuild"]</option>
             </select>
         </div>
         <div class="field">
-            <label for="fe-route">Route</label>
+            <label for="fe-route">@L["editor.test.route"]</label>
             <select id="fe-route"></select>
         </div>
     </div>
 
     <div class="row">
         <div class="field fe-method">
-            <label for="fe-method">Method</label>
+            <label for="fe-method">@L["editor.test.method"]</label>
             <select id="fe-method">
                 <option>GET</option><option>POST</option><option>PUT</option>
                 <option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
             </select>
         </div>
         <div class="field">
-            <label for="fe-path">Path</label>
+            <label for="fe-path">@L["editor.test.path"]</label>
             <input id="fe-path" type="text" spellcheck="false" autocomplete="off" value="/" />
         </div>
         <div class="field">
-            <label for="fe-query">Query string</label>
+            <label for="fe-query">@L["editor.test.query"]</label>
             <input id="fe-query" type="text" spellcheck="false" autocomplete="off" placeholder="page=2&amp;sort=name" />
         </div>
         @if (Model.Domain is null)
         {
             <div class="field">
-                <label for="fe-host">Host</label>
+                <label for="fe-host">@L["editor.test.domain"]</label>
                 <input id="fe-host" type="text" spellcheck="false" autocomplete="off" placeholder="demo.example.com" />
             </div>
         }
@@ -89,16 +92,16 @@
 
     <div class="grid-2">
         <div class="field">
-            <label for="fe-headers">Headers, one per line</label>
+            <label for="fe-headers">@L["editor.test.headers"]</label>
             <textarea id="fe-headers" rows="4" wrap="off" spellcheck="false" placeholder="Content-Type: application/json"></textarea>
         </div>
         <div class="field">
-            <label for="fe-body">Body</label>
+            <label for="fe-body">@L["editor.test.body"]</label>
             <textarea id="fe-body" rows="4" wrap="off" spellcheck="false" placeholder='{ "name": "Jane" }'></textarea>
         </div>
     </div>
 
-    <button type="button" id="fe-run" class="btn-primary">Run</button>
+    <button type="button" id="fe-run" class="btn-primary">@L["editor.test.run"]</button>
     <div id="fe-result" class="fe-result"></div>
 </div>
 

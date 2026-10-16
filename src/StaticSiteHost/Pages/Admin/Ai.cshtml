@@ -2,45 +2,40 @@
 @model StaticSiteHost.Pages.Admin.AiModel
 @using StaticSiteHost.Services.Ai
 @{
-    ViewData["Title"] = "AI";
+    ViewData["Title"] = L["ai.pageTitle"].Value;
 }
 
 <div class="page-head">
-    <h1>AI providers</h1>
-    <p>The AI services sites can chat through. Each site chooses one on its own page; the keys stay here.</p>
+    <h1>@L["ai.title"]</h1>
+    <p>@L["ai.intro"]</p>
 </div>
 
 <div class="card" id="assistant-settings">
     <h2>
-        Assistant
+        @L["ai.assistant.title"]
         @if (Model.Assistant.ProviderId is not null && Model.Providers.Any(p => p.Id == Model.Assistant.ProviderId))
         {
-            <span class="badge badge-ok">on</span>
+            <span class="badge badge-ok">@L["common.on"]</span>
         }
         else
         {
-            <span class="badge">off</span>
+            <span class="badge">@L["common.off"]</span>
         }
     </h2>
-    <p class="hint">
-        A chat panel on every page of this site, opened from <strong>Assistant</strong> in the top bar. Ask it to create a
-        site, forward paths to other servers, set headers or a passcode, or write and test functions, and it does it with
-        the same rights as whoever is signed in. It asks before deleting anything. Every message is billed to the
-        provider's key. A fast, inexpensive model works well, such as Claude Haiku.
-    </p>
+    <p class="hint">@L.Html("ai.assistant.hint")</p>
 
     @if (Model.Providers.Count == 0)
     {
-        <p class="muted">Add a provider below first.</p>
+        <p class="muted">@L["ai.assistant.noProviders"]</p>
     }
     else
     {
         <form method="post" asp-page-handler="Assistant">
             <div class="row">
                 <div class="field">
-                    <label for="assistant-provider">Provider</label>
+                    <label for="assistant-provider">@L["ai.assistant.provider"]</label>
                     <select id="assistant-provider" name="providerId">
-                        <option value="" selected="@(Model.Assistant.ProviderId is null)">Off</option>
+                        <option value="" selected="@(Model.Assistant.ProviderId is null)">@L["ai.assistant.providerOff"]</option>
                         @foreach (var provider in Model.Providers)
                         {
                             <option value="@provider.Id" selected="@(provider.Id == Model.Assistant.ProviderId)">@provider.Name (@provider.DefaultModel)</option>
@@ -48,39 +43,39 @@
                     </select>
                 </div>
                 <div class="field">
-                    <label for="assistant-model">Model</label>
+                    <label for="assistant-model">@L["ai.assistant.model"]</label>
                     <input id="assistant-model" name="model" type="text" autocomplete="off" spellcheck="false"
                            data-model-suggest data-model-provider="#assistant-provider"
-                           maxlength="@AiProviderStore.MaxModelLength" value="@Model.Assistant.Model" placeholder="the provider's default" />
+                           maxlength="@AiProviderStore.MaxModelLength" value="@Model.Assistant.Model" placeholder="@L["ai.assistant.modelPlaceholder"]" />
                 </div>
             </div>
             <div class="checkline" style="margin-top: 0.75rem">
                 <input id="assistant-members" name="membersMayUse" type="checkbox" value="true" checked="@Model.Assistant.MembersMayUse" />
-                <label for="assistant-members">Members may use it too (it can do only what a member can)</label>
+                <label for="assistant-members">@L["ai.assistant.members"]</label>
             </div>
             <input type="hidden" name="membersMayUse" value="false" />
             <div class="field" style="margin-top: 0.75rem; max-width: 22rem">
-                <label for="assistant-member-limit">Messages a member may send per day</label>
+                <label for="assistant-member-limit">@L["ai.assistant.memberLimit"]</label>
                 <input id="assistant-member-limit" name="memberMessagesPerDay" type="number" min="0" max="@StaticSiteHost.Services.Assistant.AssistantSettings.MaxMemberMessagesPerDay"
                        value="@Model.Assistant.MemberMessagesPerDay" />
-                <span class="hint">Counted per UTC day; 0 is no limit. Administrators are never limited.</span>
+                <span class="hint">@L["ai.assistant.memberLimitHint"]</span>
             </div>
-            <button type="submit" class="btn-primary" style="margin-top: 0.75rem">Save assistant settings</button>
+            <button type="submit" class="btn-primary" style="margin-top: 0.75rem">@L["ai.assistant.save"]</button>
         </form>
 
         @if (Model.UsageToday.Count > 0)
         {
-            <h3 class="fn-subhead" style="margin-top: 1.25rem">Used today <span class="muted">(@Model.UsageDay, UTC)</span></h3>
+            <h3 class="fn-subhead" style="margin-top: 1.25rem">@L["ai.assistant.usage.title"] <span class="muted">@L.Text("ai.assistant.usage.day", new { day = Model.UsageDay })</span></h3>
             <table>
                 <thead>
-                    <tr><th>User</th><th>Messages</th><th>Tokens in</th><th>Tokens out</th></tr>
+                    <tr><th>@L["ai.assistant.usage.user"]</th><th>@L["ai.assistant.usage.messages"]</th><th>@L["ai.assistant.usage.inputTokens"]</th><th>@L["ai.assistant.usage.outputTokens"]</th></tr>
                 </thead>
                 <tbody>
                     @foreach (var user in Model.UsageToday)
                     {
                         <tr>
-                            <td>@user.Username @if (user.Administrator) { <span class="badge">administrator</span> }</td>
-                            <td>@user.Messages@(!user.Administrator && Model.Assistant.MemberMessagesPerDay > 0 ? $" of {Model.Assistant.MemberMessagesPerDay}" : "")</td>
+                            <td>@user.Username @if (user.Administrator) { <span class="badge">@L["ai.assistant.usage.administrator"]</span> }</td>
+                            <td>@(!user.Administrator && Model.Assistant.MemberMessagesPerDay > 0 ? L.Text("ai.assistant.usage.messagesOfLimit", new { count = user.Messages, limit = Model.Assistant.MemberMessagesPerDay }) : user.Messages.ToString())</td>
                             <td>@user.InputTokens.ToString("N0")</td>
                             <td>@user.OutputTokens.ToString("N0")</td>
                         </tr>
@@ -92,28 +87,22 @@
 </div>
 
 <div class="card">
-    <h2>Add a provider</h2>
-    <p class="hint">
-        <strong>OpenAI-compatible</strong> covers OpenAI and anything that copies its chat completions API:
-        a LiteLLM proxy, Ollama, OpenRouter. Leave the base URL empty for OpenAI's or Anthropic's own. The key is
-        encrypted on this server and never shown again; leave it empty for a provider that needs none, such as a local
-        Ollama. Every chat is billed to the key's owner. Once the kind and key are filled in, the default model field
-        suggests the models the provider offers.
-    </p>
+    <h2>@L["ai.add.title"]</h2>
+    <p class="hint">@L["ai.add.hint"]</p>
 
     <form method="post" asp-page-handler="Create" class="ai-add">
         <div class="row">
             <div class="field">
-                <label for="ai-name">Name</label>
+                <label for="ai-name">@L["ai.field.name"]</label>
                 <input type="text" id="ai-name" name="name" required autocomplete="off" maxlength="@AiProviderStore.MaxNameLength"
-                       placeholder="Provider name" value="@Model.NewName" />
+                       placeholder="@L["ai.add.namePlaceholder"]" value="@Model.NewName" />
             </div>
             <div class="field" style="flex:0 1 300px">
-                <label for="ai-kind">Kind</label>
+                <label for="ai-kind">@L["ai.add.kind"]</label>
                 <select id="ai-kind" name="kind">
                     <option value="@AiProviderRecord.KindOpenAi" selected="@(Model.NewKind == AiProviderRecord.KindOpenAi)"
                             data-base-url="https://api.openai.com/v1" data-model="gpt-4o-mini">
-                        OpenAI-compatible (OpenAI, LiteLLM, Ollama, OpenRouter)
+                        @L["ai.add.kindOpenAi"]
                     </option>
                     <option value="@AiProviderRecord.KindAnthropic" selected="@(Model.NewKind == AiProviderRecord.KindAnthropic)"
                             data-base-url="https://api.anthropic.com" data-model="claude-sonnet-5">
@@ -122,24 +111,24 @@
                 </select>
             </div>
             <div class="field">
-                <label for="ai-base-url">Base URL</label>
+                <label for="ai-base-url">@L["ai.field.baseUrl"]</label>
                 <input type="text" id="ai-base-url" name="baseUrl" autocomplete="off" spellcheck="false"
                        maxlength="@AiProviderStore.MaxBaseUrlLength" placeholder="https://api.openai.com/v1" value="@Model.NewBaseUrl" />
             </div>
         </div>
         <div class="row ai-add-second">
             <div class="field">
-                <label for="ai-key">API key</label>
+                <label for="ai-key">@L["ai.field.apiKey"]</label>
                 <input type="password" id="ai-key" name="apiKey" autocomplete="new-password" spellcheck="false"
-                       placeholder="none" />
+                       placeholder="@L["ai.add.keyPlaceholder"]" />
             </div>
             <div class="field">
-                <label for="ai-model">Default model</label>
+                <label for="ai-model">@L["ai.field.defaultModel"]</label>
                 <input type="text" id="ai-model" name="defaultModel" required autocomplete="off" spellcheck="false"
                        data-model-suggest data-model-form
                        maxlength="@AiProviderStore.MaxModelLength" placeholder="gpt-4o-mini" value="@Model.NewModel" />
             </div>
-            <button type="submit" class="btn-primary">Add provider</button>
+            <button type="submit" class="btn-primary">@L["ai.add.submit"]</button>
         </div>
         @if (Model.AddError is not null)
         {
@@ -149,27 +138,24 @@
 </div>
 
 <div class="card">
-    <h2>Providers</h2>
+    <h2>@L["ai.providers.title"]</h2>
     @if (Model.Providers.Count == 0)
     {
-        <p class="muted">No providers yet. Add one above, then choose it for a site on the site's page, under AI.</p>
+        <p class="muted">@L["ai.providers.empty"]</p>
     }
     else
     {
-        <p class="hint">
-            <strong>Test</strong> sends &ldquo;@AiModel.TestPrompt&rdquo; and shows the answer, the model, the tokens it cost
-            and how long it took.
-        </p>
+        <p class="hint">@L.Html("ai.providers.testHint", new { prompt = AiModel.TestPrompt })</p>
         <div class="table-wrap">
             <table class="ai-providers">
                 <thead>
                     <tr>
-                        <th>Provider</th>
-                        <th>Base URL</th>
-                        <th>Default model</th>
-                        <th>Key</th>
-                        <th>Sites</th>
-                        <th>Added</th>
+                        <th>@L["ai.providers.provider"]</th>
+                        <th>@L["ai.field.baseUrl"]</th>
+                        <th>@L["ai.field.defaultModel"]</th>
+                        <th>@L["ai.providers.key"]</th>
+                        <th>@L["ai.providers.sites"]</th>
+                        <th>@L["ai.providers.added"]</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -177,77 +163,74 @@
                     @foreach (var provider in Model.Providers)
                     {
                         var sites = Model.Sites(provider);
-                        var confirm = sites switch
-                        {
-                            0 => $"Delete {provider.Name} and its key?",
-                            1 => $"Delete {provider.Name} and its key? The site that uses it will have no AI until it is given another provider.",
-                            _ => $"Delete {provider.Name} and its key? The {sites} sites that use it will have no AI until they are given another provider."
-                        };
+                        var confirm = sites == 0
+                            ? L.Text("ai.providers.deleteConfirm", new { name = provider.Name })
+                            : L.Plural("ai.providers.deleteConfirmUsed", sites, new { name = provider.Name });
 
                         <tr>
                             <td>
                                 <strong>@provider.Name</strong>
                                 <br />
-                                <span class="badge">@(provider.Kind == AiProviderRecord.KindAnthropic ? "anthropic" : "openai-compatible")</span>
+                                <span class="badge">@(provider.Kind == AiProviderRecord.KindAnthropic ? "Anthropic" : L["ai.providers.kindOpenAi"].Value)</span>
                             </td>
                             <td class="mono ai-url">@provider.BaseUrl</td>
                             <td class="mono">@provider.DefaultModel</td>
                             <td>
                                 @if (provider.HasApiKey)
                                 {
-                                    <span class="badge badge-ok">set</span>
+                                    <span class="badge badge-ok">@L["ai.providers.keySet"]</span>
                                 }
                                 else
                                 {
-                                    <span class="badge">none</span>
+                                    <span class="badge">@L["ai.providers.keyNone"]</span>
                                 }
                             </td>
                             <td>@sites</td>
                             <td class="nowrap muted">
                                 @provider.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                                 <br />
-                                by @(provider.CreatedBy ?? "unknown")
+                                @(provider.CreatedBy is { } createdBy ? L.Text("ai.providers.addedBy", new { user = createdBy }) : L["ai.providers.addedByUnknown"].Value)
                             </td>
                             <td class="actions">
-                                <form method="post" asp-page-handler="Test" data-busy="Testing…">
+                                <form method="post" asp-page-handler="Test" data-busy="@L["ai.providers.testing"]">
                                     <input type="hidden" name="id" value="@provider.Id" />
-                                    <button type="submit" class="btn btn-sm">Test</button>
+                                    <button type="submit" class="btn btn-sm">@L["common.test"]</button>
                                 </form>
                                 <form method="post" asp-page-handler="Delete" data-confirm="@confirm">
                                     <input type="hidden" name="id" value="@provider.Id" />
-                                    <button type="submit" class="btn-link danger">Delete</button>
+                                    <button type="submit" class="btn-link danger">@L["common.delete"]</button>
                                 </form>
                             </td>
                         </tr>
                         <tr class="ai-edit-row">
                             <td colspan="7">
                                 <details>
-                                    <summary>Edit @provider.Name</summary>
+                                    <summary>@L.Text("ai.providers.edit", new { name = provider.Name })</summary>
                                     <form method="post" asp-page-handler="Update" class="row ai-edit">
                                         <input type="hidden" name="id" value="@provider.Id" />
                                         <div class="field">
-                                            <label for="name-@provider.Id">Name</label>
+                                            <label for="name-@provider.Id">@L["ai.field.name"]</label>
                                             <input type="text" id="name-@provider.Id" name="name" required autocomplete="off"
                                                    maxlength="@AiProviderStore.MaxNameLength" value="@provider.Name" />
                                         </div>
                                         <div class="field">
-                                            <label for="url-@provider.Id">Base URL</label>
+                                            <label for="url-@provider.Id">@L["ai.field.baseUrl"]</label>
                                             <input type="text" id="url-@provider.Id" name="baseUrl" required autocomplete="off" spellcheck="false"
                                                    maxlength="@AiProviderStore.MaxBaseUrlLength" value="@provider.BaseUrl" />
                                         </div>
                                         <div class="field">
-                                            <label for="model-@provider.Id">Default model</label>
+                                            <label for="model-@provider.Id">@L["ai.field.defaultModel"]</label>
                                             <input type="text" id="model-@provider.Id" name="defaultModel" required autocomplete="off" spellcheck="false"
                                                    data-model-suggest data-model-provider-id="@provider.Id"
                                                    maxlength="@AiProviderStore.MaxModelLength" value="@provider.DefaultModel" />
                                         </div>
                                         <div class="field">
-                                            <label for="key-@provider.Id">New API key</label>
+                                            <label for="key-@provider.Id">@L["ai.providers.newKey"]</label>
                                             @* Never filled in: the key does not come back to the page, and an empty box leaves it alone. *@
                                             <input type="password" id="key-@provider.Id" name="apiKey" autocomplete="new-password"
-                                                   spellcheck="false" placeholder="unchanged" />
+                                                   spellcheck="false" placeholder="@L["ai.providers.newKeyPlaceholder"]" />
                                         </div>
-                                        <button type="submit" class="btn-primary">Save</button>
+                                        <button type="submit" class="btn-primary">@L["common.save"]</button>
                                     </form>
                                 </details>
                             </td>

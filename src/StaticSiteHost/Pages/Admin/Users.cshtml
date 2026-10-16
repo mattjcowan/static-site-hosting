@@ -1,26 +1,23 @@
 @page
 @model StaticSiteHost.Pages.Admin.UsersModel
 @{
-    ViewData["Title"] = "Users";
+    ViewData["Title"] = L["users.pageTitle"].Value;
     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 }
 
 <div class="page-head">
-    <h1>Users</h1>
-    <p>Create accounts, hand out private links, and decide who administers this server.</p>
+    <h1>@L["users.title"]</h1>
+    <p>@L["users.intro"]</p>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.InviteLink))
 {
     <div class="secret-box">
-        <h2>Private link for @Model.SecretFor</h2>
-        <p class="hint">
-            Send this to them over a channel you trust. It works once and expires in @Model.InviteLifetimeHours hours.
-            It is not shown again — generate a new one if you lose it.
-        </p>
+        <h2>@L.Text("users.link.title", new { username = Model.SecretFor })</h2>
+        <p class="hint">@L.PluralHtml("users.link.hint", Model.InviteLifetimeHours)</p>
         <div class="copyfield">
             <input type="text" id="invite-link" value="@Model.InviteLink" readonly onclick="this.select()" />
-            <button type="button" class="btn" data-copy="#invite-link">Copy</button>
+            <button type="button" class="btn" data-copy="#invite-link">@L["common.copy"]</button>
         </div>
     </div>
 }
@@ -28,60 +25,60 @@
 @if (!string.IsNullOrEmpty(Model.TemporaryPassword))
 {
     <div class="secret-box">
-        <h2>Temporary password for @Model.SecretFor</h2>
-        <p class="hint">Shown once. They will be forced to choose their own password at first sign-in.</p>
+        <h2>@L.Text("users.password.title", new { username = Model.SecretFor })</h2>
+        <p class="hint">@L["users.password.hint"]</p>
         <div class="copyfield">
             <input type="text" id="temp-password" value="@Model.TemporaryPassword" readonly onclick="this.select()" />
-            <button type="button" class="btn" data-copy="#temp-password">Copy</button>
+            <button type="button" class="btn" data-copy="#temp-password">@L["common.copy"]</button>
         </div>
     </div>
 }
 
 <div class="card">
-    <h2>Add a user</h2>
-    <p class="hint">New accounts start as members. You can promote them afterwards.</p>
+    <h2>@L["users.add.title"]</h2>
+    <p class="hint">@L["users.add.hint"]</p>
 
     <form method="post" asp-page-handler="Create">
         <div class="row">
             <div class="field">
-                <label for="username">Username</label>
+                <label for="username">@L["users.add.username"]</label>
                 <input type="text" id="username" name="username" required autocomplete="off"
-                       placeholder="jordan" maxlength="64" />
+                       placeholder="@L["users.add.usernamePlaceholder"]" maxlength="64" />
             </div>
             <div class="field">
-                <label for="displayName">Display name</label>
+                <label for="displayName">@L["users.add.displayName"]</label>
                 <input type="text" id="displayName" name="displayName" autocomplete="off"
-                       placeholder="Jordan Reyes" maxlength="128" />
+                       placeholder="@L["users.add.displayNamePlaceholder"]" maxlength="128" />
             </div>
             <div class="field" style="flex:0 1 170px">
-                <label for="role">Role</label>
+                <label for="role">@L["users.add.role"]</label>
                 <select id="role" name="role">
-                    <option value="@Roles.Member" selected>Member</option>
-                    <option value="@Roles.Administrator">Administrator</option>
+                    <option value="@Roles.Member" selected>@L["users.role.member"]</option>
+                    <option value="@Roles.Administrator">@L["users.role.administrator"]</option>
                 </select>
             </div>
             <div class="field" style="flex:0 1 220px">
-                <label for="credential">First sign-in</label>
+                <label for="credential">@L["users.add.firstSignIn"]</label>
                 <select id="credential" name="credential">
-                    <option value="invite" selected>Private link</option>
-                    <option value="password">Temporary password</option>
+                    <option value="invite" selected>@L["users.add.privateLink"]</option>
+                    <option value="password">@L["users.add.temporaryPassword"]</option>
                 </select>
             </div>
-            <button type="submit" class="btn-primary">Create user</button>
+            <button type="submit" class="btn-primary">@L["users.add.create"]</button>
         </div>
     </form>
 </div>
 
 <div class="card">
-    <h2>All users</h2>
+    <h2>@L["users.list.title"]</h2>
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
-                    <th>User</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Last signed in</th>
+                    <th>@L["users.list.user"]</th>
+                    <th>@L["users.list.role"]</th>
+                    <th>@L["users.list.status"]</th>
+                    <th>@L["users.list.lastSignedIn"]</th>
                     <th></th>
                 </tr>
             </thead>
@@ -94,45 +91,45 @@
                             <strong>@user.Username</strong>
                             @if (isSelf)
                             {
-                                <span class="badge">you</span>
+                                <span class="badge">@L["users.list.you"]</span>
                             }
                             @if (user.IsBootstrap)
                             {
-                                <span class="badge">bootstrap</span>
+                                <span class="badge">@L["users.list.firstAccount"]</span>
                             }
                             <br />
                             <span class="muted">@user.DisplayName</span>
                         </td>
                         <td>
-                            <span class="badge @(user.IsAdministrator ? "badge-admin" : null)">@user.Role</span>
+                            <span class="badge @(user.IsAdministrator ? "badge-admin" : null)">@(user.IsAdministrator ? L["users.role.administrator"] : L["users.role.member"])</span>
                         </td>
                         <td>
                             @if (user.IsDisabled)
                             {
-                                <span class="badge badge-off">disabled</span>
+                                <span class="badge badge-off">@L["users.status.blocked"]</span>
                             }
                             else if (!user.HasPassword && user.HasPendingInvite)
                             {
-                                <span class="badge badge-warn">invited</span>
+                                <span class="badge badge-warn">@L["users.status.linkSent"]</span>
                             }
                             else if (!user.HasPassword)
                             {
-                                <span class="badge badge-warn">no password</span>
+                                <span class="badge badge-warn">@L["users.status.noPassword"]</span>
                             }
                             else if (user.MustChangePassword)
                             {
-                                <span class="badge badge-warn">must change password</span>
+                                <span class="badge badge-warn">@L["users.status.mustChangePassword"]</span>
                             }
                             else
                             {
-                                <span class="badge badge-ok">active</span>
+                                <span class="badge badge-ok">@L["users.status.active"]</span>
                             }
                         </td>
-                        <td class="nowrap muted">@(user.LastLoginUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</td>
+                        <td class="nowrap muted">@(user.LastLoginUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? L["users.list.never"].Value)</td>
                         <td class="actions">
                             <form method="post" asp-page-handler="Invite">
                                 <input type="hidden" name="userId" value="@user.Id" />
-                                <button type="submit" class="btn-link">New link</button>
+                                <button type="submit" class="btn-link">@L["users.action.newLink"]</button>
                             </form>
 
                             @if (!isSelf)
@@ -140,21 +137,21 @@
                                 <form method="post" asp-page-handler="Role">
                                     <input type="hidden" name="userId" value="@user.Id" />
                                     <input type="hidden" name="role" value="@(user.IsAdministrator ? Roles.Member : Roles.Administrator)" />
-                                    <button type="submit" class="btn-link">@(user.IsAdministrator ? "Demote" : "Promote")</button>
+                                    <button type="submit" class="btn-link">@(user.IsAdministrator ? L["users.action.makeMember"] : L["users.action.makeAdministrator"])</button>
                                 </form>
 
                                 <form method="post" asp-page-handler="Disable">
                                     <input type="hidden" name="userId" value="@user.Id" />
                                     <input type="hidden" name="disabled" value="@((!user.IsDisabled).ToString().ToLowerInvariant())" />
-                                    <button type="submit" class="btn-link">@(user.IsDisabled ? "Enable" : "Disable")</button>
+                                    <button type="submit" class="btn-link">@(user.IsDisabled ? L["users.action.allow"] : L["users.action.block"])</button>
                                 </form>
 
                                 @if (!user.IsBootstrap)
                                 {
                                     <form method="post" asp-page-handler="Delete"
-                                          data-confirm="Delete @user.Username? Their API keys stop working immediately.">
+                                          data-confirm="@L.Text("users.action.deleteConfirm", new { username = user.Username })">
                                         <input type="hidden" name="userId" value="@user.Id" />
-                                        <button type="submit" class="btn-link danger">Delete</button>
+                                        <button type="submit" class="btn-link danger">@L["common.delete"]</button>
                                     </form>
                                 }
                             }

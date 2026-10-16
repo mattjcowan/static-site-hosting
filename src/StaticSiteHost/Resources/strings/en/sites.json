@@ -1,0 +1,25 @@
+{
+  "sites.title": "Sites",
+  "sites.intro": "Every domain this server answers for.",
+
+  "sites.new.title": "New site",
+  "sites.new.hint": "Creates a site with no files: for a site made of proxy routes, or to set one up before its first deploy. To publish files, [deploy a zip](deployUrl) instead. That creates the site too.",
+  "sites.new.domain": "Domain",
+  "sites.new.domainPlaceholder": "app.example.com",
+  "sites.new.create": "Create site",
+  "sites.new.createdAdmin": "{domain} was created with no files. Add proxy routes here, or deploy a zip to it.",
+  "sites.new.createdMember": "{domain} was created with no files. Deploy a zip to it, or ask an administrator to add proxy routes.",
+
+  "sites.empty": "There are no sites yet. [Deploy your first site](deployUrl), or create one above.",
+  "sites.column.domain": "Domain",
+  "sites.column.files": "Files",
+  "sites.column.size": "Size",
+  "sites.column.updated": "Updated",
+  "sites.column.by": "By",
+  "sites.badge.passcode": "passcode",
+  "sites.badge.passcodeTitle": "Visitors must enter a passcode",
+  "sites.badge.routes.one": "{count} proxy route",
+  "sites.badge.routes.other": "{count} proxy routes",
+  "sites.badge.routesTitle": "Paths forwarded to other servers",
+  "sites.manage": "Manage"
+}

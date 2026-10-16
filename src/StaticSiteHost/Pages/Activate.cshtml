@@ -1,26 +1,26 @@
 @page
 @model ActivateModel
 @{
-    ViewData["Title"] = "Set your password";
+    ViewData["Title"] = L["auth.activate.title"].Value;
 }
 
 <div class="narrow">
     @if (!Model.TokenIsValid)
     {
         <div class="page-head">
-            <h1>This link is no longer valid</h1>
-            <p>Invitation links expire, and each one can only be used once.</p>
+            <h1>@L["auth.activate.invalid.title"]</h1>
+            <p>@L["auth.activate.invalid.intro"]</p>
         </div>
         <div class="card">
-            <p class="hint">Ask an administrator to send you a new link, then try again.</p>
-            <a class="btn" asp-page="/Login">Go to sign in</a>
+            <p class="hint">@L["auth.activate.invalid.hint"]</p>
+            <a class="btn" asp-page="/Login">@L["auth.activate.invalid.signIn"]</a>
         </div>
     }
     else
     {
         <div class="page-head">
-            <h1>Set your password</h1>
-            <p>Choose a password for <strong>@Model.Username</strong>.</p>
+            <h1>@L["auth.activate.title"]</h1>
+            <p>@L.Html("auth.activate.intro", new { username = Model.Username })</p>
         </div>
 
         <div class="card">
@@ -38,16 +38,16 @@
                 }
 
                 <div class="field">
-                    <label asp-for="Input.Password">New password</label>
+                    <label asp-for="Input.Password">@L["auth.activate.password"]</label>
                     <input asp-for="Input.Password" type="password" autocomplete="new-password" autofocus required />
                 </div>
 
                 <div class="field">
-                    <label asp-for="Input.ConfirmPassword">Confirm password</label>
+                    <label asp-for="Input.ConfirmPassword">@L["auth.activate.confirm"]</label>
                     <input asp-for="Input.ConfirmPassword" type="password" autocomplete="new-password" required />
                 </div>
 
-                <button type="submit" class="btn-primary" style="width:100%">Set password and sign in</button>
+                <button type="submit" class="btn-primary" style="width:100%">@L["auth.activate.submit"]</button>
             </form>
         </div>
     }

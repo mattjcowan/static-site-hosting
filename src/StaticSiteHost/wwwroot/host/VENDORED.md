@@ -44,3 +44,29 @@ vendored, so a browser's developer tools may note that it could not load it; not
 
 `site.js` asks for `/_host/signalr.js?v=<host version>` and the file is cached for a day, so a new
 host version is fetched fresh; nothing else needs changing.
+
+## Icons (Pages/Shared/Icons.cs)
+
+The management app's icons are the shapes of [Lucide](https://lucide.dev) icons (box, cloud-upload,
+globe, users, code, route, lock, sparkle, circle-user, search, message-square, menu, panel-left,
+log-out, monitor, sun, moon, languages, palette, external-link, arrow-right, file, file-plus, folder,
+image, upload, download, chevron-right, save, undo, git-compare, pencil, trash), written inline as SVG
+path data, some with coordinates rounded.
+
+Lucide is under the ISC licence:
+
+> ISC License
+>
+> Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT).
+> All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+>
+> Permission to use, copy, modify, and/or distribute this software for any purpose with or without
+> fee is hereby granted, provided that the above copyright notice and this permission notice
+> appear in all copies.
+>
+> THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+> SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE
+> AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+> WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+> NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+> OF THIS SOFTWARE.

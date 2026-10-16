@@ -100,6 +100,14 @@ public static class ProxySites
         return [.. siteRoutes, .. inherited];
     }
 
+    // What ForSite says of each route. The API returns these words as they are; the pages show
+    // each in the viewer's language (Pages/Shared/ProxyStateNames.cs).
+    public const string StateOn = "on";
+    public const string StateOffEverywhere = "switched off for every site";
+    public const string StateOverridden = "overridden by this site's own route";
+    public const string StateOffHere = "off for this site";
+    public const string StateCloserMatch = "another server-wide route at this path names this site more closely";
+
     /// <summary>
     /// The server-wide routes a site's page and the API list for it: each that applies, and
     /// whether it is in effect or why not.
@@ -114,11 +122,11 @@ public static class ProxySites
         foreach (var route in serverRoutes.Where(r => Match(r.Sites, domain) is not null).OrderBy(r => r.Path, StringComparer.OrdinalIgnoreCase))
         {
             yield return (route,
-                effective.Contains(route) ? "on"
-                : !route.Enabled ? "switched off for every site"
-                : own.Contains(route.Path) ? "overridden by this site's own route"
-                : off.Contains(route.Path) ? "off for this site"
-                : "another server-wide route at this path names this site more closely");
+                effective.Contains(route) ? StateOn
+                : !route.Enabled ? StateOffEverywhere
+                : own.Contains(route.Path) ? StateOverridden
+                : off.Contains(route.Path) ? StateOffHere
+                : StateCloserMatch);
         }
     }
 }

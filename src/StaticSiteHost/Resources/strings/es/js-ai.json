@@ -1,0 +1,13 @@
+{
+  "js.ai.models.show": "Mostrar los modelos",
+  "js.ai.models.chooseProvider": "Primero elige un proveedor.",
+  "js.ai.models.loading": "Pidiendo los modelos al proveedor…",
+  "js.ai.models.none": "El proveedor no indicó ningún modelo de chat. Escribe el nombre del modelo.",
+  "js.ai.models.found.one": "{count} modelo del proveedor. Puedes escribir cualquier nombre.",
+  "js.ai.models.found.other": "{count} modelos del proveedor. Puedes escribir cualquier nombre.",
+  "js.ai.models.foundFastFirst.one": "{count} modelo del proveedor, con los rápidos primero. Puedes escribir cualquier nombre.",
+  "js.ai.models.foundFastFirst.other": "{count} modelos del proveedor, con los rápidos primero. Puedes escribir cualquier nombre.",
+  "js.ai.models.failed": "No se pudieron mostrar los modelos. Escribe el nombre del modelo.",
+  "js.ai.models.noMatch": "Ningún modelo coincide con “{typed}”. Puedes usarlo de todas formas.",
+  "js.ai.models.fast": "rápido"
+}

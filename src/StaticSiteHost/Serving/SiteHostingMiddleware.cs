@@ -1,8 +1,12 @@
 using System.Globalization;
 using System.Net;
+using System.Text.Encodings.Web;
+using Microsoft.AspNetCore.Html;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
 using StaticSiteHost.Hubs;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 using StaticSiteHost.Services.Realtime;
@@ -45,6 +49,7 @@ public sealed class SiteHostingMiddleware
     private readonly RealtimeRegistry _realtime;
     private readonly RealtimeNegotiationLimiter _negotiations;
     private readonly SiteHostingOptions _options;
+    private readonly IStringLocalizer<Strings> _strings;
 
     public SiteHostingMiddleware(
         RequestDelegate next,
@@ -56,7 +61,8 @@ public sealed class SiteHostingMiddleware
         FunctionHost functions,
         RealtimeRegistry realtime,
         RealtimeNegotiationLimiter negotiations,
-        IOptions<SiteHostingOptions> options)
+        IOptions<SiteHostingOptions> options,
+        IStringLocalizer<Strings> strings)
     {
         _next = next;
         _sites = sites;
@@ -68,6 +74,7 @@ public sealed class SiteHostingMiddleware
         _realtime = realtime;
         _negotiations = negotiations;
         _options = options.Value;
+        _strings = strings;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -114,13 +121,18 @@ public sealed class SiteHostingMiddleware
             return;
         }
 
-        context.Response.StatusCode = StatusCodes.Status404NotFound;
-        context.Response.ContentType = "text/html; charset=utf-8";
-        context.Response.Headers.CacheControl = "no-store";
-        await context.Response.WriteAsync($"""
-            <!doctype html><meta charset="utf-8"><title>404 — No site here</title>
-            <p>No site is published at <strong>{WebUtility.HtmlEncode(host)}</strong>.</p>
-            """);
+        // In the visitor's language and the server's branding. The domain is encoded where the string puts it, in bold.
+        var heading = _strings.Text("visitor.noSite.title");
+        await VisitorPage.WriteMessageAsync(context, StatusCodes.Status404NotFound,
+            _strings.Text("visitor.page.title", new { status = StatusCodes.Status404NotFound, title = heading }),
+            heading, Render(_strings.Html("visitor.noSite.detail", new { domain = host })));
+    }
+
+    private static string Render(IHtmlContent html)
+    {
+        using var writer = new StringWriter();
+        html.WriteTo(writer, HtmlEncoder.Default);
+        return writer.ToString();
     }
 
     /// <summary>

@@ -1,0 +1,10 @@
+{
+  "js.common.theme.system": "Couleurs du système",
+  "js.common.theme.light": "Clair",
+  "js.common.theme.dark": "Sombre",
+  "js.common.theme.systemTitle": "Couleurs : suivre le système",
+  "js.common.theme.lightTitle": "Couleurs : clair",
+  "js.common.theme.darkTitle": "Couleurs : sombre",
+  "js.common.goTo.site": "Site",
+  "js.common.goTo.nothing": "Aucun résultat."
+}

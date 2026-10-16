@@ -63,6 +63,23 @@ public sealed class SiteFiles
         return await File.ReadAllBytesAsync(full, ct);
     }
 
+    /// <summary>
+    /// One file to read as a stream, or null when the release has no such file. A configuration
+    /// file is its text, as <see cref="ReadAsync"/> gives it; any other file is opened where it is.
+    /// </summary>
+    public Stream? Open(SiteRecord site, ReleaseRecord release, string path)
+    {
+        var relative = (path ?? "").Trim().TrimStart('/');
+        if (Configuration(release).Where(c => c.Name == relative).Select(c => c.Text).FirstOrDefault() is { } text)
+            return new MemoryStream(Encoding.UTF8.GetBytes(text), writable: false);
+
+        var dir = _paths.ReleaseDir(site.Domain, release.Id);
+        var full = Path.GetFullPath(Path.Combine(dir, relative));
+        if (!PathHelpers.IsInside(dir, full) || !File.Exists(full)) return null;
+
+        return new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+    }
+
     /// <summary>The release as a zip, written to <paramref name="output"/> as it is built.</summary>
     public async Task WriteZipAsync(SiteRecord site, ReleaseRecord release, Stream output, CancellationToken ct)
     {

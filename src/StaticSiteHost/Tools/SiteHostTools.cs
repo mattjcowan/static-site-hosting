@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using StaticSiteHost.Endpoints;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
@@ -262,23 +263,27 @@ public static class SiteHostTools
     // ================================================================ a site's files, one at a time
 
     [SiteHostTool("list_site_files", ToolEffect.Read)]
-    [Description("The files of a site's live release, with their sizes. Includes _headers, _redirects and _variables.json when the site has rules or variable declarations from its files.")]
-    public static async Task<JsonElement> ListSiteFiles(IServiceProvider services, [Description("The site's domain.")] string domain) =>
-        await WithSiteAsync(services, domain, site => Task.FromResult<object>(SiteFiles.ReleaseOf(site, null) is { } release
-            ? new { domain = site.Domain, release = release.Id, files = services.GetRequiredService<SiteFiles>().List(site, release).Take(500) }
-            : new { error = $"{site.Domain} has no files yet. deploy_files or write_site_files adds some." }));
+    [Description("The files of a site's live release, or of the release named, with their sizes. Includes _headers, _redirects and _variables.json when the release has rules or variable declarations.")]
+    public static async Task<JsonElement> ListSiteFiles(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("A release id from get_site; leave out for the live release.")] string? release = null) =>
+        await WithSiteAsync(services, domain, site => Task.FromResult<object>(SiteFiles.ReleaseOf(site, release) is { } chosen
+            ? new { domain = site.Domain, release = chosen.Id, live = chosen.Id == site.CurrentRelease, files = services.GetRequiredService<SiteFiles>().List(site, chosen).Take(500) }
+            : new { error = release is null ? $"{site.Domain} has no files yet. deploy_files or write_site_files adds some." : $"{site.Domain} has no release {release}." }));
 
     [SiteHostTool("read_site_file", ToolEffect.Read)]
-    [Description("One file of a site's live release, as text. For a large file the text may be cut short (the result says so): then change it with edit_site_file, which needs only the parts it changes, never with write_site_files, which would drop the part not read.")]
+    [Description("One file of a site's live release, or of the release named, as text. For a large file the text may be cut short (the result says so): then change it with edit_site_file, which needs only the parts it changes, never with write_site_files, which would drop the part not read.")]
     public static async Task<JsonElement> ReadSiteFile(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
         [Description("The file's path in the site, such as index.html or css/site.css.")] string path,
+        [Description("A release id from get_site; leave out for the live release.")] string? release = null,
         CancellationToken ct = default) =>
         await WithSiteAsync(services, domain, async site =>
         {
-            if (SiteFiles.ReleaseOf(site, null) is not { } release) return new { error = $"{site.Domain} has no files yet." };
-            var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, release, path, ct);
+            if (SiteFiles.ReleaseOf(site, release) is not { } chosen) return new { error = release is null ? $"{site.Domain} has no files yet." : $"{site.Domain} has no release {release}." };
+            var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, chosen, path, ct);
             if (bytes is null) return new { error = $"{site.Domain} has no file '{path}'. list_site_files shows what it has." };
 
             string text;
@@ -297,13 +302,19 @@ public static class SiteHostTools
                 : new { path, size = bytes.Length, text = text[..Shown], cutShort = $"Only the first {Shown:N0} of {text.Length:N0} characters are shown. Change this file with edit_site_file." };
         });
 
+    // What the three tools that change files say about where the change goes.
+    private const string InPlace =
+        "The change is made in the release itself: in the live release, visitors get it at once. " +
+        "Before a change you may want to undo, call duplicate_release on the live release; rollback_site to the copy undoes it.";
+
     [SiteHostTool("edit_site_file", ToolEffect.Change)]
-    [Description("Changes parts of one file of a site, and keeps every other file: each edit replaces text that appears exactly once in the file. The safe way to change an existing page, script or stylesheet; read_site_file shows its text first. Makes a new release, so it can be rolled back.")]
+    [Description("Changes parts of one file of a site, and keeps every other file: each edit replaces text that appears exactly once in the file. The safe way to change an existing page, script or stylesheet; read_site_file shows its text first. " + InPlace)]
     public static async Task<JsonElement> EditSiteFile(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
         [Description("The file's path in the site, such as index.html.")] string path,
         [Description("The edits, applied in order: find (text exactly as it is in the file, appearing once) and replace (what it becomes; empty removes it).")] IReadOnlyList<FileEdit> edits,
+        [Description("A release id from get_site to change instead of the live one; leave out for the live release.")] string? release = null,
         CancellationToken ct = default)
     {
         var caller = Caller.Of(services);
@@ -311,27 +322,28 @@ public static class SiteHostTools
 
         return await WithSiteAsync(services, domain, async site =>
         {
-            if (SiteFiles.ReleaseOf(site, null) is not { } release) return new { error = $"{site.Domain} has no files yet." };
-            var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, release, path, ct);
+            if (SiteFiles.ReleaseOf(site, release) is not { } chosen) return new { error = release is null ? $"{site.Domain} has no files yet." : $"{site.Domain} has no release {release}." };
+            var bytes = await services.GetRequiredService<SiteFiles>().ReadAsync(site, chosen, path, ct);
             if (bytes is null) return new { error = $"{site.Domain} has no file '{path}'. Use write_site_files to add it." };
 
             var (text, editError) = ApplyEdits(Encoding.UTF8.GetString(bytes), edits, path, "read_site_file");
             if (text is null) return new { error = editError };
 
-            var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(
-                site.Domain, [new(path, Encoding.UTF8.GetBytes(text))], [], caller.Actor, "tools", caller.IsAdministrator, ct);
+            var result = await services.GetRequiredService<ZipDeploymentService>().EditFilesAsync(
+                site.Domain, chosen.Id, [new(path, Encoding.UTF8.GetBytes(text))], [], caller.Actor, "tools", caller.IsAdministrator, ct: ct);
             return result.Ok
-                ? new { ok = true, path, release = result.Release!.Id, edits = edits.Count, warnings = result.Warnings ?? [] }
-                : (object)new { error = result.Error };
+                ? new { ok = true, path, release = result.Release!.Id, live = result.Live, edits = edits.Count, warnings = result.Warnings ?? [] }
+                : (object)new { error = FileEditMessages.English(services.GetRequiredService<StringCatalog>(), result.Error!) };
         });
     }
 
     [SiteHostTool("write_site_files", ToolEffect.Change)]
-    [Description("Adds files to a site, or replaces them whole, and keeps every other file. For new files, or to rewrite a file you have read in full; to change part of a file, use edit_site_file. Creates the site's first release when it has none. Makes a new release, so it can be rolled back.")]
+    [Description("Adds files to a site, or replaces them whole, and keeps every other file. For new files, or to rewrite a file you have read in full; to change part of a file, use edit_site_file. Creates the site's first release when it has none. " + InPlace)]
     public static async Task<JsonElement> WriteSiteFiles(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
         [Description("The files: path, and the text as content (binary: base64 content with base64 true).")] IReadOnlyList<SiteFileInput> files,
+        [Description("A release id from get_site to change instead of the live one; leave out for the live release.")] string? release = null,
         CancellationToken ct = default)
     {
         var caller = Caller.Of(services);
@@ -350,28 +362,44 @@ public static class SiteHostTools
             }
         }
 
-        var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(domain, writes, [], caller.Actor, "tools", caller.IsAdministrator, ct);
+        var result = await services.GetRequiredService<ZipDeploymentService>().EditFilesAsync(domain, release, writes, [], caller.Actor, "tools", caller.IsAdministrator, ct: ct);
         return result.Ok
-            ? ToJson(new { ok = true, domain = result.Domain, release = result.Release!.Id, fileCount = result.Release.FileCount, warnings = result.Warnings ?? [] })
-            : Error(result.Error);
+            ? ToJson(new { ok = true, domain = SiteStore.NormalizeDomain(domain).Domain, release = result.Release!.Id, live = result.Live, fileCount = result.Release.FileCount, warnings = result.Warnings ?? [] })
+            : Error(FileEditMessages.English(services.GetRequiredService<StringCatalog>(), result.Error!));
     }
 
     [SiteHostTool("delete_site_files", ToolEffect.Destructive)]
-    [Description("Deletes files from a site and keeps the rest. Makes a new release, so the old one can be rolled back to.")]
+    [Description("Deletes files or folders from a site and keeps the rest. " + InPlace)]
     public static async Task<JsonElement> DeleteSiteFiles(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
-        [Description("The paths of the files to delete.")] IReadOnlyList<string> paths,
+        [Description("The paths of the files or folders to delete.")] IReadOnlyList<string> paths,
+        [Description("A release id from get_site to change instead of the live one; leave out for the live release.")] string? release = null,
         CancellationToken ct = default)
     {
         var caller = Caller.Of(services);
         if (paths is not { Count: > 0 }) return Error("Give at least one path.");
 
-        var result = await services.GetRequiredService<ZipDeploymentService>().UpdateFilesAsync(domain, [], paths, caller.Actor, "tools", caller.IsAdministrator, ct);
+        var result = await services.GetRequiredService<ZipDeploymentService>().EditFilesAsync(domain, release, [], paths, caller.Actor, "tools", caller.IsAdministrator, ct: ct);
         return result.Ok
-            ? ToJson(new { ok = true, domain = result.Domain, release = result.Release!.Id, fileCount = result.Release.FileCount, warnings = result.Warnings ?? [] })
-            : Error(result.Error);
+            ? ToJson(new { ok = true, domain = SiteStore.NormalizeDomain(domain).Domain, release = result.Release!.Id, live = result.Live, fileCount = result.Release.FileCount, deleted = result.Deleted, warnings = result.Warnings ?? [] })
+            : Error(FileEditMessages.English(services.GetRequiredService<StringCatalog>(), result.Error!));
     }
+
+    [SiteHostTool("duplicate_release", ToolEffect.Change)]
+    [Description("Copies a release of a site, files, rules, variable declarations and functions, as a new release that is not live. Call it on the live release before changing files you may want to undo: rollback_site to the copy brings the site back as it was. Or change the copy (the release parameter of the file tools) and make it live with rollback_site when it is ready. The oldest releases beyond the server's limit are removed, never the live one.")]
+    public static async Task<JsonElement> DuplicateRelease(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("The release id to copy, from get_site; leave out for the live release.")] string? release = null) =>
+        await WithSiteAsync(services, domain, async site =>
+        {
+            if (SiteFiles.ReleaseOf(site, release) is not { } chosen) return new { error = release is null ? $"{site.Domain} has no release to copy." : $"{site.Domain} has no release {release}." };
+            var result = await services.GetRequiredService<ZipDeploymentService>().DuplicateReleaseAsync(site.Domain, chosen.Id, Caller.Of(services).Actor);
+            return result.Ok
+                ? new { ok = true, domain = site.Domain, release = result.Release!.Id, copiedFrom = chosen.Id, live = false }
+                : (object)new { error = FileEditMessages.English(services.GetRequiredService<StringCatalog>(), result.Error!) };
+        });
 
     [SiteHostTool("rollback_site", ToolEffect.Change)]
     [Description("Makes an earlier release of a site live again. get_site lists the releases.")]
@@ -733,6 +761,139 @@ public static class SiteHostTools
 
         certificates.RenewNow(status.Host);
         return ToJson(new { ok = true, host = status.Host, note = TlsEndpoints.Renewing });
+    }
+
+    // ================================================================ branding
+
+    [SiteHostTool("get_branding", ToolEffect.Read)]
+    [Description("How the management app and the visitor screens look: name, logos, colours (light and dark), fonts and sizes, the font library, whether Google Fonts are allowed, and colour pairs that are hard to read. With a domain, that site's own branding for its visitor screens (passcode, not found, errors) beside the server's. Administrators only.")]
+    public static async Task<JsonElement> GetBranding(IServiceProvider services, [Description("A site's domain, or empty for the server.")] string? domain = null)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+        var branding = services.GetRequiredService<BrandingService>();
+        if (string.IsNullOrWhiteSpace(domain)) return ToJson(await BrandingEndpoints.DescribeAsync(branding, null, default));
+        return await WithSiteAsync(services, domain, async site => await BrandingEndpoints.DescribeAsync(branding, site, default));
+    }
+
+    [SiteHostTool("set_branding", ToolEffect.Change)]
+    [Description("Changes the branding; fields you give replace what is there, the rest stay. Fields: name; signInMessage (server only); logoLight, logoDark, favicon (image ids from upload_branding_image); logoHasName (the logo shows the name, so it is shown alone); light and dark (colours as #rrggbb: bg, surface, surface2, border, text, muted, accent, accentText, danger, success, warning); headingFont, bodyFont ('system-sans', 'system-serif', 'system-rounded', 'system-mono', or a font id from get_branding); textSize (12-18 px), headingWeight (400-900), radius (0-20 px), density (0.8-1.25). With a domain, it changes that site's visitor screens only. The answer lists colour pairs that are hard to read: fix them before saying it is done. Administrators only.")]
+    public static async Task<JsonElement> SetBranding(
+        IServiceProvider services,
+        [Description("The fields to change, as above.")] Branding branding,
+        [Description("A site's domain to brand its visitor screens, or empty for the server.")] string? domain = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        var service = services.GetRequiredService<BrandingService>();
+        var settings = await service.Store.ReadAsync();
+
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            var errors = await service.SetServerAsync(Merge(branding, settings.Server), caller.Actor);
+            return errors.Count > 0 ? Error(string.Join(" ", errors)) : ToJson(await BrandingEndpoints.DescribeAsync(service, null, default));
+        }
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var errors = await service.SetSiteAsync(site, Merge(branding, site.Branding ?? new Branding()), caller.Actor);
+            return errors.Count > 0 ? new { error = string.Join(" ", errors) } : await BrandingEndpoints.DescribeAsync(service, site, default);
+        });
+    }
+
+    /// <summary>The given fields over the current ones, field by field and colour by colour.</summary>
+    private static Branding Merge(Branding given, Branding current) => new()
+    {
+        Name = given.Name ?? current.Name,
+        SignInMessage = given.SignInMessage ?? current.SignInMessage,
+        LogoLight = given.LogoLight ?? current.LogoLight,
+        LogoDark = given.LogoDark ?? current.LogoDark,
+        LogoHasName = given.LogoHasName ?? current.LogoHasName,
+        Favicon = given.Favicon ?? current.Favicon,
+        Light = (given.Light ?? new()).Over(current.Light),
+        Dark = (given.Dark ?? new()).Over(current.Dark),
+        HeadingFont = given.HeadingFont ?? current.HeadingFont,
+        BodyFont = given.BodyFont ?? current.BodyFont,
+        TextSize = given.TextSize ?? current.TextSize,
+        HeadingWeight = given.HeadingWeight ?? current.HeadingWeight,
+        Radius = given.Radius ?? current.Radius,
+        Density = given.Density ?? current.Density
+    };
+
+    [SiteHostTool("reset_branding", ToolEffect.Destructive)]
+    [Description("Removes branding: with no domain, the server's goes back to the built-in look (name, logos, colours, fonts and sizes); with a domain, that site's visitor screens go back to the server's branding. The font library stays. Administrators only.")]
+    public static async Task<JsonElement> ResetBranding(IServiceProvider services, [Description("A site's domain, or empty for the server.")] string? domain = null)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        var service = services.GetRequiredService<BrandingService>();
+
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            await service.SetServerAsync(new Branding(), caller.Actor);
+            return ToJson(await BrandingEndpoints.DescribeAsync(service, null, default));
+        }
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            await service.SetSiteAsync(site, null, caller.Actor);
+            return await BrandingEndpoints.DescribeAsync(service, site, default);
+        });
+    }
+
+    [SiteHostTool("upload_branding_image", ToolEffect.Change)]
+    [Description("Stores a logo or browser icon and returns its id, for set_branding's logoLight, logoDark or favicon. Give an SVG as its text (svg), or any image (SVG, PNG, WebP, JPEG, GIF, ICO; at most 1 MB) as base64. An image no branding uses is removed after an hour. Administrators only.")]
+    public static async Task<JsonElement> UploadBrandingImage(
+        IServiceProvider services,
+        [Description("An SVG's markup, starting with <svg.")] string? svg = null,
+        [Description("The image's bytes as base64, for anything but SVG text.")] string? base64 = null)
+    {
+        if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
+
+        byte[] data;
+        if (!string.IsNullOrWhiteSpace(svg)) data = System.Text.Encoding.UTF8.GetBytes(svg);
+        else
+        {
+            try { data = Convert.FromBase64String(base64 ?? ""); }
+            catch (FormatException) { return Error("base64 is not valid base64."); }
+        }
+
+        var (id, error) = await services.GetRequiredService<BrandingService>().Store.SaveAssetAsync(data);
+        return id is null ? Error(error) : ToJson(new { id, url = BrandingService.AssetUrl(id) });
+    }
+
+    [SiteHostTool("set_google_fonts", ToolEffect.Change)]
+    [Description("Allows or stops allowing fonts from Google Fonts on this server; off by default. While off, no page loads anything from Google. Ask the user before turning it on: a font loaded from Google makes visitors' browsers contact Google. Administrators only.")]
+    public static async Task<JsonElement> SetGoogleFonts(IServiceProvider services, [Description("True to allow, false to stop.")] bool allow)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        var service = services.GetRequiredService<BrandingService>();
+        await service.SetAllowGoogleFontsAsync(allow, caller.Actor);
+        return ToJson(await BrandingEndpoints.DescribeAsync(service, null, default));
+    }
+
+    [SiteHostTool("add_google_font", ToolEffect.Change)]
+    [Description("Adds a font from Google Fonts to the library, once set_google_fonts allowed them. download true (the default, and the better choice for privacy) stores its files on this server, so visitors never contact Google; false makes pages load it from Google. Then use its id as headingFont or bodyFont in set_branding. Administrators only.")]
+    public static async Task<JsonElement> AddGoogleFont(
+        IServiceProvider services,
+        [Description("The family as fonts.google.com writes it, such as Inter, Source Serif 4 or Noto Sans SC.")] string family,
+        [Description("Store the files here (true) or load them from Google (false).")] bool download = true)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        var (font, error) = await services.GetRequiredService<BrandingService>().AddGoogleFontAsync(family, download, caller.Actor);
+        return font is null ? Error(error) : ToJson(BrandingEndpoints.DescribeFont(font));
+    }
+
+    [SiteHostTool("remove_font", ToolEffect.Destructive)]
+    [Description("Removes a font from the library. Branding that used it goes back to the system font. Administrators only.")]
+    public static async Task<JsonElement> RemoveFont(IServiceProvider services, [Description("The font's id, from get_branding.")] string id)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+        return await services.GetRequiredService<BrandingService>().RemoveFontAsync(id, caller.Actor)
+            ? ToJson(new { ok = true, id })
+            : Error("No font in the library has that id. get_branding lists them.");
     }
 
     // ================================================================ functions

@@ -1,0 +1,33 @@
+{
+  "visitor.passcode.pageTitle": "Se necesita un código de acceso — {domain}",
+  "visitor.passcode.title": "Este sitio es privado",
+  "visitor.passcode.hint": "Escribe el código de acceso para ver este sitio. Si no lo tienes, pídeselo al propietario del sitio.",
+  "visitor.passcode.wrong": "Ese código de acceso no es correcto. Revísalo y vuelve a intentarlo.",
+  "visitor.passcode.tooManyTries.one": "Demasiados códigos de acceso incorrectos. Vuelve a intentarlo en {count} minuto.",
+  "visitor.passcode.tooManyTries.other": "Demasiados códigos de acceso incorrectos. Vuelve a intentarlo en {count} minutos.",
+  "visitor.passcode.label": "Código de acceso",
+  "visitor.passcode.submit": "Ver el sitio",
+
+  "visitor.page.title": "{status} — {title}",
+
+  "visitor.notFound.title": "Página no encontrada",
+  "visitor.notFound.detail": "No hay ninguna página en {address}. Comprueba que la dirección es correcta.",
+  "visitor.notFound.detailNoAddress": "No hay ninguna página en esta dirección. Comprueba que la dirección es correcta.",
+
+  "visitor.unavailable.title": "Todavía no hay nada aquí",
+  "visitor.unavailable.detail": "{domain} todavía no tiene páginas. Vuelve a intentarlo más tarde.",
+
+  "visitor.proxy.notSetUp.title": "Esta página no funciona",
+  "visitor.proxy.notSetUp.detail": "El sitio no está bien configurado para esta página. Vuelve a intentarlo más tarde.",
+  "visitor.proxy.unreachable.title": "Esta página no está disponible",
+  "visitor.proxy.unreachable.detail": "El sitio no puede cargar esta página ahora. Vuelve a intentarlo en unos minutos.",
+  "visitor.proxy.timedOut.title": "Esta página tardó demasiado en cargar",
+  "visitor.proxy.timedOut.detail": "El sitio no respondió a tiempo. Vuelve a intentarlo en unos minutos.",
+  "visitor.proxy.refused.title": "Conexión no permitida",
+  "visitor.proxy.refused.detail": "Esta dirección no acepta esta solicitud.",
+  "visitor.proxy.webSocketsOff": "Esta dirección no acepta conexiones WebSocket.",
+  "visitor.proxy.webSocketsCrossSite": "Solo las páginas de este mismo sitio pueden abrir conexiones WebSocket a esta dirección.",
+
+  "visitor.noSite.title": "No hay ningún sitio en esta dirección",
+  "visitor.noSite.detail": "No hay ningún sitio en **{domain}**. Comprueba que la dirección es correcta."
+}

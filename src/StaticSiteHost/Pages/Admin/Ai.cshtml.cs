@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
 using StaticSiteHost.Functions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 using StaticSiteHost.Services.Ai;
@@ -21,12 +23,15 @@ public class AiModel : PageModel
     private readonly SiteStore _sites;
     private readonly StaticSiteHost.Services.Assistant.AssistantSettingsStore _assistant;
     private readonly StaticSiteHost.Services.Assistant.AssistantUsageStore _usage;
+    private readonly IStringLocalizer<Strings> _strings;
 
     public AiModel(
         AiProviderStore providers, AiChatService chat, SiteStore sites,
-        StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant, StaticSiteHost.Services.Assistant.AssistantUsageStore usage)
+        StaticSiteHost.Services.Assistant.AssistantSettingsStore assistant, StaticSiteHost.Services.Assistant.AssistantUsageStore usage,
+        IStringLocalizer<Strings> strings)
     {
         _usage = usage;
+        _strings = strings;
         _providers = providers;
         _chat = chat;
         _sites = sites;
@@ -50,9 +55,9 @@ public class AiModel : PageModel
         if (await _assistant.SaveAsync(providerId, model, membersMayUse, Actor, memberMessagesPerDay) is { } error)
             TempData["ErrorMessage"] = error;
         else if (string.IsNullOrWhiteSpace(providerId))
-            TempData["StatusMessage"] = "The assistant is off.";
+            TempData["StatusMessage"] = _strings.Text("ai.assistant.savedOff");
         else
-            TempData["StatusMessage"] = "The assistant is on. Open it with Assistant in the top bar.";
+            TempData["StatusMessage"] = _strings.Text("ai.assistant.savedOn");
 
         return RedirectToPage();
     }
@@ -102,7 +107,7 @@ public class AiModel : PageModel
             return Page();
         }
 
-        TempData["StatusMessage"] = $"{provider.Name} was added. Test it below, then choose it for a site on the site's page.";
+        TempData["StatusMessage"] = _strings.Text("ai.add.done", new { name = provider.Name });
         return RedirectToPage();
     }
 
@@ -111,8 +116,8 @@ public class AiModel : PageModel
         var (provider, error) = await _providers.UpdateAsync(id, name, baseUrl, apiKey, defaultModel, Actor);
 
         if (provider is null) TempData["ErrorMessage"] = error;
-        else if (string.IsNullOrWhiteSpace(apiKey)) TempData["StatusMessage"] = $"{provider.Name} was saved. Its key is unchanged.";
-        else TempData["StatusMessage"] = $"{provider.Name} was saved with its new key.";
+        else if (string.IsNullOrWhiteSpace(apiKey)) TempData["StatusMessage"] = _strings.Text("ai.providers.saved", new { name = provider.Name });
+        else TempData["StatusMessage"] = _strings.Text("ai.providers.savedWithKey", new { name = provider.Name });
 
         return RedirectToPage();
     }
@@ -121,8 +126,8 @@ public class AiModel : PageModel
     {
         var removed = await _providers.DeleteAsync(id, Actor);
 
-        if (removed is null) TempData["ErrorMessage"] = "That provider no longer exists.";
-        else TempData["StatusMessage"] = $"{removed.Name} and its key were removed. Sites that used it have no AI until they are given another provider.";
+        if (removed is null) TempData["ErrorMessage"] = _strings.Text("ai.providers.notFound");
+        else TempData["StatusMessage"] = _strings.Text("ai.providers.deleted", new { name = removed.Name });
 
         return RedirectToPage();
     }
@@ -136,7 +141,7 @@ public class AiModel : PageModel
         var provider = await _providers.FindAsync(id);
         if (provider is null)
         {
-            TempData["ErrorMessage"] = "That provider no longer exists.";
+            TempData["ErrorMessage"] = _strings.Text("ai.providers.notFound");
             return RedirectToPage();
         }
 
@@ -144,16 +149,22 @@ public class AiModel : PageModel
         if (test.Ok)
         {
             var text = test.Text ?? "";
-            var said = text.Length == 0 ? "no text" : $"“{(text.Length > 200 ? text[..200] + "…" : text)}”";
-            var stop = test.StopReason is null ? "" : $", stopping on {test.StopReason}";
+            var said = text.Length == 0 ? _strings.Text("ai.test.noText") : _strings.Text("ai.test.quoted", new { text = text.Length > 200 ? text[..200] + "…" : text });
 
-            TempData["StatusMessage"] =
-                $"{provider.Name} answered in {test.ElapsedMs:N0} ms with {said}: model {test.Model}, " +
-                $"{test.InputTokens:N0} tokens in and {test.OutputTokens:N0} out{stop}.";
+            TempData["StatusMessage"] = _strings.Text(test.StopReason is null ? "ai.test.answered" : "ai.test.answeredWithStop", new
+            {
+                name = provider.Name,
+                ms = test.ElapsedMs.ToString("N0"),
+                answer = said,
+                model = test.Model,
+                inputTokens = test.InputTokens.ToString("N0"),
+                outputTokens = test.OutputTokens.ToString("N0"),
+                stopReason = test.StopReason
+            });
         }
         else
         {
-            TempData["ErrorMessage"] = $"{provider.Name} failed the test after {test.ElapsedMs:N0} ms. {test.Error}";
+            TempData["ErrorMessage"] = _strings.Text("ai.test.failed", new { name = provider.Name, ms = test.ElapsedMs.ToString("N0"), error = test.Error });
         }
 
         return RedirectToPage();

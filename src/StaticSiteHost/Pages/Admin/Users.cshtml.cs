@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 using StaticSiteHost.Services;
@@ -14,12 +16,14 @@ public class UsersModel : PageModel
     private readonly UserStore _users;
     private readonly UserAdminService _admin;
     private readonly SiteHostingOptions _options;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public UsersModel(UserStore users, UserAdminService admin, IOptions<SiteHostingOptions> options)
+    public UsersModel(UserStore users, UserAdminService admin, IOptions<SiteHostingOptions> options, IStringLocalizer<Strings> strings)
     {
         _users = users;
         _admin = admin;
         _options = options.Value;
+        _strings = strings;
     }
 
     public IReadOnlyList<UserRecord> Users { get; private set; } = [];
@@ -56,12 +60,12 @@ public class UsersModel : PageModel
         if (created.TemporaryPassword is not null)
         {
             TempData["TemporaryPassword"] = created.TemporaryPassword;
-            TempData["StatusMessage"] = $"{created.User.Username} was created. Share the temporary password below — they must change it at first sign-in.";
+            TempData["StatusMessage"] = _strings.Text("users.created.password", new { username = created.User.Username });
         }
         else
         {
             TempData["InviteLink"] = ActivationLink(created.InviteToken!);
-            TempData["StatusMessage"] = $"{created.User.Username} was created. Send them the private link below.";
+            TempData["StatusMessage"] = _strings.Text("users.created.link", new { username = created.User.Username });
         }
 
         return RedirectToPage();
@@ -79,7 +83,7 @@ public class UsersModel : PageModel
         var user = await _users.FindByIdAsync(userId);
         TempData["InviteLink"] = ActivationLink(token);
         TempData["SecretFor"] = user?.Username;
-        TempData["StatusMessage"] = $"A new private link for {user?.Username} is ready to send.";
+        TempData["StatusMessage"] = _strings.Text("users.action.linkCreated", new { username = user?.Username });
         return RedirectToPage();
     }
 
@@ -92,7 +96,7 @@ public class UsersModel : PageModel
         }
 
         var user = await _users.FindByIdAsync(userId);
-        TempData["StatusMessage"] = $"{user?.Username} is now a{(role == Roles.Administrator ? "n" : "")} {role}.";
+        TempData["StatusMessage"] = _strings.Text(role == Roles.Administrator ? "users.action.nowAdministrator" : "users.action.nowMember", new { username = user?.Username });
         return RedirectToPage();
     }
 
@@ -105,7 +109,7 @@ public class UsersModel : PageModel
         }
 
         var user = await _users.FindByIdAsync(userId);
-        TempData["StatusMessage"] = $"{user?.Username} was {(disabled ? "disabled" : "re-enabled")}.";
+        TempData["StatusMessage"] = _strings.Text(disabled ? "users.action.blocked" : "users.action.allowed", new { username = user?.Username });
         return RedirectToPage();
     }
 
@@ -114,7 +118,7 @@ public class UsersModel : PageModel
         var (username, error) = await _admin.DeleteAsync(userId, CurrentUserId, Actor);
 
         if (username is null) TempData["ErrorMessage"] = error;
-        else TempData["StatusMessage"] = $"{username} and their API keys were removed.";
+        else TempData["StatusMessage"] = _strings.Text("users.action.deleted", new { username });
 
         return RedirectToPage();
     }

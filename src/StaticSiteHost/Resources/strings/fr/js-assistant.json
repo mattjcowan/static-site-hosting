@@ -1,0 +1,17 @@
+{
+  "js.assistant.confirm.question": "Exécuter {step} ? Cette action ne peut pas être annulée.",
+  "js.assistant.confirm.run": "Exécuter",
+  "js.assistant.confirm.cancel": "Annuler",
+  "js.assistant.confirm.ran": "Vous avez choisi de l'exécuter.",
+  "js.assistant.confirm.cancelled": "Vous avez annulé cette étape.",
+  "js.assistant.changed.text": "L'assistant a fait des modifications. Cette page n'a pas été mise à jour, donc rien de ce que vous y avez saisi n'est perdu.",
+  "js.assistant.changed.update": "Mettre à jour cette page quand même",
+  "js.assistant.noAnswer": "L'assistant n'a pas pu répondre (HTTP {status}). Réessayez.",
+  "js.assistant.usage.summary": "{tokensIn} en entrée, {tokensOut} en sortie, {calls}",
+  "js.assistant.usage.tokens.one": "{number} jeton",
+  "js.assistant.usage.tokens.other": "{number} jetons",
+  "js.assistant.usage.calls.one": "{count} appel",
+  "js.assistant.usage.calls.other": "{count} appels",
+  "js.assistant.connectionLost": "La connexion au serveur a été perdue.",
+  "js.assistant.chooseFirst": "Choisissez d'abord {run} ou {cancel}."
+}

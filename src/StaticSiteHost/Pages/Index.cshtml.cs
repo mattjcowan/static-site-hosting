@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
@@ -14,12 +16,14 @@ public class IndexModel : PageModel
     private readonly SiteStore _sites;
     private readonly ZipDeploymentService _deployer;
     private readonly SiteHostingOptions _options;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public IndexModel(SiteStore sites, ZipDeploymentService deployer, IOptions<SiteHostingOptions> options)
+    public IndexModel(SiteStore sites, ZipDeploymentService deployer, IOptions<SiteHostingOptions> options, IStringLocalizer<Strings> strings)
     {
         _sites = sites;
         _deployer = deployer;
         _options = options.Value;
+        _strings = strings;
     }
 
     public IReadOnlyList<SiteRecord> Sites { get; private set; } = [];
@@ -33,7 +37,7 @@ public class IndexModel : PageModel
         Sites = _sites.List();
 
         if (archive is null || archive.Length == 0)
-            return Respond(false, "Choose a .zip archive to upload.");
+            return Respond(false, _strings["deploy.noFile"]);
 
         await using var stream = archive.OpenReadStream();
 
@@ -61,8 +65,8 @@ public class IndexModel : PageModel
             });
         }
 
-        TempData["StatusMessage"] =
-            $"Published {release.FileCount} file(s) ({Format.Bytes(release.TotalBytes)}) to {result.Domain}.";
+        TempData["StatusMessage"] = _strings.Plural("deploy.done", release.FileCount,
+            new { size = Format.Bytes(release.TotalBytes), domain = result.Domain });
         return RedirectToPage();
     }
 

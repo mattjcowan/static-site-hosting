@@ -1,0 +1,28 @@
+{
+  "deploy.pageTitle": "部署",
+  "deploy.title": "部署站点",
+  "deploy.intro": "上传 zip 压缩包，并选择要部署到的域名。",
+
+  "deploy.domain.label": "域名",
+  "deploy.domain.existing": "部署到现有站点",
+  "deploy.domain.new": "— 新域名 —",
+  "deploy.domain.hint": "请将域名的 DNS 指向此服务器。部署到现有站点时，新版本会替换其文件。",
+
+  "deploy.archive.label": "zip 压缩包",
+  "deploy.archive.choose": "选择 zip 压缩包",
+  "deploy.archive.drop": "将 zip 压缩包拖放到此处",
+  "deploy.archive.dropHint": "或点击选择文件",
+  "deploy.archive.hint": "最大 {size}。如果所有内容都在一个文件夹中，此服务器会将该文件夹的内容放到站点根目录。",
+  "deploy.submit": "部署",
+
+  "deploy.noFile": "请选择要部署的 zip 压缩包。",
+  "deploy.done.one": "已将 {count} 个文件（{size}）部署到 {domain}。",
+  "deploy.done.other": "已将 {count} 个文件（{size}）部署到 {domain}。",
+
+  "deploy.resolve.title": "站点如何响应请求",
+  "deploy.resolve.hint": "每个站点都像面向单页应用的静态托管服务一样响应请求。",
+  "deploy.resolve.folder": "返回 `{file}`。",
+  "deploy.resolve.page": "如果 `{htmlFile}` 存在，则返回它。否则返回最近的 `index.html`，从 `{folderIndex}` 逐级向上直到 `{rootIndex}`。",
+  "deploy.resolve.asset": "按原样返回。如果文件不存在，则返回 `404`，而不是 HTML 页面。",
+  "deploy.resolve.notFound": "如果站点有此文件，所有未匹配任何内容的路径都由它响应。"
+}

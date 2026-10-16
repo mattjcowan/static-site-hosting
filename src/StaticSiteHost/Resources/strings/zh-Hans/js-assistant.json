@@ -1,0 +1,17 @@
+{
+  "js.assistant.confirm.question": "要运行 {step} 吗？此操作无法撤销。",
+  "js.assistant.confirm.run": "运行",
+  "js.assistant.confirm.cancel": "取消",
+  "js.assistant.confirm.ran": "你选择了运行。",
+  "js.assistant.confirm.cancelled": "你已取消。",
+  "js.assistant.changed.text": "助手进行了更改。此页面未更新，因此你在其中输入的内容不会丢失。",
+  "js.assistant.changed.update": "仍要更新此页面",
+  "js.assistant.noAnswer": "助手无法回答（HTTP {status}）。请重试。",
+  "js.assistant.usage.summary": "输入 {tokensIn}，输出 {tokensOut}，{calls}",
+  "js.assistant.usage.tokens.one": "{number} 个 token",
+  "js.assistant.usage.tokens.other": "{number} 个 token",
+  "js.assistant.usage.calls.one": "{count} 次调用",
+  "js.assistant.usage.calls.other": "{count} 次调用",
+  "js.assistant.connectionLost": "与服务器的连接已断开。",
+  "js.assistant.chooseFirst": "请先选择“{run}”或“{cancel}”。"
+}

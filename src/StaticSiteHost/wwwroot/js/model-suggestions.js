@@ -55,7 +55,7 @@
     toggle.type = 'button';
     toggle.className = 'model-picker-toggle';
     toggle.tabIndex = -1;
-    toggle.setAttribute('aria-label', 'Show the models');
+    toggle.setAttribute('aria-label', siteHost.t('js.ai.models.show'));
     toggle.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     wrap.appendChild(toggle);
 
@@ -85,13 +85,13 @@
       var key = from ? JSON.stringify(from) : null;
       if (!from) {
         models = [];
-        note = 'Choose a provider first.';
+        note = siteHost.t('js.ai.models.chooseProvider');
         return;
       }
       if (key === loadedFor || pending === key) return;
       pending = key;
       models = [];
-      note = 'Asking the provider for its models…';
+      note = siteHost.t('js.ai.models.loading');
       if (!list.hidden) draw();
 
       fetch('/ui/ai/models', {
@@ -107,19 +107,19 @@
           if (data.error || !data.models || !data.models.length) {
             loadedFor = null;
             models = [];
-            note = data.error || 'The provider listed no chat models. Type the model name.';
+            note = data.error || siteHost.t('js.ai.models.none');
           } else {
             loadedFor = key;
             models = data.models;
             var fast = models.filter(function (m) { return m.fast; }).length;
-            note = models.length + ' models from the provider' + (fast ? ', fast ones first' : '') + '. Any name can be typed.';
+            note = siteHost.tp(fast ? 'js.ai.models.foundFastFirst' : 'js.ai.models.found', models.length);
           }
           if (document.activeElement === input) open();
         })
         .catch(function () {
           pending = null;
           models = [];
-          note = 'The models could not be listed. Type the model name.';
+          note = siteHost.t('js.ai.models.failed');
           if (!list.hidden) draw();
         });
     }
@@ -144,7 +144,7 @@
       var status = document.createElement('li');
       status.className = 'model-picker-note';
       status.setAttribute('role', 'presentation');
-      status.textContent = shown.length || !models.length ? note : 'No model matches “' + input.value.trim() + '”. It can still be used.';
+      status.textContent = shown.length || !models.length ? note : siteHost.t('js.ai.models.noMatch', { typed: input.value.trim() });
       list.appendChild(status);
 
       shown.forEach(function (model, index) {
@@ -159,7 +159,7 @@
         id.textContent = model.id;
         item.appendChild(id);
 
-        var label = [model.name, model.fast ? 'fast' : null].filter(Boolean).join(' · ');
+        var label = [model.name, model.fast ? siteHost.t('js.ai.models.fast') : null].filter(Boolean).join(' · ');
         if (label) {
           var detail = document.createElement('span');
           detail.className = 'model-picker-detail';

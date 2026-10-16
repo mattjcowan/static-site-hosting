@@ -1,5 +1,6 @@
-@page "{domain}"
+@page "{domain}/{tab?}"
 @model StaticSiteHost.Pages.Sites.DetailsModel
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Antiforgery
 @{
     ViewData["Title"] = Model.Site.Domain;
     var url = SiteLinks.For(Request, Model.Site.Domain);
@@ -10,65 +11,91 @@
     <p><a href="@url" target="_blank" rel="noopener">@url</a></p>
 </div>
 
-<div class="card">
-    <h2>Current release</h2>
+<nav class="tabs" aria-label="@L["site.tabs.label"]">
+    @foreach (var (id, labelKey) in SiteTabs.For(Model.IsAdministrator))
+    {
+        <a href="@Url.Page("/Sites/Details", new { domain = Model.Site.Domain, tab = id == SiteTabs.Default ? null : id })" data-tab="@id"
+           aria-current="@(Model.Tab == id ? "page" : null)">
+            @L[labelKey]
+            @if (Model.TabCount(id) is > 0 and var count)
+            {
+                <span class="count">@count</span>
+            }
+        </a>
+    }
+</nav>
+
+<section class="tab-panel" data-tab="overview" hidden="@(Model.Tab != "overview")">
+<details class="card section" data-section="release" open="@Sections.IsOpen(HttpContext, "release")">
+    <summary class="section-head"><h2>@L["site.release.title"]</h2></summary>
     @if (Model.Site.Current is { IsFunctionsOnly: true } carrier)
     {
         <p class="hint">
-            No files have been deployed. Release <span class="mono">@carrier.Id</span> only carries the site's functions,
-            made @carrier.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") when they were added. The site answers
-            through its functions and <a href="#proxy">proxy routes</a>, and with a 404 on every other path.
+            @L.Html("site.release.functionsOnly", new { id = carrier.Id, date = carrier.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), proxyUrl = "#proxy" })
         </p>
     }
     else if (Model.Site.Current is { } current)
     {
         <p class="hint">
-            <span class="mono">@current.Id</span> — @current.FileCount.ToString("N0") files, @Format.Bytes(current.TotalBytes),
-            deployed @current.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") by @(current.DeployedBy ?? "unknown")
-            via @current.Source.
+            @L.PluralHtml("site.release.summary", current.FileCount, new
+            {
+                id = current.Id,
+                files = current.FileCount.ToString("N0"),
+                size = Format.Bytes(current.TotalBytes),
+                date = current.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+                name = current.DeployedBy ?? L.Text("site.release.unknownPerson"),
+                source = current.Source switch
+                {
+                    "web" => L.Text("site.release.source.web"),
+                    "api" => L.Text("site.release.source.api"),
+                    "mcp" or "tools" => L.Text("site.release.source.tools"),
+                    ReleaseRecord.CopySource => L.Text("site.release.source.copy", new { id = current.CopiedFrom }),
+                    _ => current.Source
+                }
+            })
+            @if (current.EditedUtc is { } edited)
+            {
+                @L.Text("site.release.edited", new { date = edited.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), name = current.EditedBy ?? L.Text("site.release.unknownPerson") })
+            }
         </p>
         @if (!current.HasRootIndex)
         {
-            <div class="alert alert-warning">This release has no <span class="mono">index.html</span> at its root, so unmatched requests return 404.</div>
+            <div class="alert alert-warning">@L.Html("site.release.noRootIndex")</div>
         }
         @if (current.StrippedRootFolder)
         {
-            <p class="hint">The archive wrapped everything in a single folder, which was unwrapped during extraction.</p>
+            <p class="hint">@L["site.release.unwrapped"]</p>
         }
     }
     else if (Model.Site.Proxy.Count > 0)
     {
         <p class="hint">
-            No files have been deployed. The site answers through its <a href="#proxy">proxy routes</a>, and with a 404 on
-            every other path.
+            @L.Html("site.release.proxyOnly", new { proxyUrl = "#proxy" })
         </p>
     }
     else
     {
-        <div class="alert alert-warning">No release is currently active for this domain.</div>
+        <div class="alert alert-warning">@L["site.release.none"]</div>
     }
-    <a class="btn" asp-page="/Index">Deploy a new version</a>
-</div>
+    <a class="btn" asp-page="/Index">@L["site.release.deploy"]</a>
+</details>
 
-<div class="card">
-    <h2>Deploy from the command line</h2>
+<details class="card section" data-section="deploy-cli" open="@Sections.IsOpen(HttpContext, "deploy-cli")">
+    <summary class="section-head"><h2>@L["site.cli.title"]</h2></summary>
     <p class="hint">
-        Already pointed at <span class="mono">@Model.Site.Domain</span> — paste one into a terminal or a
-        CI job. Every deploy publishes a new release and the previous one stays here for rollback.
+        @L.Html("site.cli.hint", new { domain = Model.Site.Domain })
     </p>
 
     @if (Model.HasUsableApiKey)
     {
         <p class="hint">
-            Both read your key from <span class="mono">$SSH_KEY</span>, so export it first:
-            <span class="mono">export SSH_KEY=sshost_…</span>
+            @L.Html("site.cli.keyHint")
         </p>
     }
     else
     {
         <div class="alert alert-warning">
-            You have no active API key yet — <a asp-page="/Account/Index">create one</a>, then
-            <span class="mono">export SSH_KEY=sshost_…</span> before running these.
+            @L.Html("site.cli.noKey", new { accountUrl = Url.Page("/Account/Index") })
         </div>
     }
 
@@ -76,141 +103,203 @@
     {
         <div class="snippet">
             <div class="snippet-head">
-                <label for="@snippet.Id">@snippet.Title</label>
-                <button type="button" class="btn btn-sm" data-copy="#@snippet.Id">Copy</button>
+                <label for="@snippet.Id">@L[snippet.TitleKey]</label>
+                <button type="button" class="btn btn-sm" data-copy="#@snippet.Id">@L["common.copy"]</button>
             </div>
             <textarea id="@snippet.Id" rows="@snippet.Lines" wrap="off" readonly spellcheck="false"
                       onclick="this.select()">@snippet.Command</textarea>
-            <p class="hint snippet-hint">@snippet.Hint</p>
+            <p class="hint snippet-hint">@L.Html(snippet.HintKey)</p>
         </div>
     }
-</div>
+</details>
+</section>
 
-<div class="card">
-    <h2>
-        Visibility
-        @if (Model.Site.IsPasscodeProtected)
+<section class="tab-panel" data-tab="files" hidden="@(Model.Tab != "files")">
+@{
+    var filesSetup = System.Text.Json.JsonSerializer.Serialize(new
+    {
+        api = $"/ui/sites/{Uri.EscapeDataString(Model.Site.Domain)}/files",
+        domain = Model.Site.Domain,
+        siteUrl = url,
+        maxEditBytes = DetailsModel.MaxEditBytes,
+        icons = Icons.Markup("file", "folder", "image", "chevron-right", "save", "undo", "compare", "rename", "trash", "download", "upload", "file-plus", "external")
+    });
+}
+<div class="card files" data-files data-csrf="@Antiforgery.GetAndStoreTokens(HttpContext).RequestToken">
+    <script type="application/json" data-files-setup>@Html.Raw(filesSetup)</script>
+    <div class="files-bar">
+        <div class="files-release">
+            <label for="files-release">@L["site.files.releaseLabel"]</label>
+            <select id="files-release" data-files-release></select>
+        </div>
+        <div class="files-actions">
+            <button type="button" class="btn btn-sm" data-files-duplicate disabled title="@L["site.files.duplicateTitle"]">@L["site.files.duplicate"]</button>
+            <button type="button" class="btn-primary btn-sm" data-files-make-live hidden>@L["site.files.makeLive"]</button>
+        </div>
+        <p class="files-note" data-files-note role="status">@L["site.files.loading"]</p>
+    </div>
+    <div class="files-body">
+        <div class="files-side">
+            <div class="files-tools">
+                <input type="search" data-files-filter placeholder="@L["site.files.filter"]" aria-label="@L["site.files.filter"]" spellcheck="false" autocomplete="off" />
+                <button type="button" class="btn btn-sm btn-icon" data-files-new title="@L["site.files.newFile"]" aria-label="@L["site.files.newFile"]">@Icons.Get("file-plus")</button>
+                <button type="button" class="btn btn-sm btn-icon" data-files-upload title="@L["site.files.upload"]" aria-label="@L["site.files.upload"]">@Icons.Get("upload")</button>
+                <input type="file" multiple hidden data-files-upload-input />
+            </div>
+            <ul class="files-tree" role="tree" aria-label="@L["site.files.treeLabel"]" data-files-tree></ul>
+        </div>
+        <div class="files-main" data-files-main>
+            <div class="files-head" data-files-head hidden></div>
+            <div class="files-view" data-files-view>
+                <p class="files-empty">@L["site.files.choose"]</p>
+            </div>
+        </div>
+    </div>
+    <p class="hint">@L.PluralHtml("site.files.hint", Model.ReleasesToKeep)</p>
+    <p class="hint">
+        @if (Model.IsAdministrator)
         {
-            <span class="badge badge-warn">passcode</span>
+            @L.Html("site.files.functionsAdmin", new { editorUrl = Url.Page("/Admin/FunctionEditor", new { domain = Model.Site.Domain }) })
         }
         else
         {
-            <span class="badge">public</span>
+            @L.Html("site.files.functions")
         }
-    </h2>
+    </p>
+    <noscript><div class="alert alert-warning">@L["site.files.noScript"]</div></noscript>
+</div>
+</section>
+
+<section class="tab-panel" data-tab="security" hidden="@(Model.Tab != "security")">
+<details class="card section" data-section="visibility" open="@Sections.IsOpen(HttpContext, "visibility")">
+    <summary class="section-head"><h2>
+        @L["site.visibility.title"]
+        @if (Model.Site.IsPasscodeProtected)
+        {
+            <span class="badge badge-warn">@L["site.visibility.badgePasscode"]</span>
+        }
+        else
+        {
+            <span class="badge">@L["site.visibility.badgePublic"]</span>
+        }
+    </h2></summary>
 
     @if (Model.Site.IsPasscodeProtected)
     {
         <p class="hint">
-            Visitors must enter a passcode before anything on this site is served, and it is kept out of
-            shared caches and search engines. Set
-            @(Model.Site.PasscodeSetUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")
-            by @(Model.Site.PasscodeSetBy ?? "unknown").
+            @L.Text("site.visibility.privateHint", new
+            {
+                date = Model.Site.PasscodeSetUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—",
+                name = Model.Site.PasscodeSetBy ?? L.Text("site.visibility.unknownPerson")
+            })
         </p>
     }
     else
     {
         <p class="hint">
-            Anyone with the link can read this site. Set a passcode to keep a private report or an
-            unannounced idea from being readable by whoever finds the URL.
+            @L["site.visibility.publicHint"]
         </p>
     }
 
     <form method="post" asp-page-handler="SetPasscode" asp-route-domain="@Model.Site.Domain">
         <div class="row">
             <div class="field">
-                <label for="passcode">@(Model.Site.IsPasscodeProtected ? "Replace the passcode" : "Passcode")</label>
+                <label for="passcode">@(Model.Site.IsPasscodeProtected ? L["site.visibility.newPasscode"] : L["site.visibility.passcode"])</label>
                 <input id="passcode" name="passcode" type="text" autocomplete="off" spellcheck="false"
                        minlength="@Model.MinPasscodeLength" maxlength="200"
-                       placeholder="At least @Model.MinPasscodeLength characters" required />
+                       placeholder="@L.Plural("site.visibility.minLength", Model.MinPasscodeLength)" required />
             </div>
-            <button type="submit" class="btn-primary">@(Model.Site.IsPasscodeProtected ? "Replace passcode" : "Set passcode")</button>
+            <button type="submit" class="btn-primary">@(Model.Site.IsPasscodeProtected ? L["site.visibility.change"] : L["site.visibility.set"])</button>
         </div>
     </form>
 
     <p class="hint" style="margin: 0.75rem 0 0">
-        It is stored hashed and cannot be read back, so keep a copy wherever you keep the link.
-        Everyone already inside stays in for @Model.PasscodeSession unless the passcode is changed or removed.
+        @L.Text("site.visibility.storedHint", new { duration = Model.PasscodeSession })
     </p>
 
     @if (Model.Site.IsPasscodeProtected)
     {
         <form method="post" asp-page-handler="RemovePasscode" asp-route-domain="@Model.Site.Domain"
-              data-confirm="Remove the passcode from @Model.Site.Domain? Anyone with the link will be able to read it.">
-            <button type="submit" class="btn-danger">Remove passcode</button>
+              data-confirm="@L.Text("site.visibility.removeConfirm", new { domain = Model.Site.Domain })">
+            <button type="submit" class="btn-danger">@L["site.visibility.remove"]</button>
         </form>
     }
-</div>
+</details>
 
 @{
     var tls = Model.Site.Tls;
     var cert = Model.Certificate;
     var wantedSource = tls?.Source ?? CertificateSources.Automatic;
+
+    // A certificate source's name, in the viewer's language.
+    string SourceName(string? source) => CertificateSourceNames.Of(L, source);
 }
-<div class="card" id="https">
-    <h2>
-        HTTPS
+<details class="card section" id="https" data-section="https" open="@Sections.IsOpen(HttpContext, "https")">
+    <summary class="section-head"><h2>
+        @L["site.https.title"]
         @if (!Model.HttpsInServer)
         {
-            <span class="badge">in front of this server</span>
+            <span class="badge">@L["site.https.badgeOutside"]</span>
         }
         else if (cert?.Served is { } served)
         {
-            <span class="badge @(served.SelfSigned ? "badge-warn" : "badge-ok")">@CertificateSources.Describe(cert.ServedSource ?? cert.Effective)</span>
+            <span class="badge @(served.SelfSigned ? "badge-warn" : "badge-ok")">@SourceName(cert.ServedSource ?? cert.Effective)</span>
         }
         else if (cert?.Effective == CertificateSources.None)
         {
-            <span class="badge">off</span>
+            <span class="badge">@L["common.off"]</span>
         }
         else if (cert?.State.LastError is not null || cert?.Problem is not null)
         {
-            <span class="badge badge-error">no certificate</span>
+            <span class="badge badge-error">@L["site.https.badgeNoCertificate"]</span>
         }
         else
         {
-            <span class="badge">waiting for a certificate</span>
+            <span class="badge">@L["site.https.badgeWaiting"]</span>
         }
-    </h2>
+    </h2></summary>
 
     @if (!Model.HttpsInServer)
     {
         <p class="hint">
-            HTTPS is ended in front of this server (a reverse proxy, Railway, a Cloudflare Tunnel), so its certificates are
-            managed there. HSTS below still works: it is sent on every answer that arrived over HTTPS.
-            To end HTTPS here instead, see <strong>HTTPS</strong> in the top bar.
+            @L.Html("site.https.outsideHint")
         </p>
     }
     else if (cert is not null)
     {
         <dl class="tls-facts">
-            <dt>Certificate</dt>
+            <dt>@L["site.https.certificate"]</dt>
             <dd>
                 @if (cert.Served is { } served)
                 {
-                    <span>@CertificateSources.Describe(cert.ServedSource ?? "") from <strong>@served.Issuer</strong>,
-                        for <span class="mono">@string.Join(", ", served.Names)</span>.
-                        Expires @served.NotAfter.ToLocalTime().ToString("yyyy-MM-dd")
-                        (@((int)Math.Floor((served.NotAfter - DateTimeOffset.UtcNow).TotalDays)) days)@(cert.RenewsAt is { } renews ? $", renewed from {renews.ToLocalTime():yyyy-MM-dd}" : "").</span>
+                    <span>@L.Html("site.https.served", new { source = SourceName(cert.ServedSource), issuer = served.Issuer, names = string.Join(", ", served.Names) })
+                        @L.Plural("site.https.expires", (int)Math.Floor((served.NotAfter - DateTimeOffset.UtcNow).TotalDays), new { date = served.NotAfter.ToLocalTime().ToString("yyyy-MM-dd") })
+                        @if (cert.RenewsAt is { } renews)
+                        {
+                            @L.Text("site.https.renews", new { date = renews.ToLocalTime().ToString("yyyy-MM-dd") })
+                        }</span>
                     @if (served.SelfSigned)
                     {
-                        <span class="muted">Browsers warn about a self-signed certificate; it suits Cloudflare's "Full" mode and private networks.</span>
+                        <span class="muted">@L["site.https.selfSignedNote"]</span>
                     }
                 }
                 else if (cert.Effective == CertificateSources.None)
                 {
-                    <span class="muted">None: this site answers over plain HTTP only.</span>
+                    <span class="muted">@L["site.https.plainHttp"]</span>
                 }
                 else
                 {
-                    <span class="muted">None yet.</span>
+                    <span class="muted">@L["site.https.noneYet"]</span>
                 }
             </dd>
-            <dt>Source</dt>
+            <dt>@L["site.https.sourceLabel"]</dt>
             <dd>
-                @CertificateSources.Describe(cert.Wanted)@if (cert.Wanted != cert.Effective) {<text>, which here means </text>@CertificateSources.Describe(cert.Effective)}.
+                @(cert.Wanted != cert.Effective
+                    ? L.Text("site.https.sourceMeans", new { wanted = SourceName(cert.Wanted), effective = SourceName(cert.Effective) })
+                    : L.Text("site.https.sourceSame", new { source = SourceName(cert.Wanted) }))
                 @if (cert.Busy)
                 {
-                    <span class="badge">getting one now…</span>
+                    <span class="badge">@L["site.https.busy"]</span>
                 }
             </dd>
         </dl>
@@ -222,11 +311,10 @@
         else if (cert.State.LastError is { } lastError)
         {
             <div class="alert alert-error">
-                <strong>The last attempt failed</strong> (@cert.State.LastAttemptUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm")): @lastError
+                @L.Html("site.https.lastFailed", new { date = cert.State.LastAttemptUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), error = lastError })
                 @if (cert.State.NextAttemptUtc is { } next)
                 {
-                    <br /><span>It tries again after @next.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), or now with <strong>Renew now</strong>.
-                        For Let's Encrypt, the domain's DNS must point at this server and port 80 must reach it.</span>
+                    <br /><span>@L.Html("site.https.nextAttempt", new { date = next.ToLocalTime().ToString("yyyy-MM-dd HH:mm") })</span>
                 }
             </div>
         }
@@ -243,26 +331,25 @@
             @if (Model.HttpsInServer)
             {
                 <div class="field" style="max-width: 26rem">
-                    <label for="tls-source">Where the certificate comes from</label>
+                    <label for="tls-source">@L["site.https.sourceField"]</label>
                     <select id="tls-source" name="source">
-                        <option value="automatic" selected="@(wantedSource == CertificateSources.Automatic)">Automatic</option>
-                        <option value="letsencrypt" selected="@(wantedSource == CertificateSources.LetsEncrypt)">Let's Encrypt</option>
-                        <option value="selfsigned" selected="@(wantedSource == CertificateSources.SelfSigned)">Self-signed</option>
-                        <option value="shared" selected="@(wantedSource == CertificateSources.Shared)">A shared certificate</option>
+                        <option value="automatic" selected="@(wantedSource == CertificateSources.Automatic)">@L["site.https.option.automatic"]</option>
+                        <option value="letsencrypt" selected="@(wantedSource == CertificateSources.LetsEncrypt)">@L["site.https.option.letsEncrypt"]</option>
+                        <option value="selfsigned" selected="@(wantedSource == CertificateSources.SelfSigned)">@L["site.https.option.selfSigned"]</option>
+                        <option value="shared" selected="@(wantedSource == CertificateSources.Shared)">@L["site.https.option.shared"]</option>
                         @if (cert?.ServedSource == CertificateSources.Uploaded || wantedSource == CertificateSources.Uploaded)
                         {
-                            <option value="uploaded" selected="@(wantedSource == CertificateSources.Uploaded)">The certificate uploaded for this site</option>
+                            <option value="uploaded" selected="@(wantedSource == CertificateSources.Uploaded)">@L["site.https.option.uploaded"]</option>
                         }
-                        <option value="none" selected="@(wantedSource == CertificateSources.None)">None: HTTP only</option>
+                        <option value="none" selected="@(wantedSource == CertificateSources.None)">@L["site.https.option.none"]</option>
                     </select>
                     <p class="hint" style="margin: 0.35rem 0 0">
-                        Automatic is a shared certificate that covers this site (uploaded under <strong>HTTPS</strong>), otherwise the
-                        server's default, Let's Encrypt unless it says otherwise.
+                        @L.Html("site.https.automaticHint")
                     </p>
                 </div>
                 <div class="checkline" style="margin-top: 0.75rem">
                     <input id="tls-redirect" name="redirectToHttps" type="checkbox" value="true" checked="@(tls?.RedirectToHttps ?? true)" />
-                    <label for="tls-redirect">Send HTTP visitors to HTTPS</label>
+                    <label for="tls-redirect">@L["site.https.redirect"]</label>
                 </div>
                 <input type="hidden" name="redirectToHttps" value="false" />
             }
@@ -272,14 +359,13 @@
             }
             <div class="checkline" style="margin-top: 0.5rem">
                 <input id="tls-hsts" name="hsts" type="checkbox" value="true" checked="@(tls?.Hsts ?? false)" />
-                <label for="tls-hsts">HSTS: tell browsers to use HTTPS only, for a year</label>
+                <label for="tls-hsts">@L["site.https.hsts"]</label>
             </div>
             <input type="hidden" name="hsts" value="false" />
             <p class="hint" style="margin-top: 0.35rem">
-                Turn HSTS on only once HTTPS works for good. A browser that has seen it refuses plain HTTP for this domain for a
-                year, and turning it off here does not change that browser's mind.
+                @L["site.https.hstsHint"]
             </p>
-            <button type="submit" class="btn-primary">Save HTTPS settings</button>
+            <button type="submit" class="btn-primary">@L["site.https.save"]</button>
         </form>
 
         @if (Model.HttpsInServer)
@@ -288,67 +374,63 @@
                 @if (cert?.Effective is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned && cert.Problem is null)
                 {
                     <form method="post" asp-page-handler="RenewCertificate" asp-route-domain="@Model.Site.Domain">
-                        <button type="submit" class="btn">Renew now</button>
+                        <button type="submit" class="btn">@L["site.https.renew"]</button>
                     </form>
                 }
                 @if (cert?.ServedSource == CertificateSources.Uploaded || wantedSource == CertificateSources.Uploaded)
                 {
                     <form method="post" asp-page-handler="RemoveCertificate" asp-route-domain="@Model.Site.Domain"
-                          data-confirm="Remove the certificate uploaded for @Model.Site.Domain? The site goes back to automatic.">
-                        <button type="submit" class="btn-danger">Remove uploaded certificate</button>
+                          data-confirm="@L.Text("site.https.removeConfirm", new { domain = Model.Site.Domain })">
+                        <button type="submit" class="btn-danger">@L["site.https.remove"]</button>
                     </form>
                 }
             </div>
 
             <details class="tls-upload">
-                <summary>Upload a certificate for this site</summary>
+                <summary>@L["site.https.upload"]</summary>
                 <form method="post" asp-page-handler="UploadCertificate" asp-route-domain="@Model.Site.Domain">
                     <p class="hint">
-                        PEM, as a certificate authority hands it out: the certificate first, then any intermediates. For a
-                        certificate that covers many sites, such as a Cloudflare Origin certificate for *.example.com, upload it once
-                        under <strong>HTTPS</strong> in the top bar instead. The key is stored encrypted and never shown again.
+                        @L.Html("site.https.uploadHint")
                     </p>
                     <div class="field">
-                        <label for="tls-certificate">Certificate</label>
+                        <label for="tls-certificate">@L["site.https.certificateField"]</label>
                         <textarea id="tls-certificate" name="certificate" class="rules" rows="5" wrap="off" spellcheck="false"
                                   placeholder="-----BEGIN CERTIFICATE-----"></textarea>
                     </div>
                     <div class="field">
-                        <label for="tls-key">Private key</label>
+                        <label for="tls-key">@L["site.https.privateKey"]</label>
                         <textarea id="tls-key" name="privateKey" class="rules" rows="5" wrap="off" spellcheck="false" autocomplete="off"
                                   placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
                     </div>
-                    <button type="submit" class="btn-primary">Upload and use it</button>
+                    <button type="submit" class="btn-primary">@L["site.https.uploadButton"]</button>
                 </form>
             </details>
         }
     }
-</div>
+</details>
+</section>
 
-<div class="card" id="proxy">
-    <h2>
-        Proxy routes
+<section class="tab-panel" data-tab="routing" hidden="@(Model.Tab != "routing")">
+<details class="card section" id="proxy" data-section="proxy" open="@Sections.IsOpen(HttpContext, "proxy")">
+    <summary class="section-head"><h2>
+        @L["site.proxy.title"]
         @if (Model.Site.Proxy.Count > 0)
         {
-            <span class="badge badge-ok">@Model.Site.Proxy.Count route@(Model.Site.Proxy.Count == 1 ? "" : "s")</span>
+            <span class="badge badge-ok">@L.Plural("site.proxy.routeCount", Model.Site.Proxy.Count)</span>
         }
         else
         {
-            <span class="badge">none</span>
+            <span class="badge">@L["common.none"]</span>
         }
-    </h2>
+    </h2></summary>
     <p class="hint">
-        Forward paths on this site to other servers, such as Docker containers or services on a private network, so one
-        domain can serve files, functions and backends together. A route's requests have already passed the passcode, the
-        site's middleware and its functions, so a site's sign-in protects them too, and a function can still answer one path
-        inside a proxied one. The site's header rules apply to what comes back.
+        @L["site.proxy.hint"]
     </p>
 
     @if (Model.ProxyUnsetEnvironment.Count > 0)
     {
         <div class="alert alert-warning">
-            The server has no environment variable @string.Join(", ", Model.ProxyUnsetEnvironment). A route whose target names
-            one answers 502 until it is set; a request header that names one is sent empty.
+            @L.PluralHtml("site.proxy.unsetEnvironment", Model.ProxyUnsetEnvironment.Count, new { names = string.Join(", ", Model.ProxyUnsetEnvironment) })
         </div>
     }
 
@@ -356,17 +438,16 @@
     {
         <div class="proxy-inherited">
             <p class="hint">
-                Server-wide routes that name this site, set under <strong>Proxy</strong> in the top bar. A route of this site's own at the
-                same path wins over them.
+                @L.Html("site.proxy.serverHint")
             </p>
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
-                            <th>Path</th>
-                            <th>Target</th>
-                            <th>Sites</th>
-                            <th>Here</th>
+                            <th>@L["site.proxy.column.path"]</th>
+                            <th>@L["site.proxy.column.target"]</th>
+                            <th>@L["site.proxy.column.sites"]</th>
+                            <th>@L["site.proxy.column.here"]</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -379,13 +460,13 @@
                                 <td class="mono">@route.Target</td>
                                 <td class="mono muted">@route.Sites</td>
                                 <td>
-                                    @if (state == "on")
+                                    @if (state == ProxySites.StateOn)
                                     {
-                                        <span class="badge badge-ok">on</span>
+                                        <span class="badge badge-ok">@L["common.on"]</span>
                                     }
                                     else
                                     {
-                                        <span class="muted">@state</span>
+                                        <span class="muted">@ProxyStateNames.Of(L, state)</span>
                                     }
                                 </td>
                                 <td class="actions">
@@ -394,7 +475,7 @@
                                         <form method="post" asp-page-handler="ServerRoute" asp-route-domain="@Model.Site.Domain">
                                             <input type="hidden" name="path" value="@route.Path" />
                                             <input type="hidden" name="enabled" value="@(off ? "true" : "false")" />
-                                            <button type="submit" class="btn btn-sm">@(off ? "Turn on here" : "Turn off here")</button>
+                                            <button type="submit" class="btn btn-sm">@(off ? L["site.proxy.turnOn"] : L["site.proxy.turnOff"])</button>
                                         </form>
                                     }
                                 </td>
@@ -418,27 +499,27 @@
                     <span class="mono proxy-target">@route.Target</span>
                     @if (!route.Enabled)
                     {
-                        <span class="badge badge-warn">off</span>
+                        <span class="badge badge-warn">@L["common.off"]</span>
                     }
                     @if (route.WebSockets)
                     {
-                        <span class="badge">WebSockets</span>
+                        <span class="badge">@L["site.proxy.badge.webSockets"]</span>
                     }
                     @if (route.Streaming)
                     {
-                        <span class="badge">streaming</span>
+                        <span class="badge">@L["site.proxy.badge.streaming"]</span>
                     }
                     @if (route.GrpcWeb)
                     {
-                        <span class="badge">gRPC-Web</span>
+                        <span class="badge">@L["site.proxy.badge.grpcWeb"]</span>
                     }
                     @if (route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2)
                     {
-                        <span class="badge">HTTP/2</span>
+                        <span class="badge">@L["site.proxy.badge.http2"]</span>
                     }
                     @if (route.FilesFirst)
                     {
-                        <span class="badge">files first</span>
+                        <span class="badge">@L["site.proxy.badge.filesFirst"]</span>
                     }
                 </summary>
                 <partial name="_ProxyRoute" model="editor" />
@@ -447,7 +528,7 @@
 
         var adding = Model.ProxyEditors.Single(e => e.IsNew);
         <details class="proxy-route proxy-add" open="@(Model.Site.Proxy.Count == 0 || adding.Errors.Count > 0)">
-            <summary>Add a route</summary>
+            <summary>@L["site.proxy.add"]</summary>
             <partial name="_ProxyRoute" model="adding" />
         </details>
     }
@@ -457,9 +538,9 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Path</th>
-                        <th>Target</th>
-                        <th>Settings</th>
+                        <th>@L["site.proxy.column.path"]</th>
+                        <th>@L["site.proxy.column.target"]</th>
+                        <th>@L["site.proxy.column.settings"]</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -471,14 +552,14 @@
                             <td class="muted">
                                 @(string.Join(", ", new[]
                                 {
-                                    route.Enabled ? null : "off",
-                                    route.StripPath ? "path removed" : "path kept",
-                                    route.WebSockets ? "WebSockets" : null,
-                                    route.Streaming ? "streaming" : null,
-                                    route.GrpcWeb ? "gRPC-Web" : null,
-                                    route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2 ? "HTTP/2" : null,
-                                    route.FilesFirst ? "files first" : null,
-                                    $"{route.TimeoutSeconds} s timeout"
+                                    route.Enabled ? null : L.Text("common.off"),
+                                    route.StripPath ? L.Text("site.proxy.pathRemoved") : L.Text("site.proxy.pathKept"),
+                                    route.WebSockets ? L.Text("site.proxy.badge.webSockets") : null,
+                                    route.Streaming ? L.Text("site.proxy.badge.streaming") : null,
+                                    route.GrpcWeb ? L.Text("site.proxy.badge.grpcWeb") : null,
+                                    route.HttpVersion == StaticSiteHost.Models.ProxyHttpVersions.Http2 ? L.Text("site.proxy.badge.http2") : null,
+                                    route.FilesFirst ? L.Text("site.proxy.badge.filesFirst") : null,
+                                    L.Text("site.proxy.timeout", new { seconds = route.TimeoutSeconds })
                                 }.Where(part => part is not null)))
                             </td>
                         </tr>
@@ -486,27 +567,24 @@
                 </tbody>
             </table>
         </div>
-        <p class="hint" style="margin: 0.75rem 0 0">Only administrators can change proxy routes, because a route makes the server send requests wherever it points.</p>
+        <p class="hint" style="margin: 0.75rem 0 0">@L["site.proxy.memberHint"]</p>
     }
     else
     {
-        <p class="muted">This site has no proxy routes. Only administrators can add them, because a route makes the server send requests wherever it points.</p>
+        <p class="muted">@L["site.proxy.memberEmpty"]</p>
     }
-</div>
+</details>
 
-<div class="card">
-    <h2>Header rules</h2>
+<details class="card section" data-section="headers" open="@Sections.IsOpen(HttpContext, "headers")">
+    <summary class="section-head"><h2>@L["site.headers.title"]</h2></summary>
     <p class="hint">
-        Response headers for the paths that match a pattern. This is how you turn caching off on a
-        file that changes without its name changing, pin a fingerprinted asset for a year, or add a
-        security header. By default HTML is <span class="mono">no-cache</span> and everything else is
-        <span class="mono">public, max-age=@Model.AssetCacheSeconds</span>.
+        @L.Html("site.headers.hint", new { seconds = Model.AssetCacheSeconds })
     </p>
 
     @if (Model.HeaderRuleErrors.Count > 0)
     {
         <div class="alert alert-error">
-            <strong>Nothing was saved.</strong>
+            <strong>@L["site.headers.notSaved"]</strong>
             <ul>
                 @foreach (var error in Model.HeaderRuleErrors.Take(8))
                 {
@@ -517,27 +595,27 @@
     }
 
     <div class="examples">
-        <p class="examples-label">Click to add an example, then edit it:</p>
+        <p class="examples-label">@L["site.headers.examplesLabel"]</p>
         <div class="examples-list">
             @foreach (var example in DetailsModel.HeaderExamples)
             {
-                <button type="button" class="btn btn-sm" title="@example.Hint"
-                        data-insert="@example.Snippet" data-insert-into="#header-rules">@example.Label</button>
+                <button type="button" class="btn btn-sm" title="@L[example.HintKey]"
+                        data-insert="@example.Snippet" data-insert-into="#header-rules">@L[example.LabelKey]</button>
             }
         </div>
     </div>
 
     <form method="post" asp-page-handler="Headers" asp-route-domain="@Model.Site.Domain">
         <div class="field">
-            <label for="header-rules">Rules for this site</label>
+            <label for="header-rules">@L["site.headers.rules"]</label>
             <textarea id="header-rules" name="rules" class="rules" rows="8" wrap="off" spellcheck="false"
                       placeholder="/*.json&#10;  Cache-Control: no-cache">@Model.HeaderRules</textarea>
         </div>
-        <button type="submit" class="btn-primary">Save header rules</button>
+        <button type="submit" class="btn-primary">@L["site.headers.save"]</button>
     </form>
 
     <details class="rule-help">
-        <summary>How a header rule is written</summary>
+        <summary>@L["site.headers.helpTitle"]</summary>
         <pre class="rule-help-sample">/assets/**
   Cache-Control: public, max-age=31536000, immutable
 
@@ -546,25 +624,13 @@
   Cache-Control: no-cache
   X-Generated-By: ci</pre>
         <ul>
-            <li>A line starting with <span class="mono">/</span> opens a rule. The indented
-                <span class="mono">Name: value</span> lines under it are the headers it sets.</li>
-            <li><span class="mono">#</span> starts a comment; blank lines are ignored.</li>
-            <li>In a pattern <span class="mono">*</span> matches anything except
-                <span class="mono">/</span>, <span class="mono">**</span> matches across
-                <span class="mono">/</span>, and <span class="mono">?</span> matches one character.
-                Matching ignores case.</li>
-            <li>A rule matches the URL requested <em>or</em> the file that answered it, so
-                <span class="mono">/index.html</span> also covers <span class="mono">/</span>.</li>
-            <li>Every matching rule applies, top to bottom. When two name the same header the later one
-                wins, and rules here run after any that came with the release.</li>
-            <li><span class="mono">no-cache</span> means <em>revalidate every time</em>, not
-                <em>never store</em> — ETags still work, so unchanged content costs a
-                <span class="mono">304</span>. Use <span class="mono">no-store</span> when nothing may
-                be kept at all.</li>
-            <li>Headers the server owns cannot be set: <span class="mono">Content-Length</span>,
-                <span class="mono">Transfer-Encoding</span>, <span class="mono">Connection</span>,
-                <span class="mono">Content-Encoding</span>, <span class="mono">Set-Cookie</span>,
-                <span class="mono">X-Content-Type-Options</span> and the other transport headers.</li>
+            <li>@L.Html("site.headers.help.rule")</li>
+            <li>@L.Html("site.headers.help.comment")</li>
+            <li>@L.Html("site.headers.help.pattern")</li>
+            <li>@L.Html("site.headers.help.file")</li>
+            <li>@L["site.headers.help.order"]</li>
+            <li>@L.Html("site.headers.help.noCache")</li>
+            <li>@L.Html("site.headers.help.reserved")</li>
         </ul>
     </details>
 
@@ -572,29 +638,23 @@
     {
         <div class="from-release">
             <p class="hint">
-                The current release brought these in a <span class="mono">_headers</span> file. They run
-                before the rules above, so a rule above wins wherever both set the same header.
+                @L.Html("site.headers.fromRelease")
             </p>
             <pre class="rules-readonly">@StaticSiteHost.Serving.HeaderRuleText.Format(Model.ReleaseHeaderRules)</pre>
         </div>
     }
-</div>
+</details>
 
-<div class="card">
-    <h2>Redirects and rewrites</h2>
+<details class="card section" data-section="redirects" open="@Sections.IsOpen(HttpContext, "redirects")">
+    <summary class="section-head"><h2>@L["site.redirects.title"]</h2></summary>
     <p class="hint">
-        Where a request should be answered from something other than the path it named.
-        A <strong>redirect</strong> (<span class="mono">301</span>, <span class="mono">302</span>,
-        <span class="mono">303</span>, <span class="mono">307</span>, <span class="mono">308</span>)
-        sends the visitor to a new address and the URL bar changes. A <strong>rewrite</strong>
-        (<span class="mono">200</span> or <span class="mono">404</span>) quietly serves a different file
-        at the address they asked for.
+        @L.Html("site.redirects.hint")
     </p>
 
     @if (Model.RedirectRuleErrors.Count > 0)
     {
         <div class="alert alert-error">
-            <strong>Nothing was saved.</strong>
+            <strong>@L["site.redirects.notSaved"]</strong>
             <ul>
                 @foreach (var error in Model.RedirectRuleErrors.Take(8))
                 {
@@ -605,27 +665,27 @@
     }
 
     <div class="examples">
-        <p class="examples-label">Click to add an example, then edit it:</p>
+        <p class="examples-label">@L["site.redirects.examplesLabel"]</p>
         <div class="examples-list">
             @foreach (var example in DetailsModel.RedirectExamples)
             {
-                <button type="button" class="btn btn-sm" title="@example.Hint"
-                        data-insert="@example.Snippet" data-insert-into="#redirect-rules">@example.Label</button>
+                <button type="button" class="btn btn-sm" title="@L[example.HintKey]"
+                        data-insert="@example.Snippet" data-insert-into="#redirect-rules">@L[example.LabelKey]</button>
             }
         </div>
     </div>
 
     <form method="post" asp-page-handler="Redirects" asp-route-domain="@Model.Site.Domain">
         <div class="field">
-            <label for="redirect-rules">Rules for this site</label>
+            <label for="redirect-rules">@L["site.redirects.rules"]</label>
             <textarea id="redirect-rules" name="rules" class="rules" rows="8" wrap="off" spellcheck="false"
                       placeholder="/old-page  /new-page  301">@Model.RedirectRules</textarea>
         </div>
-        <button type="submit" class="btn-primary">Save redirects</button>
+        <button type="submit" class="btn-primary">@L["site.redirects.save"]</button>
     </form>
 
     <details class="rule-help">
-        <summary>How a redirect is written</summary>
+        <summary>@L["site.redirects.helpTitle"]</summary>
         <pre class="rule-help-sample">from       to                            status
 
 /old-page  /new-page                     301
@@ -635,29 +695,14 @@
 /removed   /404.html                     404
 /legacy/*  /new/:1                       301!</pre>
         <ul>
-            <li>One rule per line: where it comes from, where it goes, and the status. The status is
-                optional and defaults to <span class="mono">301</span>.</li>
-            <li>Patterns use the same <span class="mono">*</span> / <span class="mono">**</span> /
-                <span class="mono">?</span> globs as header rules.
-                <span class="mono">:1</span>…<span class="mono">:9</span> in the target stand for what
-                each wildcard matched, in order, and <span class="mono">:splat</span> is another name for
-                <span class="mono">:1</span>.</li>
-            <li>The <strong>first</strong> rule that matches answers the request, so put specific rules
-                above broad ones. Rules here are tried before any that came with the release.</li>
-            <li>A rule <strong>stands aside for real content</strong>: if the site actually has a file at
-                the requested path, that file is served instead. This is what stops a broad rule such as
-                <span class="mono">/**</span> from swallowing your stylesheets. Put
-                <span class="mono">!</span> after the status to apply it anyway.</li>
-            <li>A redirect target may be a path on this site or a full <span class="mono">https://</span>
-                address; a rewrite target must be a path here. The visitor's query string is carried
-                across.</li>
-            <li>A rewrite's target is resolved straight against the files, so one rewrite never triggers
-                another and rules cannot loop.</li>
-            <li>Browsers hold a <span class="mono">301</span> for a long time. Header rules apply to
-                redirects too, so a matching <span class="mono">Cache-Control: no-store</span> above is
-                what keeps a permanent redirect from outliving the decision to make it.</li>
-            <li>You rarely need a catch-all rewrite to <span class="mono">index.html</span> — unmatched
-                paths already fall back to it on their own.</li>
+            <li>@L.Html("site.redirects.help.line")</li>
+            <li>@L.Html("site.redirects.help.pattern")</li>
+            <li>@L.Html("site.redirects.help.first")</li>
+            <li>@L.Html("site.redirects.help.files")</li>
+            <li>@L.Html("site.redirects.help.where")</li>
+            <li>@L["site.redirects.help.loop"]</li>
+            <li>@L.Html("site.redirects.help.cache")</li>
+            <li>@L.Html("site.redirects.help.index")</li>
         </ul>
     </details>
 
@@ -665,452 +710,19 @@
     {
         <div class="from-release">
             <p class="hint">
-                The current release brought these in a <span class="mono">_redirects</span> file. They are
-                tried after the rules above.
+                @L.Html("site.redirects.fromRelease")
             </p>
             <pre class="rules-readonly">@StaticSiteHost.Serving.RedirectRuleText.Format(Model.ReleaseRedirectRules)</pre>
         </div>
     }
-</div>
+</details>
+</section>
 
-<div class="card" id="variables">
-    <h2>Variables</h2>
+<section class="tab-panel" data-tab="app" hidden="@(Model.Tab != "app")">
+<details class="card section" id="functions" data-section="functions" open="@Sections.IsOpen(HttpContext, "functions")">
+    <summary class="section-head"><h2>@L["site.functions.title"]</h2></summary>
     <p class="hint">
-        Named values the site's pages and functions read: a title, a contact address, an API key.
-        A <span class="mono">_variables.json</span> file at the root of the zip declares them, with
-        their defaults. A value set here belongs to the site, so it survives deploys and rollbacks.
-        Public variables reach the browser through <span class="mono">/_host/site.js</span>, and
-        functions see all of them, secrets included.
-    </p>
-
-    @if (Model.MissingVariables.Count > 0)
-    {
-        <div class="alert alert-warning">
-            @(Model.MissingVariables.Count == 1 ? "A required variable is" : "Required variables are") empty:
-            <span class="mono">@string.Join(", ", Model.MissingVariables)</span>.
-            Set @(Model.MissingVariables.Count == 1 ? "it" : "them") below.
-        </div>
-    }
-
-    @if (Model.UnsetEnvironment.Count > 0)
-    {
-        <div class="alert alert-warning">
-            A value here reads @(Model.UnsetEnvironment.Count == 1 ? "an environment variable" : "environment variables")
-            the server does not have, so @(Model.UnsetEnvironment.Count == 1 ? "it reads" : "they read") as empty:
-            <span class="mono">@string.Join(", ", Model.UnsetEnvironment)</span>.
-        </div>
-    }
-
-    @if (Model.Variables.Count > 0)
-    {
-        <div class="table-wrap">
-            <table class="variables">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Value</th>
-                        <th>Visibility</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var variable in Model.Variables)
-                    {
-                        var missing = Model.MissingVariables.Contains(variable.Name);
-                        var source = variable.Source switch
-                        {
-                            SiteVariableService.SourceSite => "set here",
-                            SiteVariableService.SourceDefault => "from the release default",
-                            _ => "no value"
-                        };
-                        var confirm = !variable.IsDeclared
-                            ? $"Remove {variable.Name} from {Model.Site.Domain}?"
-                            : $"Drop the value set here for {variable.Name}? It falls back to the release's default, or to no value if the release gives none.";
-
-                        <tr>
-                            <td>
-                                <span class="mono">@variable.Name</span>
-                                @if (variable.Description.Length > 0)
-                                {
-                                    <div class="muted var-description">@variable.Description</div>
-                                }
-                            </td>
-                            <td>
-                                @if (variable.IsSecret)
-                                {
-                                    <span class="badge @(variable.HasValue ? "badge-ok" : "badge-warn")">@(variable.HasValue ? "set" : "not set")</span>
-                                }
-                                else if (variable.Value is { Length: > 0 } shown)
-                                {
-                                    <span class="mono var-value">@shown</span>
-                                }
-                                else if (variable.Value is not null)
-                                {
-                                    <span class="muted">empty</span>
-                                }
-                                <div class="muted var-source">@source</div>
-                                @foreach (var name in variable.UnsetEnvironment)
-                                {
-                                    <div class="var-note"><span class="mono">@name</span> is not set on the server</div>
-                                }
-                            </td>
-                            <td>
-                                <span class="var-badges">
-                                    @if (variable.IsPublic)
-                                    {
-                                        <span class="badge badge-ok">public</span>
-                                    }
-                                    @if (variable.IsSecret)
-                                    {
-                                        <span class="badge badge-warn">secret</span>
-                                    }
-                                    @if (variable.IsRequired)
-                                    {
-                                        <span class="badge @(missing ? "badge-off" : null)">required</span>
-                                    }
-                                    @if (!variable.IsPublic && !variable.IsSecret)
-                                    {
-                                        <span class="muted">functions only</span>
-                                    }
-                                </span>
-                            </td>
-                            <td class="actions">
-                                @if (variable.IsAdministratorsOnly && !Model.IsAdministrator)
-                                {
-                                    @* A secret, or a value that reads the server's environment: the server refuses a member's change too. *@
-                                    <span class="muted" title="A secret, or a value that reads the server's environment, is for an administrator to set, change or remove.">administrators only</span>
-                                }
-                                else
-                                {
-                                    <form method="post" asp-page-handler="SetVariable" asp-route-domain="@Model.Site.Domain" class="var-edit">
-                                        <input type="hidden" name="name" value="@variable.Name" />
-                                        @if (variable.IsSecret)
-                                        {
-                                            @* Never filled in: the value does not come back to the page, and an empty box leaves it alone. *@
-                                            <input type="password" name="value" autocomplete="new-password" placeholder="unchanged"
-                                                   aria-label="New value for @variable.Name" />
-                                        }
-                                        else
-                                        {
-                                            <input type="text" name="value" value="@variable.Value" autocomplete="off" spellcheck="false"
-                                                   aria-label="Value for @variable.Name" />
-                                        }
-                                        <button type="submit" class="btn btn-sm">Save</button>
-                                    </form>
-                                    @if (variable.Source == SiteVariableService.SourceSite)
-                                    {
-                                        <form method="post" asp-page-handler="RemoveVariable" asp-route-domain="@Model.Site.Domain"
-                                              data-confirm="@confirm">
-                                            <input type="hidden" name="name" value="@variable.Name" />
-                                            <button type="submit" class="btn-link danger">@(variable.IsDeclared ? "Use default" : "Remove")</button>
-                                        </form>
-                                    }
-                                }
-                                @if (Model.VariableError is not null && Model.VariableErrorFor == variable.Name)
-                                {
-                                    <div class="validation" role="alert">@Model.VariableError</div>
-                                }
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-    }
-    else
-    {
-        <p class="muted">
-            No variables yet. Declare them in a <span class="mono">_variables.json</span> file in the zip, or add one below.
-        </p>
-    }
-
-    <form method="post" asp-page-handler="SetVariable" asp-route-domain="@Model.Site.Domain" class="var-add">
-        <h3>Add a variable</h3>
-        <p class="hint">
-            For something the release does not declare. Names are case-sensitive.
-            @if (!Model.IsAdministrator)
-            {
-                <text>Secrets, and values that read the server's environment with <span class="mono">${env:…}</span>, are for an administrator to set.</text>
-            }
-        </p>
-        <div class="row">
-            <div class="field">
-                <label for="new-variable-name">Name</label>
-                <input id="new-variable-name" name="name" type="text" autocomplete="off" spellcheck="false" required
-                       maxlength="64" pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="API_BASE_URL"
-                       title="Letters, digits and underscores, starting with a letter or an underscore"
-                       value="@Model.NewVariableName" />
-            </div>
-            <div class="field">
-                <label for="new-variable-value">Value</label>
-                <input id="new-variable-value" name="value" type="text" autocomplete="off" spellcheck="false"
-                       value="@Model.NewVariableValue" />
-            </div>
-        </div>
-        <div class="var-flags">
-            @* Each checkbox is followed by a hidden "false", so an unticked box still says so. *@
-            <div class="checkline">
-                <input id="new-variable-public" name="isPublic" type="checkbox" value="true" checked="@Model.NewVariablePublic" />
-                <label for="new-variable-public">Public: sent to the browser in <span class="mono">/_host/site.js</span></label>
-            </div>
-            @if (Model.IsAdministrator)
-            {
-                <div class="checkline">
-                    <input id="new-variable-secret" name="isSecret" type="checkbox" value="true" checked="@Model.NewVariableSecret" />
-                    <label for="new-variable-secret">Secret: stored encrypted and never shown again</label>
-                </div>
-            }
-            <input type="hidden" name="isPublic" value="false" />
-            <input type="hidden" name="isSecret" value="false" />
-        </div>
-        <button type="submit" class="btn-primary">Add variable</button>
-        @if (Model.VariableError is not null && Model.VariableErrorFor is null)
-        {
-            <div class="validation" role="alert">@Model.VariableError</div>
-        }
-    </form>
-</div>
-
-<div class="card" id="ai">
-    <h2>
-        AI
-        @if (Model.AiProvider is null)
-        {
-            <span class="badge">off</span>
-        }
-        else if (Model.AiAccessHook is not null)
-        {
-            <span class="badge badge-ok">visitors decided by [AiAccess]</span>
-        }
-        else if (Model.Site.Ai?.AllowVisitors == true)
-        {
-            <span class="badge badge-warn">open to visitors</span>
-        }
-        else
-        {
-            <span class="badge badge-ok">functions only</span>
-        }
-    </h2>
-    <p class="hint">
-        Chat through one of the server's AI providers. The site's functions reach it as
-        <span class="mono">IAiChat</span>, and its pages through <span class="mono">site.ai.chat</span> in
-        <span class="mono">/_host/site.js</span>: every visitor's when they are allowed, or those the site's
-        <span class="mono">[AiAccess]</span> hook lets in when its functions have one. The key stays on the
-        server, and the model and the system prompt set here apply to every chat.
-    </p>
-
-    @if (Model.Site.Ai is { HasProvider: true } && Model.AiProvider is null)
-    {
-        <div class="alert alert-warning">
-            The provider this site used was deleted, so it has no AI. Choose another below.
-        </div>
-    }
-
-    @if (Model.IsAdministrator)
-    {
-        @if (Model.AiProviders.Count == 0)
-        {
-            <p class="muted">
-                There are no AI providers yet. <a asp-page="/Admin/Ai">Add one under AI</a>, then choose it here.
-            </p>
-        }
-        else
-        {
-            <form method="post" asp-page-handler="Ai" asp-route-domain="@Model.Site.Domain">
-                <div class="row">
-                    <div class="field">
-                        <label for="ai-provider">Provider</label>
-                        <select id="ai-provider" name="providerId">
-                            <option value="" selected="@(Model.AiProviderId is null)">None</option>
-                            @foreach (var provider in Model.AiProviders)
-                            {
-                                <option value="@provider.Id" data-model="@provider.DefaultModel"
-                                        selected="@(provider.Id == Model.AiProviderId)">@provider.Name (@provider.DefaultModel)</option>
-                            }
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="ai-model">Model</label>
-                        <input id="ai-model" name="model" type="text" autocomplete="off" spellcheck="false"
-                               data-model-suggest data-model-provider="#ai-provider"
-                               maxlength="@SiteAiSettings.MaxModelLength" value="@Model.AiModelName"
-                               placeholder="@(Model.AiProvider?.DefaultModel ?? "the provider's default")" />
-                    </div>
-                </div>
-                <div class="field ai-prompt">
-                    <label for="ai-system-prompt">System prompt</label>
-                    <textarea id="ai-system-prompt" name="systemPrompt" rows="4" spellcheck="true"
-                              placeholder="You answer questions about this site, briefly and kindly.">@Model.AiSystemPrompt</textarea>
-                    <p class="hint snippet-hint">
-                        Sent ahead of every conversation, up to @(Model.AiMaxSystemPromptBytes / 1024) KB. A page or a function
-                        can add instructions after it but cannot remove it.
-                    </p>
-                </div>
-                <div class="checkline">
-                    <input id="ai-allow-visitors" name="allowVisitors" type="checkbox" value="true" checked="@Model.AiAllowVisitors" />
-                    <label for="ai-allow-visitors">Let every visitor chat through <span class="mono">/_host/ai/chat</span></label>
-                </div>
-                <input type="hidden" name="allowVisitors" value="false" />
-                @if (Model.AiAccessHook is not null)
-                {
-                    <p class="hint">
-                        Not consulted: which visitors may chat is decided by the site's <span class="mono">[AiAccess]</span>
-                        hook, <span class="mono">@Model.AiAccessHook</span>, for as long as its live functions have it.
-                        This setting applies again if a deploy takes the hook away.
-                    </p>
-                }
-                <p class="hint ai-warning">
-                    Every visitor's question is billed to the provider's key, and anyone who can load the site can ask.
-                    @Model.AiVisitorLimit Leave it off to keep chat to the site's functions, which decide for themselves
-                    who may ask.
-                </p>
-                <button type="submit" class="btn-primary">Save AI settings</button>
-                @if (Model.AiError is not null)
-                {
-                    <div class="validation" role="alert">@Model.AiError</div>
-                }
-            </form>
-
-            @if (Model.Site.Ai is not null)
-            {
-                <form method="post" asp-page-handler="RemoveAi" asp-route-domain="@Model.Site.Domain" class="ai-remove"
-                      data-confirm="Remove the AI settings from @Model.Site.Domain? Its functions and pages will no longer be able to chat.">
-                    <button type="submit" class="btn-danger">Remove AI</button>
-                </form>
-            }
-        }
-    }
-    else if (Model.AiProvider is not null)
-    {
-        <p>
-            Configured with <strong>@Model.AiProvider.Name</strong>
-            (<span class="mono">@(Model.Site.Ai?.Model ?? Model.AiProvider.DefaultModel)</span>).
-            @(Model.AiAccessHook is not null
-                ? $"Which visitors' pages may chat is decided by the site's [AiAccess] hook, {Model.AiAccessHook}."
-                : Model.Site.Ai?.AllowVisitors == true
-                    ? "Visitors are allowed: pages on the site can chat."
-                    : "Visitors are not allowed: only the site's functions can chat.")
-        </p>
-        <p class="hint">Only administrators can change the AI settings, because they spend the provider's key.</p>
-    }
-    else
-    {
-        <p class="muted">This site has no AI. Only administrators can set it up, because it spends a provider's key.</p>
-    }
-
-    <div class="snippet ai-snippet">
-        <div class="snippet-head">
-            <label for="ai-snippet">Chatting from a page</label>
-            <button type="button" class="btn btn-sm" data-copy="#ai-snippet">Copy</button>
-        </div>
-        <textarea id="ai-snippet" rows="@(Model.AiSnippet.Count(c => c == '\n') + 1)" wrap="off" readonly spellcheck="false"
-                  onclick="this.select()">@Model.AiSnippet</textarea>
-        <p class="hint snippet-hint">
-            <span class="mono">site.ai.enabled</span> says whether this page may chat. The promise resolves with the whole answer,
-            the model and the tokens it cost.
-        </p>
-    </div>
-</div>
-
-<div class="card" id="realtime">
-    <h2>
-        Realtime
-        @if (Model.RealtimeConnections > 0)
-        {
-            <span class="badge badge-ok">@Model.RealtimeConnections.ToString("N0") connected</span>
-        }
-        else
-        {
-            <span class="badge">none connected</span>
-        }
-    </h2>
-    <p class="hint">
-        Events from the server to the pages open on this site. A page listens with
-        <span class="mono">site.realtime.on</span> from <span class="mono">/_host/site.js</span>, and can join groups to
-        hear only what concerns it. The site's functions publish through <span class="mono">IRealtime</span>, and a
-        CI job or a script through the API.
-    </p>
-
-    @if (Model.RealtimeConnections == 0)
-    {
-        <p class="muted">No page was connected when this page loaded.</p>
-    }
-    else
-    {
-        <p>
-            @Model.RealtimeConnections.ToString("N0") @(Model.RealtimeConnections == 1 ? "page was" : "pages were") connected
-            when this page loaded, in @Model.RealtimeGroups.Count.ToString("N0") @(Model.RealtimeGroups.Count == 1 ? "group" : "groups").
-        </p>
-    }
-
-    @if (Model.RealtimeGroups.Count > 0)
-    {
-        <div class="table-wrap rt-groups">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Group</th>
-                        <th>Members</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var (name, members) in Model.RealtimeGroups.Take(DetailsModel.RealtimeGroupsShown))
-                    {
-                        <tr>
-                            <td class="mono">@name</td>
-                            <td>@members.ToString("N0")</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-        @if (Model.RealtimeGroups.Count > DetailsModel.RealtimeGroupsShown)
-        {
-            <p class="hint">
-                …and @((Model.RealtimeGroups.Count - DetailsModel.RealtimeGroupsShown).ToString("N0")) more.
-                <span class="mono">GET /api/v1/sites/@Model.Site.Domain/realtime</span> lists every one.
-            </p>
-        }
-    }
-
-    <div class="rt-snippets">
-        <div class="snippet">
-            <div class="snippet-head">
-                <label for="realtime-snippet">Listening from a page</label>
-                <button type="button" class="btn btn-sm" data-copy="#realtime-snippet">Copy</button>
-            </div>
-            <textarea id="realtime-snippet" rows="@(Model.RealtimeSnippet.Count(c => c == '\n') + 1)" wrap="off" readonly spellcheck="false"
-                      onclick="this.select()">@Model.RealtimeSnippet</textarea>
-            <p class="hint snippet-hint">
-                The server sends <span class="mono">site.deployed</span> itself whenever a deploy, a rollback or new functions
-                go live. The first <span class="mono">on</span> connects, and a dropped connection comes back on its own. A
-                handler gets the event's payload, then <span class="mono">{ event, group }</span>.
-            </p>
-        </div>
-        <div class="snippet">
-            <div class="snippet-head">
-                <label for="realtime-publish-snippet">Telling every open page, from a script or a CI job</label>
-                <button type="button" class="btn btn-sm" data-copy="#realtime-publish-snippet">Copy</button>
-            </div>
-            <textarea id="realtime-publish-snippet" rows="@(Model.RealtimePublishSnippet.Count(c => c == '\n') + 1)" wrap="off"
-                      readonly spellcheck="false" onclick="this.select()">@Model.RealtimePublishSnippet</textarea>
-            <p class="hint snippet-hint">
-                Add <span class="mono">"payload"</span> with any JSON the pages need, and <span class="mono">"group"</span>,
-                <span class="mono">"user"</span> or <span class="mono">"connection"</span> to reach fewer of them. The answer
-                says how many connections it was sent to.
-            </p>
-        </div>
-    </div>
-</div>
-
-<div class="card" id="functions">
-    <h2>Functions</h2>
-    <p class="hint">
-        C# handlers that answer requests on this site, checked before its files: <span class="mono">.cs</span> files
-        or LINQPad <span class="mono">.linq</span> queries with public static methods marked
-        <span class="mono">[HttpGet("/path")]</span>, <span class="mono">[HttpPost]</span> and so on. Upload them here,
-        write and test them in the editor, or ship them in a zip's <span class="mono">_functions/</span> folder.
-        They belong to the live release: deploying new content keeps them, and rolling back asks what to run.
+        @L.Html("site.functions.hint")
     </p>
 
     <partial name="_FunctionErrors" model="new StaticSiteHost.Pages.Shared.FunctionErrorsView(Model.FunctionError, Model.FunctionDiagnostics)" />
@@ -1128,7 +740,7 @@
     }
     else
     {
-        <p class="muted">The live release runs no functions.</p>
+        <p class="muted">@L["site.functions.none"]</p>
     }
 
     @if (Model.IsAdministrator)
@@ -1138,26 +750,444 @@
             Model.Site.CurrentFunctions,
             Url.Page("/Admin/FunctionEditor", new { domain = Model.Site.Domain })!,
             Url.Page(null, "RemoveFunctions", new { domain = Model.Site.Domain }),
-            "Remove functions",
-            $"Stop running functions on {Model.Site.Domain}? Earlier releases keep theirs.");
+            L.Text("site.functions.remove"),
+            L.Text("site.functions.removeConfirm", new { domain = Model.Site.Domain }));
         <partial name="_FunctionUpload" model="upload" />
     }
     else
     {
-        <p class="hint">Only administrators can upload functions, because they run as code inside this server.</p>
+        <p class="hint">@L["site.functions.memberHint"]</p>
     }
-</div>
+</details>
 
-<div class="card">
-    <h2>Releases</h2>
-    <p class="hint">Older releases stay on disk so you can switch back instantly.</p>
+<details class="card section" id="variables" data-section="variables" open="@Sections.IsOpen(HttpContext, "variables")">
+    <summary class="section-head"><h2>@L["site.variables.title"]</h2></summary>
+    <p class="hint">
+        @L.Html("site.variables.hint")
+    </p>
+
+    @if (Model.MissingVariables.Count > 0)
+    {
+        <div class="alert alert-warning">
+            @L.PluralHtml("site.variables.missing", Model.MissingVariables.Count, new { names = string.Join(", ", Model.MissingVariables) })
+        </div>
+    }
+
+    @if (Model.UnsetEnvironment.Count > 0)
+    {
+        <div class="alert alert-warning">
+            @L.PluralHtml("site.variables.unsetEnvironment", Model.UnsetEnvironment.Count, new { names = string.Join(", ", Model.UnsetEnvironment) })
+        </div>
+    }
+
+    @if (Model.Variables.Count > 0)
+    {
+        <div class="table-wrap">
+            <table class="variables">
+                <thead>
+                    <tr>
+                        <th>@L["site.variables.column.name"]</th>
+                        <th>@L["site.variables.column.value"]</th>
+                        <th>@L["site.variables.column.visibility"]</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var variable in Model.Variables)
+                    {
+                        var missing = Model.MissingVariables.Contains(variable.Name);
+                        var source = variable.Source switch
+                        {
+                            SiteVariableService.SourceSite => L.Text("site.variables.source.site"),
+                            SiteVariableService.SourceDefault => L.Text("site.variables.source.default"),
+                            _ => L.Text("site.variables.source.none")
+                        };
+                        var confirm = !variable.IsDeclared
+                            ? L.Text("site.variables.removeConfirm", new { name = variable.Name, domain = Model.Site.Domain })
+                            : L.Text("site.variables.useDefaultConfirm", new { name = variable.Name });
+
+                        <tr>
+                            <td>
+                                <span class="mono">@variable.Name</span>
+                                @if (variable.Description.Length > 0)
+                                {
+                                    <div class="muted var-description">@variable.Description</div>
+                                }
+                            </td>
+                            <td>
+                                @if (variable.IsSecret)
+                                {
+                                    <span class="badge @(variable.HasValue ? "badge-ok" : "badge-warn")">@(variable.HasValue ? L["site.variables.secretSet"] : L["site.variables.secretNotSet"])</span>
+                                }
+                                else if (variable.Value is { Length: > 0 } shown)
+                                {
+                                    <span class="mono var-value">@shown</span>
+                                }
+                                else if (variable.Value is not null)
+                                {
+                                    <span class="muted">@L["site.variables.empty"]</span>
+                                }
+                                <div class="muted var-source">@source</div>
+                                @foreach (var name in variable.UnsetEnvironment)
+                                {
+                                    <div class="var-note">@L.Html("site.variables.environmentNotSet", new { name })</div>
+                                }
+                            </td>
+                            <td>
+                                <span class="var-badges">
+                                    @if (variable.IsPublic)
+                                    {
+                                        <span class="badge badge-ok">@L["site.variables.badge.public"]</span>
+                                    }
+                                    @if (variable.IsSecret)
+                                    {
+                                        <span class="badge badge-warn">@L["site.variables.badge.secret"]</span>
+                                    }
+                                    @if (variable.IsRequired)
+                                    {
+                                        <span class="badge @(missing ? "badge-off" : null)">@L["site.variables.badge.required"]</span>
+                                    }
+                                    @if (!variable.IsPublic && !variable.IsSecret)
+                                    {
+                                        <span class="muted">@L["site.variables.functionsOnly"]</span>
+                                    }
+                                </span>
+                            </td>
+                            <td class="actions">
+                                @if (variable.IsAdministratorsOnly && !Model.IsAdministrator)
+                                {
+                                    @* A secret, or a value that reads the server's environment: the server refuses a member's change too. *@
+                                    <span class="muted" title="@L["site.variables.administratorsOnlyTitle"]">@L["site.variables.administratorsOnly"]</span>
+                                }
+                                else
+                                {
+                                    <form method="post" asp-page-handler="SetVariable" asp-route-domain="@Model.Site.Domain" class="var-edit">
+                                        <input type="hidden" name="name" value="@variable.Name" />
+                                        @if (variable.IsSecret)
+                                        {
+                                            @* Never filled in: the value does not come back to the page, and an empty box leaves it alone. *@
+                                            <input type="password" name="value" autocomplete="new-password" placeholder="@L["site.variables.unchanged"]"
+                                                   aria-label="@L.Text("site.variables.newValueFor", new { name = variable.Name })" />
+                                        }
+                                        else
+                                        {
+                                            <input type="text" name="value" value="@variable.Value" autocomplete="off" spellcheck="false"
+                                                   aria-label="@L.Text("site.variables.valueFor", new { name = variable.Name })" />
+                                        }
+                                        <button type="submit" class="btn btn-sm">@L["common.save"]</button>
+                                    </form>
+                                    @if (variable.Source == SiteVariableService.SourceSite)
+                                    {
+                                        <form method="post" asp-page-handler="RemoveVariable" asp-route-domain="@Model.Site.Domain"
+                                              data-confirm="@confirm">
+                                            <input type="hidden" name="name" value="@variable.Name" />
+                                            <button type="submit" class="btn-link danger">@(variable.IsDeclared ? L["site.variables.useDefault"] : L["common.remove"])</button>
+                                        </form>
+                                    }
+                                }
+                                @if (Model.VariableError is not null && Model.VariableErrorFor == variable.Name)
+                                {
+                                    <div class="validation" role="alert">@Model.VariableError</div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p class="muted">
+            @L.Html("site.variables.none")
+        </p>
+    }
+
+    <form method="post" asp-page-handler="SetVariable" asp-route-domain="@Model.Site.Domain" class="var-add">
+        <h3>@L["site.variables.addTitle"]</h3>
+        <p class="hint">
+            @L["site.variables.addHint"]
+            @if (!Model.IsAdministrator)
+            {
+                @L.Html("site.variables.addMemberHint")
+            }
+        </p>
+        <div class="row">
+            <div class="field">
+                <label for="new-variable-name">@L["site.variables.name"]</label>
+                <input id="new-variable-name" name="name" type="text" autocomplete="off" spellcheck="false" required
+                       maxlength="64" pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="API_BASE_URL"
+                       title="@L["site.variables.nameTitle"]"
+                       value="@Model.NewVariableName" />
+            </div>
+            <div class="field">
+                <label for="new-variable-value">@L["site.variables.value"]</label>
+                <input id="new-variable-value" name="value" type="text" autocomplete="off" spellcheck="false"
+                       value="@Model.NewVariableValue" />
+            </div>
+        </div>
+        <div class="var-flags">
+            @* Each checkbox is followed by a hidden "false", so an unticked box still says so. *@
+            <div class="checkline">
+                <input id="new-variable-public" name="isPublic" type="checkbox" value="true" checked="@Model.NewVariablePublic" />
+                <label for="new-variable-public">@L.Html("site.variables.public")</label>
+            </div>
+            @if (Model.IsAdministrator)
+            {
+                <div class="checkline">
+                    <input id="new-variable-secret" name="isSecret" type="checkbox" value="true" checked="@Model.NewVariableSecret" />
+                    <label for="new-variable-secret">@L["site.variables.secret"]</label>
+                </div>
+            }
+            <input type="hidden" name="isPublic" value="false" />
+            <input type="hidden" name="isSecret" value="false" />
+        </div>
+        <button type="submit" class="btn-primary">@L["site.variables.add"]</button>
+        @if (Model.VariableError is not null && Model.VariableErrorFor is null)
+        {
+            <div class="validation" role="alert">@Model.VariableError</div>
+        }
+    </form>
+</details>
+
+<details class="card section" id="ai" data-section="ai" open="@Sections.IsOpen(HttpContext, "ai")">
+    <summary class="section-head"><h2>
+        @L["site.ai.title"]
+        @if (Model.AiProvider is null)
+        {
+            <span class="badge">@L["common.off"]</span>
+        }
+        else if (Model.AiAccessHook is not null)
+        {
+            <span class="badge badge-ok">@L["site.ai.badgeHook"]</span>
+        }
+        else if (Model.Site.Ai?.AllowVisitors == true)
+        {
+            <span class="badge badge-warn">@L["site.ai.badgeVisitors"]</span>
+        }
+        else
+        {
+            <span class="badge badge-ok">@L["site.ai.badgeFunctions"]</span>
+        }
+    </h2></summary>
+    <p class="hint">
+        @L.Html("site.ai.hint")
+    </p>
+
+    @if (Model.Site.Ai is { HasProvider: true } && Model.AiProvider is null)
+    {
+        <div class="alert alert-warning">
+            @L["site.ai.providerDeleted"]
+        </div>
+    }
+
+    @if (Model.IsAdministrator)
+    {
+        @if (Model.AiProviders.Count == 0)
+        {
+            <p class="muted">
+                @L.Html("site.ai.noProviders", new { aiUrl = Url.Page("/Admin/Ai") })
+            </p>
+        }
+        else
+        {
+            <form method="post" asp-page-handler="Ai" asp-route-domain="@Model.Site.Domain">
+                <div class="row">
+                    <div class="field">
+                        <label for="ai-provider">@L["site.ai.provider"]</label>
+                        <select id="ai-provider" name="providerId">
+                            <option value="" selected="@(Model.AiProviderId is null)">@L["site.ai.noProvider"]</option>
+                            @foreach (var provider in Model.AiProviders)
+                            {
+                                <option value="@provider.Id" data-model="@provider.DefaultModel"
+                                        selected="@(provider.Id == Model.AiProviderId)">@provider.Name (@provider.DefaultModel)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="ai-model">@L["site.ai.model"]</label>
+                        <input id="ai-model" name="model" type="text" autocomplete="off" spellcheck="false"
+                               data-model-suggest data-model-provider="#ai-provider"
+                               maxlength="@SiteAiSettings.MaxModelLength" value="@Model.AiModelName"
+                               placeholder="@(Model.AiProvider?.DefaultModel ?? L.Text("site.ai.modelPlaceholder"))" />
+                    </div>
+                </div>
+                <div class="field ai-prompt">
+                    <label for="ai-system-prompt">@L["site.ai.systemPrompt"]</label>
+                    <textarea id="ai-system-prompt" name="systemPrompt" rows="4" spellcheck="true"
+                              placeholder="@L["site.ai.systemPromptPlaceholder"]">@Model.AiSystemPrompt</textarea>
+                    <p class="hint snippet-hint">
+                        @L.Text("site.ai.systemPromptHint", new { size = Model.AiMaxSystemPromptBytes / 1024 })
+                    </p>
+                </div>
+                <div class="checkline">
+                    <input id="ai-allow-visitors" name="allowVisitors" type="checkbox" value="true" checked="@Model.AiAllowVisitors" />
+                    <label for="ai-allow-visitors">@L.Html("site.ai.allowVisitors")</label>
+                </div>
+                <input type="hidden" name="allowVisitors" value="false" />
+                @if (Model.AiAccessHook is not null)
+                {
+                    <p class="hint">
+                        @L.Html("site.ai.hookHint", new { hook = Model.AiAccessHook })
+                    </p>
+                }
+                <p class="hint ai-warning">
+                    @(Model.AiVisitorRequestsPerMinute > 0
+                        ? L.PluralHtml("site.ai.visitorWarning", Model.AiVisitorRequestsPerMinute)
+                        : L.Html("site.ai.visitorWarningNoLimit"))
+                </p>
+                <button type="submit" class="btn-primary">@L["site.ai.save"]</button>
+                @if (Model.AiError is not null)
+                {
+                    <div class="validation" role="alert">@Model.AiError</div>
+                }
+            </form>
+
+            @if (Model.Site.Ai is not null)
+            {
+                <form method="post" asp-page-handler="RemoveAi" asp-route-domain="@Model.Site.Domain" class="ai-remove"
+                      data-confirm="@L.Text("site.ai.removeConfirm", new { domain = Model.Site.Domain })">
+                    <button type="submit" class="btn-danger">@L["site.ai.remove"]</button>
+                </form>
+            }
+        }
+    }
+    else if (Model.AiProvider is not null)
+    {
+        <p>
+            @L.Html("site.ai.memberProvider", new { provider = Model.AiProvider.Name, model = Model.Site.Ai?.Model ?? Model.AiProvider.DefaultModel })
+            @(Model.AiAccessHook is not null
+                ? L.Html("site.ai.memberHook", new { hook = Model.AiAccessHook })
+                : Model.Site.Ai?.AllowVisitors == true
+                    ? L.Html("site.ai.memberVisitors")
+                    : L.Html("site.ai.memberNoVisitors"))
+        </p>
+        <p class="hint">@L["site.ai.memberHint"]</p>
+    }
+    else
+    {
+        <p class="muted">@L["site.ai.memberNone"]</p>
+    }
+
+    <details class="code-fold">
+    <summary>@L["site.ai.codeTitle"]</summary>
+    <div class="snippet">
+        <div class="snippet-head">
+            <label for="ai-snippet">@L["site.ai.snippetLabel"]</label>
+            <button type="button" class="btn btn-sm" data-copy="#ai-snippet">@L["common.copy"]</button>
+        </div>
+        <textarea id="ai-snippet" rows="@(Model.AiSnippet.Count(c => c == '\n') + 1)" wrap="off" readonly spellcheck="false"
+                  onclick="this.select()">@Model.AiSnippet</textarea>
+        <p class="hint snippet-hint">
+            @L.Html("site.ai.snippetHint")
+        </p>
+    </div>
+    </details>
+</details>
+
+<details class="card section" id="realtime" data-section="realtime" open="@Sections.IsOpen(HttpContext, "realtime")">
+    <summary class="section-head"><h2>
+        @L["site.realtime.title"]
+        @if (Model.RealtimeConnections > 0)
+        {
+            <span class="badge badge-ok">@L.Plural("site.realtime.connected", Model.RealtimeConnections, new { connections = Model.RealtimeConnections.ToString("N0") })</span>
+        }
+        else
+        {
+            <span class="badge">@L["site.realtime.noneConnected"]</span>
+        }
+    </h2></summary>
+    <p class="hint">
+        @L.Html("site.realtime.hint")
+    </p>
+
+    @if (Model.RealtimeConnections == 0)
+    {
+        <p class="muted">@L["site.realtime.noPages"]</p>
+    }
+    else
+    {
+        <p>
+            @L.Plural("site.realtime.pages", Model.RealtimeConnections, new
+            {
+                pages = Model.RealtimeConnections.ToString("N0"),
+                groups = L.Plural("site.realtime.groupCount", Model.RealtimeGroups.Count, new { number = Model.RealtimeGroups.Count.ToString("N0") })
+            })
+        </p>
+    }
+
+    @if (Model.RealtimeGroups.Count > 0)
+    {
+        <div class="table-wrap rt-groups">
+            <table>
+                <thead>
+                    <tr>
+                        <th>@L["site.realtime.column.group"]</th>
+                        <th>@L["site.realtime.column.connections"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var (name, members) in Model.RealtimeGroups.Take(DetailsModel.RealtimeGroupsShown))
+                    {
+                        <tr>
+                            <td class="mono">@name</td>
+                            <td>@members.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (Model.RealtimeGroups.Count > DetailsModel.RealtimeGroupsShown)
+        {
+            <p class="hint">
+                @L.PluralHtml("site.realtime.more", Model.RealtimeGroups.Count - DetailsModel.RealtimeGroupsShown, new
+                {
+                    more = (Model.RealtimeGroups.Count - DetailsModel.RealtimeGroupsShown).ToString("N0"),
+                    domain = Model.Site.Domain
+                })
+            </p>
+        }
+    }
+
+    <details class="code-fold">
+        <summary>@L["site.realtime.codeTitle"]</summary>
+        <div class="snippet">
+            <div class="snippet-head">
+                <label for="realtime-snippet">@L["site.realtime.listenLabel"]</label>
+                <button type="button" class="btn btn-sm" data-copy="#realtime-snippet">@L["common.copy"]</button>
+            </div>
+            <textarea id="realtime-snippet" rows="@(Model.RealtimeSnippet.Count(c => c == '\n') + 1)" wrap="off" readonly spellcheck="false"
+                      onclick="this.select()">@Model.RealtimeSnippet</textarea>
+            <p class="hint snippet-hint">
+                @L.Html("site.realtime.listenHint")
+            </p>
+        </div>
+        <div class="snippet">
+            <div class="snippet-head">
+                <label for="realtime-publish-snippet">@L["site.realtime.publishLabel"]</label>
+                <button type="button" class="btn btn-sm" data-copy="#realtime-publish-snippet">@L["common.copy"]</button>
+            </div>
+            <textarea id="realtime-publish-snippet" rows="@(Model.RealtimePublishSnippet.Count(c => c == '\n') + 1)" wrap="off"
+                      readonly spellcheck="false" onclick="this.select()">@Model.RealtimePublishSnippet</textarea>
+            <p class="hint snippet-hint">
+                @L.Html("site.realtime.publishHint")
+            </p>
+        </div>
+    </details>
+</details>
+</section>
+
+<section class="tab-panel" data-tab="releases" hidden="@(Model.Tab != "releases")">
+<details class="card section" data-section="releases" open="@Sections.IsOpen(HttpContext, "releases")">
+    <summary class="section-head"><h2>@L["site.releases.title"]</h2></summary>
+    <p class="hint">@L["site.releases.hint"]</p>
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
-                    <th>Release</th>
-                    <th>Contents</th>
-                    <th>Functions</th>
+                    <th>@L["site.releases.column.release"]</th>
+                    <th>@L["site.releases.column.contents"]</th>
+                    <th>@L["site.releases.column.functions"]</th>
                     <th></th>
                 </tr>
             </thead>
@@ -1169,18 +1199,26 @@
                             <span class="mono nowrap">@release.Id</span>
                             @if (release.Id == Model.Site.CurrentRelease)
                             {
-                                <span class="badge badge-ok">live</span>
+                                <span class="badge badge-ok">@L["site.releases.live"]</span>
                             }
-                            <div class="cell-sub">@release.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") by @(release.DeployedBy ?? "—")</div>
+                            <div class="cell-sub">@L.Text("site.releases.deployedBy", new { date = release.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), name = release.DeployedBy ?? "—" })</div>
+                            @if (release.CopiedFrom is { } copiedFrom)
+                            {
+                                <div class="cell-sub">@L.Html("site.releases.copyOf", new { id = copiedFrom })</div>
+                            }
+                            @if (release.EditedUtc is { } edited)
+                            {
+                                <div class="cell-sub">@L.Text("site.releases.edited", new { date = edited.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), name = release.EditedBy ?? "—" })</div>
+                            }
                         </td>
                         <td>
                             @if (release.IsFunctionsOnly)
                             {
-                                <span class="muted">functions only, no files</span>
+                                <span class="muted">@L["site.releases.functionsOnly"]</span>
                             }
                             else
                             {
-                                <span class="nowrap">@release.FileCount.ToString("N0") file@(release.FileCount == 1 ? "" : "s"), @Format.Bytes(release.TotalBytes)</span>
+                                <span class="nowrap">@L.Plural("site.releases.files", release.FileCount, new { files = release.FileCount.ToString("N0"), size = Format.Bytes(release.TotalBytes) })</span>
                                 <div class="cell-sub">@(release.ArchiveName ?? "—")</div>
                             }
                         </td>
@@ -1189,8 +1227,13 @@
                             @if (!release.IsFunctionsOnly)
                             {
                                 <a class="btn-link" asp-page-handler="DownloadRelease" asp-route-domain="@Model.Site.Domain"
-                                   asp-route-releaseId="@release.Id" title="A zip of this release, rules and variable declarations included, ready to deploy again">Download</a>
+                                   asp-route-releaseId="@release.Id" title="@L["site.releases.downloadTitle"]">@L["site.releases.download"]</a>
                             }
+                            <a class="btn-link" href="@Url.Page("/Sites/Details", new { domain = Model.Site.Domain, tab = "files" })?release=@release.Id">@L["site.releases.edit"]</a>
+                            <form method="post" asp-page-handler="Duplicate" asp-route-domain="@Model.Site.Domain">
+                                <input type="hidden" name="releaseId" value="@release.Id" />
+                                <button type="submit" class="btn-link" title="@L["site.files.duplicateTitle"]">@L["site.releases.duplicate"]</button>
+                            </form>
                             @if (release.Id != Model.Site.CurrentRelease)
                             {
                                 <form method="post" asp-page-handler="Rollback" asp-route-domain="@Model.Site.Domain">
@@ -1198,12 +1241,12 @@
                                     @if (release.Functions != Model.Site.Current?.Functions)
                                     {
                                         @* The two releases run different code, so which one comes along is a real choice. *@
-                                        <select name="functions" aria-label="Functions to run on release @release.Id">
-                                            <option value="restore" selected>with its own: @Model.BundleLabel(release.Functions)</option>
-                                            <option value="keep">with the current: @Model.BundleLabel(Model.Site.Current?.Functions)</option>
+                                        <select name="functions" aria-label="@L.Text("site.releases.functionsLabel", new { id = release.Id })">
+                                            <option value="restore" selected>@L.Text("site.releases.withOwn", new { functions = Model.BundleLabel(release.Functions) })</option>
+                                            <option value="keep">@L.Text("site.releases.withLive", new { functions = Model.BundleLabel(Model.Site.Current?.Functions) })</option>
                                         </select>
                                     }
-                                    <button type="submit" class="btn-link">Make live</button>
+                                    <button type="submit" class="btn-link">@L["site.releases.makeLive"]</button>
                                 </form>
                             }
                         </td>
@@ -1212,36 +1255,60 @@
             </tbody>
         </table>
     </div>
-</div>
+</details>
+</section>
 
 @if (Model.IsAdministrator)
 {
-    <div class="card">
-        <h2>Change domain</h2>
+<section class="tab-panel" data-tab="settings" hidden="@(Model.Tab != "settings")">
+    <div class="card" id="branding">
+        <h2>
+            @L["site.branding.title"]
+            <span class="badge @(Model.Site.Branding is null ? null : "badge-admin")">@L[Model.Site.Branding is null ? "site.branding.badgeServer" : "site.branding.badgeOwn"]</span>
+        </h2>
+        <p class="hint">@L["site.branding.hint"]</p>
+        @if (Model.Site.Branding is not null)
+        {
+            <form method="post" asp-page-handler="RemoveBranding" asp-route-domain="@Model.Site.Domain"
+                  data-confirm="@L.Text("site.branding.removeConfirm", new { domain = Model.Site.Domain })">
+                <button type="submit" class="btn">@L["site.branding.remove"]</button>
+            </form>
+        }
+    </div>
+    @if (Model.Branding is { } branding)
+    {
+        <partial name="_BrandingEditor" model="branding" />
+    }
+
+    <details class="card section" data-section="rename" open="@Sections.IsOpen(HttpContext, "rename")">
+        <summary class="section-head"><h2>@L["site.rename.title"]</h2></summary>
         <p class="hint">
-            Moves the site, with every release, its rules and its passcode, to another domain.
-            @Model.Site.Domain stops answering immediately and nothing redirects from it, so point
-            DNS at this server first, and update any deploy scripts: API calls name the domain.
+            @L.Text("site.rename.hint", new { domain = Model.Site.Domain })
         </p>
         <form method="post" asp-page-handler="Rename" asp-route-domain="@Model.Site.Domain"
-              data-confirm="Move @Model.Site.Domain to the new domain? The current address stops working immediately.">
+              data-confirm="@L.Text("site.rename.confirm", new { domain = Model.Site.Domain })">
             <div class="row">
                 <div class="field">
-                    <label for="newDomain">New domain</label>
+                    <label for="newDomain">@L["site.rename.newDomain"]</label>
                     <input id="newDomain" name="newDomain" type="text" autocomplete="off" spellcheck="false"
                            maxlength="253" placeholder="www.example.com" required />
                 </div>
-                <button type="submit" class="btn-primary">Change domain</button>
+                <button type="submit" class="btn-primary">@L["site.rename.button"]</button>
             </div>
         </form>
-    </div>
+    </details>
 
-    <div class="card">
-        <h2>Danger zone</h2>
-        <p class="hint">Removing a site deletes every release and all of its files from disk.</p>
+    <details class="card section" data-section="danger" open="@Sections.IsOpen(HttpContext, "danger")">
+        <summary class="section-head"><h2>@L["site.delete.title"]</h2></summary>
+        <p class="hint">@L["site.delete.hint"]</p>
         <form method="post" asp-page-handler="Delete" asp-route-domain="@Model.Site.Domain"
-              data-confirm="Delete @Model.Site.Domain and all of its content? This cannot be undone.">
-            <button type="submit" class="btn-danger">Delete this site</button>
+              data-confirm="@L.Text("site.delete.confirm", new { domain = Model.Site.Domain })">
+            <button type="submit" class="btn-danger">@L["site.delete.button"]</button>
         </form>
-    </div>
+    </details>
+</section>
+}
+
+@section Scripts {
+    <script src="~/js/files.js" asp-append-version="true"></script>
 }

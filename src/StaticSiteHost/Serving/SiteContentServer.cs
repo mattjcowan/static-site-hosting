@@ -1,12 +1,15 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.FileProviders.Physical;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -93,13 +96,14 @@ public sealed class SiteContentServer
             // not a site waiting for its first deploy.
             if (site.Proxy.Count > 0)
             {
-                await WriteMessageAsync(context, StatusCodes.Status404NotFound,
-                    "Not found", $"{WebUtility.HtmlEncode(context.Request.GetDisplayUrl())} could not be found.");
+                await WriteNotFoundAsync(context);
                 return;
             }
 
+            var strings = StringsFor(context);
             await WriteMessageAsync(context, StatusCodes.Status503ServiceUnavailable,
-                "Nothing deployed yet", $"No content has been published for {WebUtility.HtmlEncode(domain)}.");
+                strings.Text("visitor.unavailable.title"),
+                WebUtility.HtmlEncode(strings.Text("visitor.unavailable.detail", new { domain })));
             return;
         }
 
@@ -163,8 +167,7 @@ public sealed class SiteContentServer
                 return;
 
             default:
-                await WriteMessageAsync(context, StatusCodes.Status404NotFound,
-                    "Not found", $"{WebUtility.HtmlEncode(context.Request.GetDisplayUrl())} could not be found.");
+                await WriteNotFoundAsync(context);
                 return;
         }
     }
@@ -332,36 +335,46 @@ public sealed class SiteContentServer
         return string.Join(", ", directives);
     }
 
-    private static Task NotFoundAsync(HttpContext context) =>
-        WriteMessageAsync(context, StatusCodes.Status404NotFound, "Not found", "The requested file could not be found.");
-
-    /// <summary>The server's own small error page. <paramref name="detail"/> is HTML, so encode what goes into it.</summary>
-    internal static async Task WriteMessageAsync(HttpContext context, int statusCode, string title, string detail)
+    /// <summary>The 404 page for an address the site has nothing at, naming the address.</summary>
+    private static Task WriteNotFoundAsync(HttpContext context)
     {
-        if (context.Response.HasStarted) return;
-
-        context.Response.StatusCode = statusCode;
-        context.Response.ContentType = "text/html; charset=utf-8";
-        context.Response.Headers.CacheControl = "no-store";
-
-        var html = $$"""
-            <!doctype html>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>{{statusCode}} — {{WebUtility.HtmlEncode(title)}}</title>
-            <style>
-              body { font: 16px/1.6 system-ui, sans-serif; margin: 0; display: grid; place-items: center;
-                     min-height: 100vh; background: #0f1115; color: #d7dbe3; }
-              main { max-width: 34rem; padding: 2rem; text-align: center; }
-              h1 { font-size: 3.5rem; margin: 0; letter-spacing: -0.03em; }
-              h2 { font-size: 1.25rem; font-weight: 600; margin: 0.25rem 0 1rem; }
-              p { color: #8b93a5; word-break: break-all; }
-            </style>
-            <main><h1>{{statusCode}}</h1><h2>{{WebUtility.HtmlEncode(title)}}</h2><p>{{detail}}</p></main>
-            """;
-
-        await context.Response.WriteAsync(html, Encoding.UTF8);
+        var strings = StringsFor(context);
+        return WriteMessageAsync(context, StatusCodes.Status404NotFound,
+            strings.Text("visitor.notFound.title"),
+            WebUtility.HtmlEncode(strings.Text("visitor.notFound.detail", new { address = context.Request.GetDisplayUrl() })));
     }
+
+    /// <summary>
+    /// The file went missing between resolving and sending it. The request's path is the file's by
+    /// now, not the one the visitor asked for, so the page names no address.
+    /// </summary>
+    private static Task NotFoundAsync(HttpContext context)
+    {
+        var strings = StringsFor(context);
+        return WriteMessageAsync(context, StatusCodes.Status404NotFound,
+            strings.Text("visitor.notFound.title"),
+            WebUtility.HtmlEncode(strings.Text("visitor.notFound.detailNoAddress")));
+    }
+
+    /// <summary>
+    /// The server's own small error page, in the visitor's language. <paramref name="title"/> is text;
+    /// <paramref name="detail"/> is HTML, so encode what goes into it.
+    /// </summary>
+    internal static Task WriteMessageAsync(HttpContext context, int statusCode, string title, string detail)
+    {
+        if (context.Response.HasStarted) return Task.CompletedTask;
+
+        var pageTitle = StringsFor(context).Text("visitor.page.title", new { status = statusCode, title });
+        return VisitorPage.WriteMessageAsync(context, statusCode, pageTitle, title, detail);
+    }
+
+    /// <summary>The visitor screens' text, in the visitor's language (set from their browser by UseSiteHostLanguages).</summary>
+    internal static IStringLocalizer<Strings> StringsFor(HttpContext context) =>
+        context.RequestServices.GetRequiredService<IStringLocalizer<Strings>>();
+
+    /// <summary>The language the visitor pages are in, for <c>&lt;html lang&gt;</c>.</summary>
+    internal static string LanguageOf(HttpContext context) =>
+        context.RequestServices.GetRequiredService<StringCatalog>().Resolve(CultureInfo.CurrentUICulture).Name;
 
     private static FileExtensionContentTypeProvider CreateContentTypeProvider()
     {

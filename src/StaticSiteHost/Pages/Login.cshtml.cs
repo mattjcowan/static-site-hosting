@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Security;
 using StaticSiteHost.Services;
 
@@ -15,12 +17,14 @@ public class LoginModel : PageModel
     private readonly UserStore _users;
     private readonly LoginThrottle _throttle;
     private readonly AuditLog _audit;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public LoginModel(UserStore users, LoginThrottle throttle, AuditLog audit)
+    public LoginModel(UserStore users, LoginThrottle throttle, AuditLog audit, IStringLocalizer<Strings> strings)
     {
         _users = users;
         _throttle = throttle;
         _audit = audit;
+        _strings = strings;
     }
 
     [BindProperty]
@@ -28,16 +32,13 @@ public class LoginModel : PageModel
 
     public string? ReturnUrl { get; set; }
 
+    /// <summary>Both are required: <see cref="OnPostAsync"/> checks them, so the messages are in the viewer's language.</summary>
     public class InputModel
     {
-        [Required(ErrorMessage = "Enter your username.")]
-        [Display(Name = "Username")]
-        public string Username { get; set; } = "";
+        public string? Username { get; set; } = "";
 
-        [Required(ErrorMessage = "Enter your password.")]
         [DataType(DataType.Password)]
-        [Display(Name = "Password")]
-        public string Password { get; set; } = "";
+        public string? Password { get; set; } = "";
     }
 
     public IActionResult OnGet(string? returnUrl = null)
@@ -51,16 +52,18 @@ public class LoginModel : PageModel
     public async Task<IActionResult> OnPostAsync(string? returnUrl = null)
     {
         ReturnUrl = returnUrl;
+        if (string.IsNullOrWhiteSpace(Input.Username)) ModelState.AddModelError("Input.Username", _strings["auth.signIn.noUsername"]);
+        if (string.IsNullOrWhiteSpace(Input.Password)) ModelState.AddModelError("Input.Password", _strings["auth.signIn.noPassword"]);
         if (!ModelState.IsValid) return Page();
 
-        var username = Input.Username.Trim();
+        var username = Input.Username!.Trim();
         var address = HttpContext.Connection.RemoteIpAddress;
 
         if (_throttle.IsLocked(username, address, out var retryAfter))
         {
             await _audit.WriteAsync("auth.login.throttled", username, new { ip = address?.ToString() });
             ModelState.AddModelError(string.Empty,
-                $"Too many failed attempts. Try again in {Math.Ceiling(retryAfter.TotalMinutes)} minute(s).");
+                _strings.Plural("auth.signIn.locked", (long)Math.Ceiling(retryAfter.TotalMinutes)));
             return Page();
         }
 
@@ -68,7 +71,7 @@ public class LoginModel : PageModel
 
         // Always verify against something, so an unknown username and an account that has
         // not set a password yet cost the same time as a real check.
-        var passwordOk = PasswordHasher.Verify(Input.Password, user?.PasswordHash ?? PasswordHasher.PlaceholderHash);
+        var passwordOk = PasswordHasher.Verify(Input.Password!, user?.PasswordHash ?? PasswordHasher.PlaceholderHash);
 
         if (user is null || !passwordOk || user.IsDisabled)
         {
@@ -85,7 +88,7 @@ public class LoginModel : PageModel
             if (backoff > TimeSpan.Zero) await Task.Delay(backoff, HttpContext.RequestAborted);
 
             // Deliberately identical for unknown users, wrong passwords and disabled accounts.
-            ModelState.AddModelError(string.Empty, "That username and password combination was not recognised.");
+            ModelState.AddModelError(string.Empty, _strings["auth.signIn.failed"]);
             return Page();
         }
 

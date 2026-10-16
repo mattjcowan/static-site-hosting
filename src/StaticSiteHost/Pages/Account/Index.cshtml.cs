@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Localization;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -11,12 +13,14 @@ public class IndexModel : PageModel
     private readonly UserStore _users;
     private readonly ApiKeyStore _apiKeys;
     private readonly AuditLog _audit;
+    private readonly IStringLocalizer<Strings> _strings;
 
-    public IndexModel(UserStore users, ApiKeyStore apiKeys, AuditLog audit)
+    public IndexModel(UserStore users, ApiKeyStore apiKeys, AuditLog audit, IStringLocalizer<Strings> strings)
     {
         _users = users;
         _apiKeys = apiKeys;
         _audit = audit;
+        _strings = strings;
     }
 
     public UserRecord Account { get; private set; } = null!;
@@ -41,18 +45,18 @@ public class IndexModel : PageModel
         displayName = displayName?.Trim();
         if (string.IsNullOrEmpty(displayName))
         {
-            TempData["ErrorMessage"] = "Enter a display name.";
+            TempData["ErrorMessage"] = _strings.Text("account.profile.noName");
             return RedirectToPage();
         }
 
         if (displayName.Length > 128)
         {
-            TempData["ErrorMessage"] = "Display names must be 128 characters or fewer.";
+            TempData["ErrorMessage"] = _strings.Text("account.profile.tooLong", new { max = 128 });
             return RedirectToPage();
         }
 
         await _users.UpdateAsync(UserId, user => user.DisplayName = displayName);
-        TempData["StatusMessage"] = "Your display name was updated.";
+        TempData["StatusMessage"] = _strings.Text("account.profile.saved", new { name = displayName });
         return RedirectToPage();
     }
 
@@ -62,7 +66,7 @@ public class IndexModel : PageModel
 
         if (expiresInDays is < 1 or > 3650)
         {
-            TempData["ErrorMessage"] = "Expiry must be between 1 and 3650 days, or left blank.";
+            TempData["ErrorMessage"] = _strings.Text("account.keys.badExpiry", new { min = 1, max = 3650 });
             return RedirectToPage();
         }
 
@@ -72,7 +76,7 @@ public class IndexModel : PageModel
         await _audit.WriteAsync("apikey.create", User.Identity?.Name, new { keyId = record.Id, record.Name });
 
         TempData["NewApiKey"] = plainText;
-        TempData["StatusMessage"] = "API key created. Copy it now — it is not shown again.";
+        TempData["StatusMessage"] = _strings.Text("account.keys.created", new { name = record.Name });
         return RedirectToPage();
     }
 
@@ -83,11 +87,11 @@ public class IndexModel : PageModel
         if (await _apiKeys.RevokeAsync(keyId, UserId))
         {
             await _audit.WriteAsync("apikey.revoke", User.Identity?.Name, new { keyId });
-            TempData["StatusMessage"] = "That API key was revoked.";
+            TempData["StatusMessage"] = _strings.Text("account.keys.revoked");
         }
         else
         {
-            TempData["ErrorMessage"] = "That API key could not be revoked.";
+            TempData["ErrorMessage"] = _strings.Text("account.keys.revokeFailed");
         }
 
         return RedirectToPage();

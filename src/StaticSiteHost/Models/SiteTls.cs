@@ -27,16 +27,6 @@ public static class CertificateSources
     /// <summary>What <c>SiteHosting:Tls:DefaultSource</c> may be.</summary>
     public static readonly string[] Defaults = [LetsEncrypt, SelfSigned, None];
 
-    public static string Describe(string source) => source switch
-    {
-        Automatic => "automatic",
-        LetsEncrypt => "Let's Encrypt",
-        SelfSigned => "self-signed",
-        Uploaded => "uploaded",
-        Shared => "shared certificate",
-        None => "no HTTPS",
-        _ => source
-    };
 }
 
 /// <summary>

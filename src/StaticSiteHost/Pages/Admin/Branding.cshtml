@@ -1,0 +1,109 @@
+@page
+@model StaticSiteHost.Pages.Admin.BrandingModel
+@using StaticSiteHost.Services
+@{
+    ViewData["Title"] = L["branding.pageTitle"].Value;
+    var settings = Model.Settings;
+}
+
+<div class="page-head">
+    <h1>@L["branding.title"]</h1>
+    <p>@L["branding.intro"]</p>
+</div>
+
+<partial name="_BrandingEditor" model="Model.Editor" />
+
+<details class="card section" id="fonts" data-section="brand-fonts" open="@Sections.IsOpen(HttpContext, "brand-fonts")">
+    <summary class="section-head"><h2>@L["branding.fonts.title"] <span class="badge">@settings.Fonts.Count</span></h2></summary>
+    <p class="hint">@L["branding.fonts.hint"]</p>
+
+    @if (settings.Fonts.Count == 0)
+    {
+        <p class="muted">@L["branding.fonts.empty"]</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>@L["branding.fonts.column.font"]</th><th>@L["branding.fonts.column.source"]</th><th>@L["branding.fonts.column.files"]</th><th></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var font in settings.Fonts)
+                    {
+                        var usable = font.Kind != BrandFont.GoogleLinked || settings.AllowGoogleFonts;
+                        <tr>
+                            <td>
+                                <strong>@font.Family</strong>
+                                <div class="font-sample" style="font-family: @BrandingTheme.CssString(font.Family), system-ui">@L["branding.fonts.sample"]</div>
+                            </td>
+                            <td>
+                                @L[font.Kind switch { BrandFont.GoogleDownloaded => "branding.fonts.source.googleDownloaded", BrandFont.GoogleLinked => "branding.fonts.source.googleLinked", _ => "branding.fonts.source.uploaded" }]
+                                @if (!usable)
+                                {
+                                    <div class="cell-sub validation">@L["branding.fonts.source.googleOff"]</div>
+                                }
+                            </td>
+                            <td class="nowrap">@(font.Kind == BrandFont.GoogleLinked ? "—" : L.Plural("branding.fonts.files", font.Files.Count))</td>
+                            <td class="actions">
+                                <form method="post" asp-page-handler="RemoveFont" data-confirm="@L.Text("branding.fonts.removeConfirm", new { family = font.Family })">
+                                    <input type="hidden" name="id" value="@font.Id" />
+                                    <button type="submit" class="btn-link danger">@L["common.remove"]</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <details class="code-fold">
+        <summary>@L["branding.fonts.upload.title"]</summary>
+        <form method="post" asp-page-handler="UploadFont" enctype="multipart/form-data">
+            <div class="row">
+                <div class="field">
+                    <label for="font-family">@L["branding.fonts.upload.family"]</label>
+                    <input id="font-family" name="family" type="text" maxlength="60" required autocomplete="off" placeholder="@L["branding.fonts.upload.familyPlaceholder"]" />
+                </div>
+                <div class="field">
+                    <label for="font-files">@L["branding.fonts.upload.files"]</label>
+                    <input id="font-files" name="files" type="file" multiple required accept=".woff2,.woff,.ttf,.otf" />
+                </div>
+                <button type="submit" class="btn-primary">@L["branding.fonts.upload.submit"]</button>
+            </div>
+            <p class="hint field-hint">@L.Html("branding.fonts.upload.hint", new { size = BrandingStore.MaxFontFileBytes / (1024 * 1024) })</p>
+        </form>
+    </details>
+
+    <div class="google-fonts">
+        <h3>@L["branding.google.title"] <span class="badge @(settings.AllowGoogleFonts ? "badge-ok" : null)">@L[settings.AllowGoogleFonts ? "common.on" : "common.off"]</span></h3>
+        <p class="hint">@L[settings.AllowGoogleFonts ? "branding.google.onHint" : "branding.google.offHint"]</p>
+        <form method="post" asp-page-handler="Google" data-confirm="@(settings.AllowGoogleFonts ? L.Text("branding.google.disallowConfirm") : null)">
+            <input type="hidden" name="allow" value="@((!settings.AllowGoogleFonts).ToString().ToLowerInvariant())" />
+            <button type="submit" class="btn">@L[settings.AllowGoogleFonts ? "branding.google.disallow" : "branding.google.allow"]</button>
+        </form>
+
+        @if (settings.AllowGoogleFonts)
+        {
+            <form method="post" asp-page-handler="AddGoogleFont" class="google-add" data-busy="@L["branding.google.adding"]">
+                <div class="field">
+                    <label for="google-family">@L["branding.google.family"]</label>
+                    <input id="google-family" name="family" type="text" maxlength="60" required autocomplete="off" placeholder="@L["branding.google.familyPlaceholder"]" />
+                    <p class="hint field-hint">@L.Html("branding.google.familyHint")</p>
+                </div>
+                <fieldset class="fn-mode">
+                    <div class="checkline">
+                        <input id="google-download" type="radio" name="mode" value="download" checked />
+                        <label for="google-download"><strong>@L["branding.google.download"]</strong> @L["branding.google.downloadHint"]</label>
+                    </div>
+                    <div class="checkline">
+                        <input id="google-link" type="radio" name="mode" value="link" />
+                        <label for="google-link"><strong>@L["branding.google.link"]</strong> @L["branding.google.linkHint"]</label>
+                    </div>
+                </fieldset>
+                <button type="submit" class="btn-primary">@L["branding.google.submit"]</button>
+            </form>
+        }
+    </div>
+</details>

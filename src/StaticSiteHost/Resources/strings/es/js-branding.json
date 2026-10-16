@@ -1,0 +1,14 @@
+{
+  "js.branding.pair.textOnBg": "Texto sobre el fondo de la página",
+  "js.branding.pair.textOnSurface": "Texto sobre tarjetas",
+  "js.branding.pair.mutedOnSurface": "Texto secundario sobre tarjetas",
+  "js.branding.pair.accentOnSurface": "Acento sobre tarjetas",
+  "js.branding.pair.accentTextOnAccent": "Texto sobre el acento",
+  "js.branding.pair.dangerOnSurface": "Errores sobre tarjetas",
+  "js.branding.ratio": "{ratio}:1",
+  "js.branding.pass": "fácil de leer",
+  "js.branding.large": "solo para texto grande",
+  "js.branding.fail": "difícil de leer",
+  "js.branding.applied": "Aplicado: {name}. Guarda para conservar el cambio.",
+  "js.branding.notHex": "Escribe un color como #rrggbb, por ejemplo #2f5be8."
+}

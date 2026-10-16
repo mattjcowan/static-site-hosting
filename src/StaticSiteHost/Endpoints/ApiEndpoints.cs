@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 using StaticSiteHost.Serving;
@@ -93,8 +94,11 @@ public static class ApiEndpoints
                 : Results.NotFound(new { error = $"Release {chosen.Id} of {site.Domain} has no file '{path}'." });
         });
 
+        // Changes files where they are, in the live release or the one ?release= names. To keep a way
+        // back, duplicate the release first (POST …/releases/{releaseId}/duplicate).
         api.MapPatch("/sites/{domain}/files", async (
-            string domain, SiteFilesRequest? body, ClaimsPrincipal principal, ZipDeploymentService deployer, HttpContext http, CancellationToken ct) =>
+            string domain, string? release, SiteFilesRequest? body, ClaimsPrincipal principal, ZipDeploymentService deployer,
+            StringCatalog catalog, HttpContext http, CancellationToken ct) =>
         {
             var writes = new List<ZipDeploymentService.FileChange>();
             foreach (var file in body?.Files ?? [])
@@ -109,18 +113,37 @@ public static class ApiEndpoints
                 }
             }
 
-            var result = await deployer.UpdateFilesAsync(domain, writes, body?.Delete ?? [], Actor(principal), "api", IsAdministrator(principal), ct);
-            return result.Ok
-                ? Results.Ok(new
-                {
-                    ok = true,
-                    domain = result.Domain,
-                    url = SiteLinks.For(http.Request, result.Domain!),
-                    release = result.Release!.Id,
-                    fileCount = result.Release.FileCount,
-                    warnings = result.Warnings ?? []
-                })
-                : Results.BadRequest(new { error = result.Error });
+            var result = await deployer.EditFilesAsync(domain, release, writes, body?.Delete ?? [], Actor(principal), "api", IsAdministrator(principal), ct: ct);
+            if (result.Error is { } error)
+            {
+                var message = new { error = FileEditMessages.English(catalog, error) };
+                return error.Key is "site.files.error.noSite" or "site.files.error.noRelease" ? Results.NotFound(message) : Results.BadRequest(message);
+            }
+
+            return Results.Ok(new
+            {
+                ok = true,
+                domain = SiteStore.NormalizeDomain(domain).Domain,
+                url = SiteLinks.For(http.Request, SiteStore.NormalizeDomain(domain).Domain!),
+                release = result.Release!.Id,
+                live = result.Live,
+                fileCount = result.Release.FileCount,
+                written = result.Paths,
+                deleted = result.Deleted,
+                warnings = result.Warnings ?? []
+            });
+        });
+
+        api.MapPost("/sites/{domain}/releases/{releaseId}/duplicate", async (
+            string domain, string releaseId, ClaimsPrincipal principal, ZipDeploymentService deployer, SiteStore sites, StringCatalog catalog) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var result = await deployer.DuplicateReleaseAsync(site.Domain, releaseId, Actor(principal));
+            return result.Error is { } error
+                ? (error.Key == "site.files.error.noRelease" ? Results.NotFound(new { error = FileEditMessages.English(catalog, error) }) : Results.BadRequest(new { error = FileEditMessages.English(catalog, error) }))
+                : Results.Ok(new { ok = true, domain = site.Domain, release = result.Release!.Id, copiedFrom = releaseId, live = false });
         });
 
         api.MapGet("/sites/{domain}/releases/{releaseId}/download", async (string domain, string releaseId, SiteStore sites, SiteFiles files, CancellationToken ct) =>
@@ -563,6 +586,7 @@ public static class ApiEndpoints
         api.MapFunctionEndpoints();
         api.MapAdminEndpoints();
         api.MapTlsEndpoints();
+        api.MapBrandingEndpoints();
 
         return app;
     }
@@ -758,6 +782,9 @@ public static class ApiEndpoints
         createdUtc = release.CreatedUtc,
         deployedBy = release.DeployedBy,
         source = release.Source,
+        copiedFrom = release.CopiedFrom,
+        editedUtc = release.EditedUtc,
+        editedBy = release.EditedBy,
         fileCount = release.FileCount,
         totalBytes = release.TotalBytes,
         archiveName = release.ArchiveName,
@@ -860,7 +887,7 @@ public sealed record RedirectRulesRequest(List<RedirectRule>? Redirects);
 /// <summary>Body of PUT /api/v1/sites/{domain}/proxy. Replaces the site's whole route list.</summary>
 public sealed record ProxyRoutesRequest(List<ProxyRoute>? Routes);
 
-/// <summary>Body of PATCH /api/v1/sites/{domain}/files: files to write, and paths to delete; the rest of the site stays.</summary>
+/// <summary>Body of PATCH /api/v1/sites/{domain}/files: files to write, and paths (files or folders) to delete; the rest of the release stays.</summary>
 public sealed record SiteFilesRequest(List<SiteFileWrite>? Files, List<string>? Delete);
 
 /// <summary>One file to write: its path in the site, and its text, or its bytes in base64 when <see cref="Base64"/> is true.</summary>

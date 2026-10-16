@@ -114,14 +114,24 @@
         fontSize: 13,
         scrollBeyondLastLine: false,
         tabSize: 4,
-        theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs'
+        theme: dark() ? 'vs-dark' : 'vs'
       });
+
+      // The colours follow the viewer's choice in the menu, or the system's.
+      var retheme = function () { monaco.editor.setTheme(dark() ? 'vs-dark' : 'vs'); };
+      new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retheme);
 
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, check);
       if (openLine > 0) goToLine(openLine);
     }, function () {
       if (!settled) { settled = true; clearTimeout(fallback); startTextarea(); }
     });
+  }
+
+  function dark() {
+    var theme = document.documentElement.getAttribute('data-theme');
+    return theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   }
 
   function createModel(file) {
@@ -171,7 +181,7 @@
   function markChanged() {
     if (draft && !draft.changedSince) {
       draft.changedSince = true;
-      status('Changed since the last check — tests still run the checked build.', 'warn');
+      status(siteHost.t('js.editor.changed'), 'warn');
     }
   }
 
@@ -185,7 +195,7 @@
       tab.className = 'fe-tab' + (index === active ? ' active' : '');
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', index === active ? 'true' : 'false');
-      tab.title = 'Double-click to rename';
+      tab.title = siteHost.t('js.editor.tab.rename');
 
       var label = document.createElement('button');
       label.type = 'button';
@@ -199,7 +209,7 @@
         var close = document.createElement('button');
         close.type = 'button';
         close.className = 'fe-tab-close';
-        close.setAttribute('aria-label', 'Remove ' + file.name);
+        close.setAttribute('aria-label', siteHost.t('js.editor.tab.remove', { file: file.name }));
         close.textContent = '×';
         close.addEventListener('click', function () { remove(index); });
         tab.appendChild(close);
@@ -211,23 +221,23 @@
     var add = document.createElement('button');
     add.type = 'button';
     add.className = 'fe-tab-add';
-    add.textContent = '+ File';
+    add.textContent = siteHost.t('js.editor.tab.add');
     add.addEventListener('click', addFile);
     el.tabs.appendChild(add);
   }
 
   function validName(name, except) {
     if (!/^[A-Za-z0-9._-]+\.(cs|linq)$/i.test(name)) {
-      alert('Use a name like Orders.cs or Reports.linq: letters, digits, dots, dashes and underscores.');
+      alert(siteHost.t('js.editor.name.invalid'));
       return false;
     }
     var taken = files.some(function (f, i) { return i !== except && f.name.toLowerCase() === name.toLowerCase(); });
-    if (taken) { alert('There is already a file named ' + name + '.'); return false; }
+    if (taken) { alert(siteHost.t('js.editor.name.taken', { file: name })); return false; }
     return true;
   }
 
   function addFile() {
-    var name = prompt('Name for the new file (.cs or .linq):', 'Handlers' + (files.length + 1) + '.cs');
+    var name = prompt(siteHost.t('js.editor.name.new'), 'Handlers' + (files.length + 1) + '.cs');
     if (!name) return;
     name = name.trim();
     if (!validName(name, -1)) return;
@@ -272,7 +282,7 @@
   }
 
   function rename(index) {
-    var name = prompt('Rename file:', files[index].name);
+    var name = prompt(siteHost.t('js.editor.name.rename', { file: files[index].name }), files[index].name);
     if (!name || name.trim() === files[index].name) return;
     name = name.trim();
     if (!validName(name, index)) return;
@@ -282,7 +292,7 @@
   }
 
   function remove(index) {
-    if (!confirm('Remove ' + files[index].name + ' from the editor? It stays live until you deploy.')) return;
+    if (!confirm(siteHost.t('js.editor.removeConfirm', { file: files[index].name }))) return;
     if (textarea) files[active].text = textarea.value;
     var removed = files.splice(index, 1)[0];
     if (removed.model) removed.model.dispose();
@@ -357,61 +367,67 @@
 
   function check() {
     if (busy) return;
-    setBusy(true, 'Checking… the first build restores packages and can take a minute.');
+    setBusy(true, siteHost.t('js.editor.checking'));
 
     post('Check', { files: snapshot() })
       .then(function (response) { return response.json(); })
       .then(function (result) {
         showProblems(result);
-        if (!result.ok) { status('Check failed.', 'error'); return; }
+        if (!result.ok) { status(siteHost.t('js.editor.checkFailed'), 'error'); return; }
 
         draft = { id: result.draft, routes: result.routes, changedSince: false };
         el.target.options[0].disabled = false;
-        el.target.options[0].textContent = 'Checked build (' + new Date().toLocaleTimeString() + ')';
+        el.target.options[0].textContent = siteHost.t('js.editor.checkedBuild', { time: new Date().toLocaleTimeString() });
         el.target.value = '';
         fillRoutes();
-        status('Compiled. ' + contents(result) + ' ready to test — nothing is live yet.', 'ok');
+        status(siteHost.t('js.editor.compiled', { contents: contents(result) }), 'ok');
       })
-      .catch(function () { status('The check could not reach the server.', 'error'); })
+      .catch(function () { status(siteHost.t('js.editor.checkUnreachable'), 'error'); })
       .finally(function () { setBusy(false); });
   }
 
   function deploy() {
     if (busy) return;
-    var scope = data.domain ? data.domain : 'every site';
-    if (!confirm('Compile these ' + files.length + ' file(s) and make them the live functions on ' + scope + '?')) return;
+    var question = data.domain
+      ? siteHost.tp('js.editor.deployConfirmSite', files.length, { domain: data.domain })
+      : siteHost.tp('js.editor.deployConfirmGlobal', files.length);
+    if (!confirm(question)) return;
 
-    setBusy(true, 'Deploying…');
+    setBusy(true, siteHost.t('js.editor.deploying'));
     post('Deploy', { files: snapshot() })
       .then(function (response) { return response.json(); })
       .then(function (result) {
         showProblems(result);
-        if (!result.ok) { status('Nothing was deployed; the live functions are unchanged.', 'error'); return; }
+        if (!result.ok) { status(siteHost.t('js.editor.deployFailed'), 'error'); return; }
 
         liveRoutes = result.routes;
         el.target.value = 'live';
         fillRoutes();
-        status('Live: ' + result.label + ' with ' + contents(result) + '.', 'ok');
+        status(siteHost.t('js.editor.deployed', { label: result.label, contents: contents(result) }), 'ok');
       })
-      .catch(function () { status('The deploy could not reach the server.', 'error'); })
+      .catch(function () { status(siteHost.t('js.editor.deployUnreachable'), 'error'); })
       .finally(function () { setBusy(false); });
   }
 
-  // "3 route(s), 1 middleware, 2 job(s) and 1 hook(s)": the routes always, the rest when the build
+  // "3 routes, 1 middleware, 2 jobs and 1 hook": the routes always, the rest when the build
   // has any. Each list is counted only when the response carries it.
   function contents(result) {
-    var parts = [(result.routes || []).length + ' route(s)'];
+    var parts = [siteHost.tp('js.editor.contents.routes', (result.routes || []).length)];
     var middleware = (result.middleware || []).length;
     var background = (result.backgroundServices || []).length;
     var jobs = (result.jobs || []).length;
     var hooks = (result.hooks || []).length;
 
-    if (middleware) parts.push(middleware + ' middleware');
-    if (background) parts.push(background + ' background service(s)');
-    if (jobs) parts.push(jobs + ' job(s)');
-    if (hooks) parts.push(hooks + ' hook(s)');
+    if (middleware) parts.push(siteHost.tp('js.editor.contents.middleware', middleware));
+    if (background) parts.push(siteHost.tp('js.editor.contents.backgroundServices', background));
+    if (jobs) parts.push(siteHost.tp('js.editor.contents.jobs', jobs));
+    if (hooks) parts.push(siteHost.tp('js.editor.contents.hooks', hooks));
 
-    return parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+    // Joined the way the viewer's language joins a list: "a, b and c".
+    return parts.reduce(function (list, item, i) {
+      return i === 0 ? item
+        : siteHost.t(i === parts.length - 1 ? 'js.editor.list.last' : 'js.editor.list.next', { list: list, item: item });
+    }, '');
   }
 
   // ------------------------------------------------------------------ test form
@@ -424,7 +440,7 @@
     var routes = selectedRoutes();
     el.route.innerHTML = routes.length
       ? routes.map(function (r) { return '<option>' + escapeHtml(r) + '</option>'; }).join('')
-      : '<option value="">No routes</option>';
+      : '<option value="">' + escapeHtml(siteHost.t('js.editor.noRoutes')) + '</option>';
     applyRoute();
   }
 
@@ -476,10 +492,10 @@
 
   function run() {
     var target = el.target.value;
-    if (target === '' && !draft) { renderMessage('error', 'Check the files first, or pick the live build.'); return; }
+    if (target === '' && !draft) { renderMessage('error', siteHost.t('js.editor.checkFirst')); return; }
 
     el.run.disabled = true;
-    el.run.textContent = 'Running…';
+    el.run.textContent = siteHost.t('js.editor.running');
     el.result.innerHTML = '';
 
     post('Run', {
@@ -497,8 +513,8 @@
         var meta = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), function (c) { return c.charCodeAt(0); })));
         return response.arrayBuffer().then(function (buffer) { render(meta, new Uint8Array(buffer)); });
       })
-      .catch(function (error) { renderMessage('error', 'The test could not run: ' + error.message); })
-      .finally(function () { el.run.disabled = false; el.run.textContent = 'Run'; });
+      .catch(function (error) { renderMessage('error', siteHost.t('js.editor.runFailed', { error: error.message })); })
+      .finally(function () { el.run.disabled = false; el.run.textContent = siteHost.t('js.editor.run'); });
   }
 
   function renderMessage(kind, text) {
@@ -564,31 +580,31 @@
     var statusKind = meta.status >= 500 || meta.error ? 'error' : meta.status >= 400 ? 'warn' : 'ok';
     var html = '<div class="fe-response-head">' +
       (meta.status ? '<span class="badge badge-' + statusKind + '">' + meta.status + '</span>' : '') +
-      '<span class="muted">' + escapeHtml(type || 'no body') + ' · ' + formatBytes(bytes.length) + ' · ' + meta.elapsedMs + ' ms</span>' +
-      (bytes.length ? ' <a href="' + url + '" download="' + escapeHtml(name) + '">Download</a>' : '') +
+      '<span class="muted">' + escapeHtml(type || siteHost.t('js.editor.noBody')) + ' · ' + formatBytes(bytes.length) + ' · ' + meta.elapsedMs + ' ms</span>' +
+      (bytes.length ? ' <a href="' + url + '" download="' + escapeHtml(name) + '">' + escapeHtml(siteHost.t('js.editor.download')) + '</a>' : '') +
       '</div>';
 
     if (meta.error) html += '<pre class="fe-error">' + escapeHtml(meta.error) + '</pre>';
-    if (meta.truncated) html += '<div class="alert alert-warning">The body was cut off at 25 MB.</div>';
+    if (meta.truncated) html += '<div class="alert alert-warning">' + escapeHtml(siteHost.t('js.editor.truncated')) + '</div>';
 
     var attachment = /^\s*attachment/i.test(header(meta, 'content-disposition') || '');
 
     if (bytes.length === 0) {
       // Status and headers say it all.
     } else if (attachment || bytes.length > INLINE_LIMIT) {
-      html += '<p><a class="btn" href="' + url + '" download="' + escapeHtml(name) + '">Download ' + escapeHtml(name) +
+      html += '<p><a class="btn" href="' + url + '" download="' + escapeHtml(name) + '">' + escapeHtml(siteHost.t('js.editor.downloadFile', { file: name })) +
               '</a> <span class="muted">' + escapeHtml(type) + ', ' + formatBytes(bytes.length) + '</span></p>';
     } else if (type.indexOf('image/') === 0) {
-      html += '<div class="fe-image"><img src="' + url + '" alt="Response image" /></div>';
+      html += '<div class="fe-image"><img src="' + url + '" alt="' + escapeHtml(siteHost.t('js.editor.imageAlt')) + '" /></div>';
     } else if (type === 'application/pdf') {
-      html += '<iframe class="fe-frame" src="' + url + '" title="PDF response"></iframe>';
+      html += '<iframe class="fe-frame" src="' + url + '" title="' + escapeHtml(siteHost.t('js.editor.pdfTitle')) + '"></iframe>';
     } else if (type === 'text/html') {
       var source = new TextDecoder().decode(bytes);
-      html += '<div class="fe-view-tabs"><button type="button" class="btn-sm" data-view="source">Source</button>' +
-              '<button type="button" class="btn-sm" data-view="preview">Preview</button></div>' +
+      html += '<div class="fe-view-tabs"><button type="button" class="btn-sm" data-view="source">' + escapeHtml(siteHost.t('js.editor.view.source')) + '</button>' +
+              '<button type="button" class="btn-sm" data-view="preview">' + escapeHtml(siteHost.t('js.editor.view.preview')) + '</button></div>' +
               '<pre class="fe-body" data-pane="source">' + escapeHtml(source) + '</pre>' +
               // No allow-scripts and no allow-same-origin: the page is shown, never run.
-              '<iframe class="fe-frame" data-pane="preview" sandbox="" hidden title="HTML preview"></iframe>';
+              '<iframe class="fe-frame" data-pane="preview" sandbox="" hidden title="' + escapeHtml(siteHost.t('js.editor.htmlTitle')) + '"></iframe>';
       setTimeout(function () {
         var frame = el.result.querySelector('iframe[data-pane="preview"]');
         if (frame) frame.srcdoc = source;
@@ -600,12 +616,12 @@
       }
       html += '<pre class="fe-body">' + escapeHtml(text) + '</pre>';
     } else {
-      html += '<p><a class="btn" href="' + url + '" download="' + escapeHtml(name) + '">Download ' + escapeHtml(name) +
-              '</a> <span class="muted">' + escapeHtml(type || 'unknown type') + ', ' + formatBytes(bytes.length) + '</span></p>';
+      html += '<p><a class="btn" href="' + url + '" download="' + escapeHtml(name) + '">' + escapeHtml(siteHost.t('js.editor.downloadFile', { file: name })) +
+              '</a> <span class="muted">' + escapeHtml(type || siteHost.t('js.editor.unknownType')) + ', ' + formatBytes(bytes.length) + '</span></p>';
     }
 
     if (meta.headers && meta.headers.length) {
-      html += '<details class="fe-headers"><summary>Response headers</summary><table><tbody>' +
+      html += '<details class="fe-headers"><summary>' + escapeHtml(siteHost.t('js.editor.responseHeaders')) + '</summary><table><tbody>' +
         meta.headers.map(function (h) {
           return '<tr><td class="mono nowrap">' + escapeHtml(h.key) + '</td><td class="mono">' + escapeHtml(h.value) + '</td></tr>';
         }).join('') + '</tbody></table></details>';

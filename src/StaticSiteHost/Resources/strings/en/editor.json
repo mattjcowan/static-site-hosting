@@ -1,0 +1,32 @@
+{
+  "editor.pageTitle.global": "Global functions editor",
+  "editor.pageTitle.site": "Functions — {domain}",
+  "editor.title": "Function editor",
+  "editor.intro.global": "Global functions: every site answers with these after its own functions. [Back to global functions](backUrl)",
+  "editor.intro.site": "Functions for **{domain}**. [Back to the site](backUrl)",
+
+  "editor.files": "Files",
+  "editor.check": "Check",
+  "editor.deploy": "Deploy",
+  "editor.hint.check": "**Check** compiles the files as a deploy would, without going live, so you can test them below.",
+  "editor.hint.deploySite": "**Deploy** compiles them again and makes them the live functions.",
+  "editor.hint.deploySiteReplacing": "**Deploy** compiles them again and makes them the live functions, in place of {label}.",
+  "editor.hint.deployGlobal": "**Deploy** compiles them again and makes them the live functions of every site.",
+  "editor.hint.deployGlobalReplacing": "**Deploy** compiles them again and makes them the live functions of every site, in place of {label}.",
+
+  "editor.test.title": "Test",
+  "editor.test.hint": "Runs one request in memory, with your real code and the site's real data, so anything it writes or sends really happens. The build's middleware runs first, so if a gate refuses the request, add what it needs, such as a cookie or a token, in **Headers**.",
+  "editor.test.build": "Build",
+  "editor.test.checkedBuild": "Checked build (check first)",
+  "editor.test.liveBuild": "Live build",
+  "editor.test.route": "Route",
+  "editor.test.method": "Method",
+  "editor.test.path": "Path",
+  "editor.test.query": "Query string",
+  "editor.test.domain": "Domain",
+  "editor.test.headers": "Headers, one per line",
+  "editor.test.body": "Body",
+  "editor.test.run": "Run",
+
+  "editor.noSite": "There is no site at {domain}."
+}
