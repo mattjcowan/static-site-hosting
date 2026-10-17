@@ -173,6 +173,23 @@ public sealed class DnsTests : IDisposable
         Assert.Equal(zone, DnsService.ZoneFor(name, _cloudflare.Zones)?.Name);
 
     [Fact]
+    public void The_create_token_link_fills_in_the_three_permissions_and_the_name()
+    {
+        // Cloudflare drops a key it does not know without saying so, so the keys are pinned here:
+        // zone, dns and ssl_and_certificates, as its own working template links use them.
+        var url = new Uri(CloudflareApi.CreateTokenUrl("Site server at admin.example.com"));
+        var query = System.Web.HttpUtility.ParseQueryString(url.Query);
+
+        Assert.Equal("https://dash.cloudflare.com/profile/api-tokens", url.GetLeftPart(UriPartial.Path));
+        Assert.Equal(
+            """[{"key":"zone","type":"read"},{"key":"dns","type":"edit"},{"key":"ssl_and_certificates","type":"edit"}]""",
+            query["permissionGroupKeys"]);
+        Assert.Equal("*", query["accountId"]);
+        Assert.Equal("all", query["zoneId"]);
+        Assert.Equal("Site server at admin.example.com", query["name"]);
+    }
+
+    [Fact]
     public async Task Every_site_gets_its_records_and_a_name_outside_the_zones_is_left_alone()
     {
         await Sites("shop.example.com", "blog.apps.example.com", "other.org");

@@ -5,7 +5,7 @@
   "https.off.title": "Se gestiona delante de este servidor",
   "https.off.badge": "desactivado aquí",
   "https.off.hint": "Este servidor usa HTTP sin cifrar, y lo que tiene delante, como Caddy, nginx, Railway o un Cloudflare Tunnel, gestiona HTTPS. Para gestionar HTTPS aquí, en un servidor propio con los puertos 80 y 443, inícialo con:",
-  "https.off.after": "Así, cada sitio y cada host de administración obtiene por sí solo un certificado de Let's Encrypt cuando su DNS apunta aquí. La página de un sitio puede elegir otro origen, y HSTS funciona en ambas configuraciones.",
+  "https.off.after": "Así, cada sitio y cada host de administración obtiene por sí solo un certificado de Let's Encrypt cuando su DNS apunta aquí. No hace falta registrarse. La página de un sitio puede elegir otro origen, y HSTS funciona en ambas configuraciones.",
   "https.server.title": "Servidor",
   "https.server.staging": "Let's Encrypt (pruebas)",
   "https.server.listening": "Escucha",
@@ -17,6 +17,9 @@
   "https.server.renewed": "Renovación",
   "https.server.renewedValue.one": "{count} día antes de que caduquen (o cuando les queda un tercio de su vigencia, si es más corta). Se comprueba cada hora.",
   "https.server.renewedValue.other": "{count} días antes de que caduquen (o cuando les queda un tercio de su vigencia, si es más corta). Se comprueba cada hora.",
+  "https.server.letsEncrypt": "Let's Encrypt",
+  "https.server.letsEncryptValue": "No hace falta registrarse. El DNS de cada host debe apuntar a este servidor, y este servidor debe ser accesible por el puerto 80. O [conecta Cloudflare](dnsUrl): los hosts de sus zonas se verifican entonces por DNS, el puerto 80 deja de importar para ellos y los comodines funcionan.",
+  "https.server.letsEncryptValueDns": "No hace falta registrarse. Los hosts de las zonas de Cloudflare se verifican por DNS. Para cualquier otro host, su DNS debe apuntar a este servidor, y este servidor debe ser accesible por el puerto 80.",
   "https.server.stagingHint": "Los navegadores no confían en los certificados de pruebas. Cuando se emitan, configura `SiteHosting__Tls__AcmeDirectory=production` y cada host obtendrá uno de confianza.",
   "https.hosts.title": "Hosts",
   "https.hosts.host": "Host",
@@ -73,5 +76,5 @@
   "https.request.error.noNames": "Indica al menos un nombre.",
   "https.request.error.noCloudflare": "Primero conecta Cloudflare en la página DNS.",
   "https.request.error.noZone": "Ninguna zona de Cloudflare que el token pueda editar contiene {name}.",
-  "https.request.error.noOrigin": "El token de Cloudflare no puede crear certificados de origen para {name}. Dale SSL and Certificates: Edit en esa zona."
+  "https.request.error.noOrigin": "El token de Cloudflare no tiene permiso para crear certificados de origen para {name}. Dale SSL and Certificates: Edit en esa zona."
 }

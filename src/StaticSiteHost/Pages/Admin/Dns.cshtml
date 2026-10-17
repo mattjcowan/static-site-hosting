@@ -2,7 +2,6 @@
 @model StaticSiteHost.Pages.Admin.DnsModel
 @{
     ViewData["Title"] = L["dns.pageTitle"].Value;
-    string? ErrorFor(string form) => Model.ErrorFor == form ? Model.Error : null;
 }
 
 <div class="page-head">
@@ -22,7 +21,6 @@
             <span class="badge">@L["dns.cloudflare.notConnected"]</span>
         }
     </h2>
-    <p class="hint">@L.Html("dns.cloudflare.hint")</p>
 
     @if (Model.Connected)
     {
@@ -41,28 +39,68 @@
                 }
             </dd>
         </dl>
-    }
-
-    @if (ErrorFor("token") is { } tokenError)
-    {
-        <div class="alert alert-error">@tokenError</div>
-    }
-
-    <form method="post" asp-page-handler="Token" class="row">
-        <div class="field" style="flex: 1 1 22rem">
-            <label for="dns-token">@L[Model.Connected ? "dns.cloudflare.replaceToken" : "dns.cloudflare.tokenField"]</label>
-            <input type="password" id="dns-token" name="token" autocomplete="off" spellcheck="false" required />
-        </div>
-        <button type="submit" class="btn-primary">@L["dns.cloudflare.save"]</button>
-    </form>
-    @if (Model.Connected)
-    {
-        <form method="post" asp-page-handler="RemoveToken" data-confirm="@L["dns.cloudflare.removeConfirm"]">
+        <details class="tls-upload" open="@(ErrorFor("token") is not null)">
+            <summary>@L["dns.cloudflare.replaceToken"]</summary>
+            @{ await ConnectSteps(); }
+        </details>
+        <form method="post" asp-page-handler="RemoveToken" data-confirm="@L["dns.cloudflare.removeConfirm"]" style="margin-top: 0.75rem">
             <button type="submit" class="btn-link danger">@L["dns.cloudflare.remove"]</button>
         </form>
     }
+    else
+    {
+        await ConnectSteps();
+    }
 </div>
 
+@functions {
+    string? ErrorFor(string form) => Model.ErrorFor == form ? Model.Error : null;
+
+    // The link to Cloudflare and the field to paste the token in, with the step-by-step folded away
+    // (opened when a token was refused). Shown until Cloudflare is connected, then under "Replace the token".
+    async Task ConnectSteps()
+    {
+        <p class="hint">@L["dns.connect.intro"]</p>
+        <a class="btn" href="@Model.CreateTokenUrl" target="_blank" rel="noopener">@L["dns.connect.open"] @Icons.Get("external")</a>
+
+        <details class="tls-upload guide" open="@(ErrorFor("token") is not null)">
+            <summary>@L["dns.connect.howTo"]</summary>
+            <ol class="steps">
+                <li>@L.Html("dns.connect.step1")</li>
+                <li>@L.Html("dns.connect.step2")</li>
+                <li>@L.Html("dns.connect.step3")</li>
+                <li>@L.Html("dns.connect.step4")</li>
+            </ol>
+
+            @* Cloudflare's own labels, as its form shows them, in every language. *@
+            <p class="steps-label">@L["dns.connect.permissions"]</p>
+            <table class="permissions">
+                <tbody>
+                    <tr><td class="nowrap"><strong>Zone</strong> · <strong>Zone</strong> · <strong>Read</strong></td><td class="muted">@L["dns.connect.permZoneWhy"]</td></tr>
+                    <tr><td class="nowrap"><strong>Zone</strong> · <strong>DNS</strong> · <strong>Edit</strong></td><td class="muted">@L["dns.connect.permDnsWhy"]</td></tr>
+                    <tr><td class="nowrap"><strong>Zone</strong> · <strong>SSL and Certificates</strong> · <strong>Edit</strong></td><td class="muted">@L["dns.connect.permSslWhy"]</td></tr>
+                </tbody>
+            </table>
+        </details>
+
+        @if (ErrorFor("token") is { } tokenError)
+        {
+            <div class="alert alert-error">@tokenError</div>
+        }
+
+        <form method="post" asp-page-handler="Token" class="row" style="margin-top: 1rem">
+            <div class="field" style="flex: 1 1 22rem">
+                <label for="dns-token">@L["dns.cloudflare.tokenField"]</label>
+                <input type="password" id="dns-token" name="token" autocomplete="off" spellcheck="false" required />
+            </div>
+            <button type="submit" class="btn-primary">@L["dns.cloudflare.save"]</button>
+        </form>
+        <p class="hint">@L["dns.cloudflare.stored"]</p>
+    }
+}
+
+@if (Model.Connected)
+{
 <div class="card">
     <h2>@L["dns.records.title"]</h2>
     <p class="hint">@L["dns.records.hint"]</p>
@@ -74,7 +112,7 @@
 
     <form method="post" asp-page-handler="Records">
         <div class="checkline">
-            <input type="checkbox" id="dns-every" name="forEverySite" value="true" checked="@Model.Settings.RecordsForSites" disabled="@(!Model.Connected)" />
+            <input type="checkbox" id="dns-every" name="forEverySite" value="true" checked="@Model.Settings.RecordsForSites" />
             <label for="dns-every">@L["dns.records.forEverySite"]</label>
         </div>
         <p class="hint">@L["dns.records.forEverySiteHint"]</p>
@@ -99,10 +137,10 @@
             <input type="checkbox" id="dns-proxied" name="proxied" value="true" checked="@Model.Settings.Proxied" />
             <label for="dns-proxied">@L["dns.records.proxied"]</label>
         </div>
-        <p class="hint">@L.Html("dns.records.proxiedHint")</p>
+        <p class="hint">@L.Html(Model.HttpsInServer ? "dns.records.proxiedHint" : "dns.records.proxiedHintOutside")</p>
 
         <div class="row">
-            <button type="submit" class="btn-primary" disabled="@(!Model.Connected)">@L["dns.records.save"]</button>
+            <button type="submit" class="btn-primary">@L["dns.records.save"]</button>
             <button type="submit" class="btn" formaction="?handler=Detect" formnovalidate>@L["dns.records.detect"]</button>
         </div>
     </form>
@@ -111,12 +149,9 @@
 <div class="card">
     <h2>
         @L["dns.sites.title"] <span class="badge">@Model.Sites.Count</span>
-        @if (Model.Connected)
-        {
-            <form method="post" asp-page-handler="Refresh" class="inline-form">
-                <button type="submit" class="btn-link">@L["dns.sites.refresh"]</button>
-            </form>
-        }
+        <form method="post" asp-page-handler="Refresh" class="inline-form">
+            <button type="submit" class="btn-link">@L["dns.sites.refresh"]</button>
+        </form>
     </h2>
     @if (ErrorFor("site") is { } siteError)
     {
@@ -205,7 +240,7 @@
                                         <button type="submit" class="btn-link danger">@L["dns.sites.remove"]</button>
                                     </form>
                                 }
-                                else if (Model.Connected && site.State is "off" or "excluded" or "error")
+                                else if (site.State is "off" or "excluded" or "error")
                                 {
                                     <form method="post" asp-page-handler="AddSite">
                                         <input type="hidden" name="domain" value="@site.Domain" />
@@ -220,3 +255,4 @@
         </div>
     }
 </div>
+}

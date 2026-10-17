@@ -347,6 +347,10 @@
                     <p class="hint" style="margin: 0.35rem 0 0">
                         @L.Html("site.https.automaticHint")
                     </p>
+                    @if (!Model.CloudflareConnected)
+                    {
+                        <p class="hint" style="margin: 0.35rem 0 0">@L.Html("site.https.originNeedsCloudflare")</p>
+                    }
                 </div>
                 <div class="checkline" style="margin-top: 0.75rem">
                     <input id="tls-redirect" name="redirectToHttps" type="checkbox" value="true" checked="@(tls?.RedirectToHttps ?? true)" />

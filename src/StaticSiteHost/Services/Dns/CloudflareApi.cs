@@ -62,6 +62,22 @@ public sealed class CloudflareApi : ICloudflareApi
     /// <summary>Origin CA certificates are made for 15 years, the longest Cloudflare offers: they never need renewing in practice.</summary>
     public const int OriginValidityDays = 5475;
 
+    /// <summary>
+    /// The permissions a token needs, as keys of Cloudflare's token template links: Zone Read to
+    /// list zones, DNS Edit for records and DNS-01, SSL and Certificates Edit for Origin certificates.
+    /// Cloudflare drops a key it does not know without saying so.
+    /// </summary>
+    public const string TokenPermissionKeys =
+        """[{"key":"zone","type":"read"},{"key":"dns","type":"edit"},{"key":"ssl_and_certificates","type":"edit"}]""";
+
+    /// <summary>
+    /// A link to Cloudflare's "Create token" form with <see cref="TokenPermissionKeys"/>, all zones
+    /// and the name filled in, so making a token is a sign-in and three clicks.
+    /// </summary>
+    public static string CreateTokenUrl(string name) =>
+        "https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=" + Uri.EscapeDataString(TokenPermissionKeys) +
+        "&accountId=%2A&zoneId=all&name=" + Uri.EscapeDataString(name);
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull

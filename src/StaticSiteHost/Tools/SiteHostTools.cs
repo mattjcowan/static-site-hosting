@@ -776,7 +776,7 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("set_cloudflare_token", ToolEffect.Change)]
-    [Description("Connects Cloudflare with an API token, checked with Cloudflare before it is kept (encrypted; never shown again). Give the token Zone: Read and DNS: Edit on the zones this server handles, and SSL and Certificates: Edit for Origin certificates. Administrators only.")]
+    [Description("Connects Cloudflare with an API token, checked with Cloudflare before it is kept (encrypted; never shown again). Give the token Zone: Read and DNS: Edit on the zones this server handles, and SSL and Certificates: Edit for Origin certificates. A person makes one from the DNS page of the management app (Open Cloudflare opens Cloudflare's form with these filled in), or at https://dash.cloudflare.com/profile/api-tokens → Create Token → Create Custom Token; an API token, not the Global API Key. Administrators only.")]
     public static async Task<JsonElement> SetCloudflareToken(
         IServiceProvider services,
         [Description("The Cloudflare API token.")] string token,

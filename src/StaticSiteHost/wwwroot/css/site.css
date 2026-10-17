@@ -1085,6 +1085,14 @@ td.actions .validation { white-space: normal; text-align: left; max-width: 24rem
 .inline-form { display: inline; margin-left: var(--space-2); font-size: 0.8em; font-weight: 500; }
 .tls-upload summary { cursor: pointer; font-weight: 550; }
 .tls-upload form { margin-top: 0.75rem; }
+.steps { margin: 0.75rem 0 1rem; padding-left: 1.4rem; display: grid; gap: 0.5rem; font-size: 0.925rem; }
+.steps li::marker { color: var(--muted); font-weight: 600; }
+.guide { margin-top: 0.75rem; }
+.steps-label { margin: 0 0 0.25rem; font-size: 0.925rem; font-weight: 550; }
+table.permissions { width: auto; margin-bottom: 1rem; font-size: 0.9rem; }
+table.permissions td { padding: 0.3rem 1.25rem 0.3rem 0; border: none; vertical-align: top; }
+table.permissions tbody tr:hover td { background: none; }
+@media (max-width: 640px) { table.permissions td { display: block; padding: 0; } table.permissions td.muted { padding-bottom: 0.4rem; } table.permissions td.nowrap { white-space: normal; } }
 @media (max-width: 640px) { .tls-facts { grid-template-columns: 1fr; } .tls-facts dd { margin-bottom: 0.4rem; } }
 
 .tls-config { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem 1rem; font-size: 0.825rem; line-height: 1.55; overflow-x: auto; margin: 0; }

@@ -3010,7 +3010,8 @@ themselves, leave it off.
 
    With Compose: `TLS_ENABLED=true`, `ACME_EMAIL=…`, `HTTP_PORT=80` and `HTTPS_PORT=443` in `.env`.
    Do not set `TRUST_FORWARDED_HEADERS` when nothing is in front.
-3. **That is it.** Within a minute of starting, and of each new site, the certificates arrive.
+3. **That is it.** There is nothing to sign up for: the server makes its own Let's Encrypt
+   account. Within a minute of starting, and of each new site, the certificates arrive.
    **HTTPS** in the menu lists every host with its certificate, its expiry and any error; a
    site's **HTTPS** card shows its own. HTTP requests are sent to HTTPS (308) once a host has a
    certificate.
@@ -3082,11 +3083,23 @@ All three are optional, and nothing changes until a token is saved. Other DNS pr
 
 **How to use it.**
 
-1. In Cloudflare, under **My Profile → API Tokens → Create Token → Create Custom Token**, give the
-   token **Zone: Read** and **DNS: Edit** on the zones this server handles, and **SSL and
-   Certificates: Edit** for Origin certificates.
-2. Under **DNS** in the menu, paste it and **Save token**. It is checked with Cloudflare, then
-   stored encrypted and never shown again. The page lists the zones it can edit.
+1. **Make a token.** Under **DNS** in the menu, select **Open Cloudflare**: Cloudflare's token
+   form opens (sign in if asked) with a name and the three permissions below filled in. Under **Zone
+   Resources**, choose the domains this server handles (or keep **All zones**), select **Continue
+   to summary**, check the three permissions are listed, and select **Create Token**. Copy it:
+   Cloudflare shows it only once. An API token, not the Global API Key.
+
+   | Permission | What for |
+   | ---------- | -------- |
+   | Zone · Zone · Read | To see your domains |
+   | Zone · DNS · Edit | Each site's DNS record, and certificates checked through DNS |
+   | Zone · SSL and Certificates · Edit | Only for Cloudflare Origin certificates |
+
+   Without the page, the same token is made at
+   [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) →
+   **Create Token** → **Create Custom Token**, with those three rows.
+2. **Paste it** on the same page and **Save token**. It is checked with Cloudflare, then stored
+   encrypted and never shown again. The page lists the zones it can edit.
 3. For records: set what they point at, this server's IPv4 and/or IPv6 address (**Use this
    server's public address** fills it in) or a host name for a CNAME, choose **Proxied by
    Cloudflare** or not, and either turn on **Give every site a DNS record** or use **Create
@@ -3102,9 +3115,10 @@ All three are optional, and nothing changes until a token is saved. Other DNS pr
 * **Delete record** on a site deletes the records this server made for it, and it gets none again
   until **Create record**. Removing the token leaves the records in Cloudflare, no longer changed.
 * A site outside every zone the token can edit is shown as such and left alone.
-* Proxied records: visitors go through Cloudflare and see its certificate. Set Cloudflare's SSL
-  mode to **Full (strict)**, and give the sites a certificate Cloudflare trusts: Let's Encrypt or a
-  Cloudflare Origin certificate ([HTTPS in the server](#https-in-the-server)).
+* Proxied records: visitors go through Cloudflare and see its certificate. In Cloudflare, open the
+  domain, then **SSL/TLS → Overview**, and choose **Full (strict)**; give the sites a certificate
+  Cloudflare trusts: Let's Encrypt or a Cloudflare Origin certificate
+  ([HTTPS in the server](#https-in-the-server)).
 
 **Over the API and MCP:** `GET /api/v1/dns`, `PUT`/`DELETE /api/v1/dns/cloudflare` (the token),
 `PUT /api/v1/dns/records`, `POST /api/v1/dns/refresh`, `POST`/`DELETE /api/v1/sites/{domain}/dns`,

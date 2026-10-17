@@ -189,6 +189,7 @@ public class DetailsModel : PageModel
         SiteAiSettingsService aiSettings,
         RealtimeRegistry realtime,
         StaticSiteHost.Tls.CertificateManager certificates,
+        StaticSiteHost.Services.Dns.DnsService dns,
         BrandingService branding,
         IOptions<SiteHostingOptions> options,
         IStringLocalizer<Strings> strings)
@@ -196,6 +197,7 @@ public class DetailsModel : PageModel
         _strings = strings;
         _branding = branding;
         _certificates = certificates;
+        _dns = dns;
         _functions = functions;
         _functionDeployer = functionDeployer;
         _aiProviders = aiProviders;
@@ -222,9 +224,13 @@ public class DetailsModel : PageModel
     public BrandingEditor? Branding { get; private set; }
 
     private readonly StaticSiteHost.Tls.CertificateManager _certificates;
+    private readonly StaticSiteHost.Services.Dns.DnsService _dns;
 
     /// <summary>Whether this server ends HTTPS itself (SiteHosting:Tls:Enabled), so certificates are managed here.</summary>
     public bool HttpsInServer => _certificates.Enabled;
+
+    /// <summary>Whether Cloudflare is connected, which a Cloudflare Origin certificate needs.</summary>
+    public bool CloudflareConnected { get; private set; }
 
     /// <summary>The site's certificate as the HTTPS card shows it, when HTTPS is in the server.</summary>
     public StaticSiteHost.Tls.HostCertificateStatus? Certificate { get; private set; }
@@ -455,6 +461,7 @@ public class DetailsModel : PageModel
     private async Task LoadAsync(SiteRecord site, IReadOnlyList<string>? brandingErrors = null, Branding? brandingShown = null)
     {
         Site = site;
+        if (IsAdministrator && HttpsInServer) CloudflareConnected = await _dns.ConnectedAsync(HttpContext.RequestAborted);
         if (IsAdministrator)
         {
             var settings = await _branding.Store.ReadAsync(HttpContext.RequestAborted);

@@ -16,18 +16,26 @@ public class DnsModel : PageModel
 {
     private readonly DnsService _dns;
     private readonly SiteStore _sites;
+    private readonly StaticSiteHost.Tls.CertificateManager _certificates;
     private readonly IStringLocalizer<Strings> _strings;
 
-    public DnsModel(DnsService dns, SiteStore sites, IStringLocalizer<Strings> strings)
+    public DnsModel(DnsService dns, SiteStore sites, StaticSiteHost.Tls.CertificateManager certificates, IStringLocalizer<Strings> strings)
     {
         _dns = dns;
         _sites = sites;
+        _certificates = certificates;
         _strings = strings;
     }
 
     public DnsSettings Settings { get; private set; } = new();
 
     public bool Connected { get; private set; }
+
+    /// <summary>Whether this server ends HTTPS itself, which changes what Cloudflare's SSL mode should be.</summary>
+    public bool HttpsInServer => _certificates.Enabled;
+
+    /// <summary>Cloudflare's "Create token" form with the permissions and a name for this server filled in.</summary>
+    public string CreateTokenUrl => CloudflareApi.CreateTokenUrl($"Site server at {Request.Host.Host}");
 
     /// <summary>The zones the token can see, or why they could not be listed.</summary>
     public IReadOnlyList<CloudflareZone> Zones { get; private set; } = [];

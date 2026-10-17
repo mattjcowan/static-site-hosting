@@ -48,6 +48,15 @@ else
             <dd>@L.Html("https.server.automaticValue", new { source = CertificateSourceNames.Of(L, Model.Tls.DefaultSource) })</dd>
             <dt>@L["https.server.renewed"]</dt>
             <dd>@L.Plural("https.server.renewedValue", Model.Tls.RenewDaysBefore)</dd>
+            <dt>@L["https.server.letsEncrypt"]</dt>
+            <dd>@if (Model.CloudflareConnected)
+                {
+                    @L.Html("https.server.letsEncryptValueDns")
+                }
+                else
+                {
+                    @L.Html("https.server.letsEncryptValue", new { dnsUrl = Url.Page("/Admin/Dns") })
+                }</dd>
         </dl>
         @if (Model.Tls.IsStaging)
         {
