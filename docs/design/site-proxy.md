@@ -1,8 +1,8 @@
 # Design: proxy routes, certificates and DNS
 
-Status: phase 1 built (2026-10-15, not yet committed); phases 2–4 planned. See
-[Progress](#progress) at the end for what was built, where it differs from the design, and
-what comes next. User-facing documentation lives in the README's
+Status: phases 1–5 built. Phases 1–4 are released (0.5.0 to 0.10.0); phase 5, other domains for
+a site, was built on 2026-10-23 and is not released yet. See [Progress](#progress) at the end for
+what was built, where it differs from the design, and what comes next. User-facing documentation lives in the README's
 [Proxy routes](../../README.md#proxy-routes) section.
 
 ## The goal in one paragraph
@@ -28,12 +28,14 @@ plus static sites, functions, realtime and AI on the same domains.
 | 2 | Server-wide routes for a set of sites; replaces `tmp/ApiProxy.cs` | Built |
 | 3 | TLS in the server: Let's Encrypt, self-signed, uploaded certificates (Cloudflare Origin CA included) | Sketch |
 | 4 | Cloudflare: DNS records on site create/rename/delete, DNS-01 challenges, wildcard certificates | Sketch |
+| 5 | Other domains for a site (aliases): more names for one site, wildcards such as `*.app.example.com` included | Full design; built |
 
 ## Where this compares to Nginx Proxy Manager
 
 | Nginx Proxy Manager | Here | Phase |
 | ------------------- | ---- | ----- |
 | Proxy host | A site with a `/` route | 1 |
+| Several domain names per proxy host, wildcards included | Other domains on a site | 5 |
 | Custom locations | More routes on the same site, longest path wins | 1 |
 | "Websockets support" switch | Per route | 1 |
 | "HTTP/2 support" switch | Per route, to the backend; from the browser once TLS is in the server | 1, 3 |
@@ -475,6 +477,240 @@ or plain HTTP.
 * **Worth considering instead of opening ports:** Cloudflare Tunnel (`cloudflared` as a sidecar
   container). The server keeps speaking plain HTTP inside, and no inbound port is opened at all.
   It needs no code here, just a documented compose file.
+
+---
+
+# Phase 5: other domains for a site (design)
+
+**Goal.** One site answers at more than one domain: exact names such as `def.app.example.com`,
+and wildcards such as `*.app.example.com`. Every name gets the same site: the same release,
+functions, proxy routes, rules, variables and passcode. This is for every kind of site, not only
+proxy routes. The case that drives it is a single-page app deployed once as an ordinary zip, then
+opened at `abc.app.example.com`, `def.app.example.com` and any other name under
+`app.example.com`. The app reads its subdomain from `location.hostname` and uses it in its API
+calls. A proxy-only site gets the same thing Nginx Proxy Manager's "Domain names" field gives a
+proxy host: several names, wildcards included.
+
+**Today a site answers at exactly one domain.** `SiteStore` is a dictionary keyed by domain, the
+middleware looks the `Host` header up in it exactly (`SiteHostingMiddleware.InvokeAsync`), and
+`NormalizeDomain` refuses `*`. The pieces around that lookup already handle wildcards: shared
+certificates (`*.apps.example.com` from Let's Encrypt over DNS-01, or a Cloudflare Origin one),
+the **Sites** pattern of server-wide routes, and a Cloudflare Tunnel with a `*.example.com`
+route. Only the step from a name to a site is missing.
+
+## What a person does
+
+1. Deploy the app to `app.example.com`, as today.
+2. **Settings → Other domains** (administrators): add `*.app.example.com`, and save.
+3. With Cloudflare connected, the server makes the `*.app` DNS record. With HTTPS in the server
+   and no shared certificate that covers the wildcard, the site's HTTPS card says so and offers
+   **Get a certificate**: the request on the HTTPS page, with the name filled in.
+4. `https://abc.app.example.com/` now serves the same files. The app reads `abc` from
+   `location.hostname`.
+
+For the app's API calls, two shapes work, and neither needs anything new:
+
+* The app calls its API at an absolute address and sends the tenant: `https://api.example.com/t/abc/…`.
+  The API must then allow CORS from every name under the wildcard.
+* **Simpler:** a proxy route `/api` on the site. The app calls `/api/…` on its own origin, so
+  there is no CORS, and the site's passcode, middleware and header rules sit in front of the API.
+  The target reads the name from `X-Forwarded-Host` (sent by default), or from `Host` with
+  **Host header: visitor's**. A function reads it from `HttpContext.Request.Host`.
+
+## The model
+
+```csharp
+// SiteRecord
+public List<string> Aliases { get; set; } = [];
+```
+
+Each entry is a domain (`def.app.example.com`), or `*.` and a domain (`*.app.example.com`).
+The site's `Domain` stays what it is today: the site's identity, its folder (`sites/<domain>/`),
+the `{domain}` in every API path, and the key of everything kept per site (compiled rules,
+limits, the passcode cookie's protector, realtime). Aliases are only more names to answer at.
+Like the other lists on `SiteRecord`, the list is replaced as a whole on every change.
+
+`Aliases` in code and the API; **Other domains** in the UI, since the UI's word for the address
+a site answers at is *domain*.
+
+**A wildcard covers one level.** `*.app.example.com` answers `abc.app.example.com`, but not
+`x.abc.app.example.com`, and not `app.example.com` itself. That is what a wildcard certificate
+covers, so every name an alias answers can have a certificate. A deeper level is another alias
+(`*.abc.app.example.com`). The bare name is the site's domain, or an exact alias. (The **Sites**
+pattern of a server-wide route matches at any depth. That pattern picks sites, which have
+certificates of their own, so the two can differ.)
+
+## Which site answers
+
+```
+a management host                         → the management app   (unchanged, always first)
+a site's domain, or an exact alias        → that site
+*. and the name without its first label   → the site with that wildcard alias
+anything else                             → 404, or the management app when no management
+                                            hosts are set (unchanged)
+```
+
+An exact name always wins over a wildcard, so a site at `admin.app.example.com` keeps its name
+under another site's `*.app.example.com`. Because a wildcard covers one level, the wildcard step
+is one dictionary lookup (drop the first label, look up `*.` and the rest), with no scan and no
+"longest match".
+
+`SiteStore` keeps two indexes beside `_sites`: exact names (domains and exact aliases) to site,
+and wildcards to site. Both are rebuilt and swapped whole on every load, save, rename and delete,
+so a request never sees half a change. `TryGet(domain)` stays for the API and the pages, by the
+site's domain only. A new `Resolve(host)` is for requests.
+
+## Rules for an alias
+
+Checked on save, with every error reported at once, as for proxy routes:
+
+* a domain `NormalizeDomain` accepts, or `*.` and one with at least two labels (`*.example.com`,
+  not `*.com`);
+* not the site's own domain, and no repeats;
+* not another site's domain or exact alias, and not a wildcard another site already has;
+* not a management host. A wildcard may cover one, since management hosts are matched first;
+* **not the name the management app is being used at, when no management hosts are set.** The
+  management app then answers at any name with no site, and an alias would take that name away,
+  locking the administrator out. The error says to set `SiteHosting:ManagementHosts` first;
+* at most 50 per site. Wildcards make long lists unnecessary.
+
+**Who.** Administrators only, in the UI, the API and the tools; members see them. An alias makes
+the server answer at a name, get certificates for it and make DNS records for it. That is the
+same reach as rename, HTTPS and DNS, which are administrators-only. A deploy never brings aliases.
+
+**A new site under another site's wildcard.** Creating a site, or renaming one, at a name another
+site's wildcard covers takes that name from the other site. Visitors at a live name then see
+something else, so it needs an administrator; a member is told which site answers that name
+today. A name that is another site's exact alias is refused for everyone ("`def.app.example.com`
+is a domain of `app.example.com`"): the administrator removes the alias first.
+
+**Rename and delete.** Aliases are in `site.json`, so they move with a rename and go with a
+delete. Renaming a site to one of its own aliases takes that name out of the list. DNS records
+and certificates follow through the loops that already follow sites.
+
+## What changes, and what does not
+
+Most of the server keys on the site, not on the name, and needs nothing:
+
+| Part | At an alias |
+| ---- | ----------- |
+| Files, SPA fallback, header rules, redirects | Unchanged: the same release and rules at every name. A redirect to a path stays on the name asked for |
+| Functions | Unchanged. `ISite.Domain` is the site's domain; the name asked for is `HttpContext.Request.Host` |
+| `/_host/site.js` | `site.domain` stays the site's domain. A page reads `location.hostname` for the name it was opened at |
+| Proxy routes | Unchanged. The cross-site WebSocket check already compares `Origin` with the request's own host (`SiteProxy.IsCrossSite`). A parent cookie domain that does not cover an alias gives host-only cookies there, as after a rename (`ProxyTransformer`) |
+| Server-wide routes | Matched on the site's domain only, so one site never has different routes at different names |
+| Passcode | Works at every name. The cookie is host-only, so a visitor enters the passcode once per name. The attempt limit is per site, so more names do not give more tries |
+| Limits (AI chat, realtime) | Per site, so a wildcard cannot multiply them |
+| Variables, AI settings, branding | Unchanged |
+
+Four places change:
+
+* **Realtime.** `RealtimeRequestCheck.Refusal` compares the page's `Origin` with `site.Domain`, so
+  a page at an alias would be refused. It takes the request's host instead: a page connects to the
+  hub at its own name, and a page at any other name is refused, another alias of the same site
+  included, as today. Groups belong to the site, so pages at `abc.` and `def.` share them. A site
+  that serves many tenants puts the name in its group names and checks it in `[RealtimeJoin]`;
+  the README says so.
+* **HTTPS** (`Tls/CertificateManager.cs`, `Tls/TlsMiddleware.cs`):
+  * `Desired()` adds each exact alias, with the site's certificate source. **Uploaded** is one
+    certificate for the site's domain, so its aliases get automatic instead. Each exact alias
+    gets a certificate of its own, stored per host as today.
+  * Wildcard aliases get no certificate per name. A name that reaches a site through one is
+    served the shared certificate that covers it, unless the site's source is **None**; without
+    one, it gets the stand-in, as an unknown name does today. `Select` and `Serves` both do this,
+    so HTTP is sent to HTTPS at those names too.
+  * `TlsMiddleware` finds the site with `Resolve`, so the site's redirect and HSTS settings apply
+    at every name.
+  * The site's HTTPS card lists each alias with its certificate. A wildcard that no shared
+    certificate covers is shown as a problem, with **Get a certificate**.
+* **DNS** (`Services/Dns/DnsService.cs`). Reconciling walks names instead of sites: each site's
+  domain and its aliases. A wildcard alias is a `*.app` record, which Cloudflare accepts.
+  `SiteDnsRecords` is already one entry per record name, so it needs no new shape. An alias's
+  record is proxied when the site's own is, and **Excluded** works per name. A DNS wildcard only
+  answers names that have no records of their own, which matches the order above. Cloudflare's
+  free certificate covers one level (`*.example.com`), so a proxied `*.app.example.com` needs
+  Advanced Certificate Manager, or **DNS only** with this server's certificate. The README already
+  says this for Railway and the tunnel.
+* **The function editor's Run** (`FunctionTestService`) finds the site with `Resolve`, so a test
+  with host `abc.app.example.com` runs as the site, as a visitor's request would.
+
+With HTTPS ended in front of the server (Caddy, Railway, a Cloudflare Tunnel), only the lookup
+matters. The proxy in front must send the names on: a Caddy site block for `*.app.example.com`
+(with its own DNS challenge), a Railway wildcard domain, or the tunnel's wildcard route.
+
+## API, tools and UI
+
+| Method and path | Who | What |
+| --------------- | --- | ---- |
+| `GET /api/v1/sites/{domain}` | members | Gains `aliases` |
+| `PUT /api/v1/sites/{domain}/aliases` | administrators | Body `{ "aliases": [...] }`. Replaces the list; an empty list removes them all. `400` with every error at once |
+
+`{domain}` is always the site's domain. An alias in an API path is a `404` that names the site
+it belongs to, so a script never acts on a site it did not name.
+
+* **Tools:** `get_site` returns `aliases`; `set_site_aliases(domain, aliases)` (a change). The
+  instructions get a recipe: "one app at every subdomain".
+* **UI:** an **Other domains** card on **Settings**, above **Rename**: a list with **Add** and
+  **Remove**, and a hint that every name gets the whole site and that a wildcard covers one level.
+  The overview lists the other domains under the site's domain, and the sites list shows a count.
+  **DNS** and **HTTPS** in the menu list aliases by name, with the site each belongs to.
+* **Audit:** `site.aliases`, with the list before and after.
+
+## Tests
+
+* lookup: an exact name over a wildcard, one level only, the bare name not covered, management
+  hosts first, case and a trailing dot;
+* rules: each refusal above, the management lock-out included; a member cannot set aliases; a
+  member cannot create a site under another site's wildcard, and an administrator can;
+* rename to one of the site's own aliases; rename and delete take the aliases with them;
+* a request at an alias gets the site's files, SPA fallback, functions, proxy routes and passcode,
+  and the passcode is asked for again at another name;
+* realtime from a page at an alias is accepted, and from another alias of the same site refused;
+* HTTPS: an exact alias gets its own certificate; a name under a wildcard alias gets the covering
+  shared certificate, or the stand-in without one, and is sent to HTTPS; **None** stays plain HTTP;
+* DNS: alias records made, moved by a rename, and deleted with the alias and with the site,
+  against the fake Cloudflare API the DNS tests use.
+
+## Not in this design
+
+* **Sending an alias on to the site's domain**, such as a 301 from `www.example.com` to
+  `example.com`. Aliases serve. A per-alias **Redirect** switch is small and can come later without
+  changing the model. Today a second site with the rule `/* https://example.com/:splat 301` does it.
+  Search engines see the same pages at several names; `<link rel="canonical">` in the pages
+  handles that.
+* **A certificate per name under a wildcard, got on the first visit** (Caddy's on-demand TLS).
+  Every name a visitor tried under the wildcard would make the server ask Let's Encrypt, which
+  allows 50 certificates per registered domain a week. One shared wildcard certificate covers
+  them all.
+* **Different settings per name**, such as variables, routes or a passcode for `abc.` only. That
+  is a separate site. For data per tenant, the app or its API reads the name.
+* **Wildcards in the middle, or over several levels** (`abc.*.example.com`, `**.example.com`).
+
+## Decisions
+
+Confirmed on 2026-10-23: the user went with all four recommendations.
+
+1. **Aliases serve, with no redirect switch yet.** *Recommended*, for the case above. The switch
+   can be added later without changing the model.
+2. **A wildcard covers one level**, as a certificate does. *Recommended.*
+3. **Administrators only**, and a site under another site's wildcard needs an administrator.
+   *Recommended.*
+4. **Exact aliases follow the site's certificate source; wildcard aliases need a shared
+   certificate**, got with one click from the card. *Recommended.* Asking for the shared
+   certificate by itself when a wildcard alias is saved is possible with Cloudflare connected,
+   but it would add a shared certificate nobody asked for.
+
+## Order of work
+
+1. `SiteRecord.Aliases`, the rules, the `SiteStore` indexes and `Resolve`, the middleware's
+   lookup, the create and rename checks, and their tests. This alone makes the app above work
+   behind a proxy that ends HTTPS (the tunnel, Railway, Caddy).
+2. Realtime's check.
+3. API, tools, the **Other domains** card, the audit entry, and the README: a "One app at every
+   subdomain" section, the glossary (a site is everything served at its domain and its other
+   domains), and the API table.
+4. HTTPS: exact aliases in `Desired`, the wildcard step in `Select` and `Serves`, the HTTPS card.
+5. DNS: names instead of sites when reconciling.
 
 ---
 
@@ -952,3 +1188,141 @@ a Cloudflare Tunnel, and on Railway itself, not tried.
   or shared entry goes.
 * **Other providers later:** the provider is behind `ICloudflareApi`; a second one means a second
   API client and solver.
+
+## Phase 5: built (other domains)
+
+Built on 2026-10-23, as designed above, with the four recommended decisions. `dotnet test` passes
+657 tests, 33 of them new in `SiteAliasTests.cs`: lookup, every rule, restarts, renames and
+deletes, certificates for exact and wildcard names, the HTTPS redirect at an alias, DNS records
+following the site, the realtime checks, the shared passcode cookie, proxy cookie parents, and the
+tools and assistant context; one in `RealtimeLimitsTests.cs` closes a site's connections at one
+name only.
+
+| Piece | Where |
+| ----- | ----- |
+| Model | `SiteRecord.Aliases` |
+| Rules, one-level matching, taking a name | `Services/SiteAliases.cs` (`Normalize`, `Check`, `Covers`, `Taken`) |
+| Lookup | `SiteStore.Resolve` and `AliasOwner`, over an index rebuilt under a lock and swapped after every load, save, rename and delete |
+| Saving, and the create, deploy and rename checks | `ZipDeploymentService.SetAliasesAsync`, `CreateAsync`, `DeployAsync`, `RenameAsync`, all under the deploy gate |
+| Requests | `SiteHostingMiddleware` (`Resolve`, and the realtime check against the name asked for), `TlsMiddleware` |
+| HTTPS | `CertificateManager`: exact aliases in `Desired` with their site's source (uploaded becomes automatic), `UnderWildcard` in `Select` and `Serves`, `SharedCovering`, `HostCertificateStatus.AliasOf` |
+| DNS | `DnsService.ReconcileAsync` walks names: each site's domain and its aliases |
+| API, tools | `PUT /api/v1/sites/{domain}/aliases`, `aliases` on every site description, `aliases` in `GET …/tls`; `set_site_aliases`, and a recipe line in the instructions |
+| UI | **Settings → Other domains** card; the list under the site's name; the HTTPS card's **Other domains** list; a count on the sites list; alias rows on **HTTPS** and **DNS** |
+
+### Where the build differs from the design above
+
+* **The card is a text box**, one domain per line (commas and spaces separate them too), not a list
+  with Add and Remove. It replaces the whole list, as the API does, and shows what was typed again
+  with every error when a save is refused.
+* **DNS: other domains follow their site entirely.** The design had **Excluded** per name. Built,
+  an alias has records while its site has them (its own entry, or records for every site and the
+  site not excluded), proxied as the site's are, and loses them when the site's are removed by
+  hand. There is nothing to set per alias, and the DNS page shows alias rows with no actions.
+* **Visitor screens show the name asked for.** The passcode page and the "nothing deployed yet"
+  page name the host the visitor typed (`SiteHostingMiddleware.HostOf`), not the site's domain.
+* **Every API address that names a site** says, for one of its other domains, which site that is
+  (`ApiEndpoints.NoSite`), in the site, TLS, DNS, branding and functions endpoints and in the tools.
+* **Get a certificate from the HTTPS card.** A wildcard no shared certificate covers links to
+  `/admin/https?request=<wildcard>#request`, which opens the request form with the name filled in.
+* **The function editor's Run** keeps the host typed for a site's functions when it is one of that
+  site's names, and uses the domain otherwise.
+* **One passcode unlock per wildcard** (asked for after the build; the design had one per name).
+  Entered at a name under one of the site's wildcards, or at the domain it sits on, the passcode
+  sets a second cookie, `ssh.pass.{site domain}`, on that domain (the widest when several
+  wildcards cover the name), beside the host-only `ssh.pass`, which stays for a browser that
+  refuses the shared one (a wildcard on a public suffix, such as `*.co.uk`). Both carry the same
+  value, good for this site alone, so another site under the domain is not unlocked and its own
+  `ssh.pass` is never shadowed. The shared cookie does reach every name under the domain, other
+  sites and servers elsewhere included; proxy routes strip `ssh.*` cookies, and only administrators
+  write functions. `SitePasscodeGate.SharedDomain`, `SharedCookieName`.
+* **A proxy route's parent cookie domain may cover an other domain.** The check on save took the
+  site's domain only; it now takes a parent of the domain or of any of its other domains (for a
+  wildcard, the domain it sits on). At a name the parent does not cover, the route's cookies stay
+  host-only, as before. `ProxyRouteRules.Validate(domain, routes, aliases)`.
+* **Tools never take a name by creating a site.** `set_proxy_route` and `deploy_files` create a
+  missing site, so a model asked about `abc.app.example.com` would have made a site there and taken
+  the name from the wildcard's site. At another site's other domain they are refused, naming that
+  site; `create_site` still makes one there on purpose. The assistant's context lists each site's
+  other domains, `get_dns` carries `aliasOf` (`SiteDnsStatus.AliasOf`), and a wildcard given where
+  a site is asked for names its site (`ApiEndpoints.NoSite`).
+
+**Checked by hand** against the running app, with its data in a scratch folder: the sample site
+deployed to `app.localhost` with `*.app.localhost` and `www.example.test`; the domain, the exact
+alias and a wildcard name served the site, SPA fallback included, while a name two levels down and
+an unknown name got the no-site page; a bad list refused with every reason; `GET` at an alias
+answered `404` naming the site; creating a site at the exact alias refused, and under the wildcard
+allowed for an administrator; the passcode page at a wildcard name showed that name, and the
+unlock worked there; realtime negotiation accepted from the page's own name and refused from
+another alias and from the domain; renaming the site to its own alias took that name off the list.
+The shared passcode cookie in Chromium over HTTPS: unlocking at `abc.app.localhost` set
+`ssh.pass` on that host and `ssh.pass.{domain}` on `.app.localhost` (Secure, HttpOnly, Lax), and
+`def` and `xyz.app.localhost` then opened without the form, while `admin.app.localhost`, a site of
+its own with a passcode of its own, still asked. Not checked in Safari or Firefox. Over MCP
+(`tools/list` and calls with an API key) and in the management assistant with Claude Haiku: asked
+to add `*.tenants.localhost` and an `/api` route sharing cookies on `app.localhost`, it called
+`set_site_aliases` with the old list kept and `set_proxy_route` with `cookieMode: parent`; asked for
+a route on `abc.app.localhost`, it put it on the site that answers there and said so.
+With HTTPS in the server: the exact alias got its own self-signed certificate, a wildcard name the
+stand-in until a shared `*.app.localhost` was uploaded and then that one, and HTTP at those names
+went to HTTPS; the site's HTTPS card, the HTTPS page, the sites list and the Settings card were
+looked at in Chromium at 1280 and 390 pixels wide. The screenshots found two things, fixed: the
+card's text box and the card shared an id, and the alias list sat against the form below it.
+
+**Checked against Cloudflare** on 2026-10-24, with a real zone and token and a server with no
+other sites. A site with a wildcard and an exact other domain got one A record at each of the
+three names, each with the server's comment, and the two other domains showed `aliasOf`.
+`name.exact` matches a `*.` name literally: two refreshes found the records already made, made no
+more, and reported no conflict. Removing the wildcard deleted its record alone; deleting the site
+deleted the rest. Google's resolver and 1.1.1.1, asked over HTTPS, answered the site's name, two
+names under the wildcard and the exact one within seconds. A DNS wildcard also matches names
+further down (`deep.abc.…` resolved), which the server answers as any name it has no site for; the
+README says so. The records pointed at 192.0.2.10, and plain DNS from the WSL machine used drops
+answers with reserved addresses, so the lookups went over HTTPS.
+
+**Not checked:** the DNS page's alias rows in a browser, which need Cloudflare connected.
+
+**Reviewed** on 2026-10-23 by Fable 5.1 at xhigh effort, read-only, over the whole uncommitted
+change. Three defects, each confirmed in the code and fixed:
+
+* **Realtime at an alias closed as it opened.** `SiteHub.IsStillServed`, the check after a
+  connection registers, compared the request's host with the site's domain, so every connection at
+  an other domain was aborted after a successful negotiate (reproduced in Chromium: connected at
+  the domain, `Disconnected` at two wildcard names). It now checks that the name asked for still
+  resolves to the same record, which also catches a removed alias and a name taken by a new site.
+  Pages already connected at a name the site stops answering are closed too, and only those: each
+  connection keeps the name it was made at, and `RealtimeRegistry.DisconnectAt` closes the ones at a
+  removed alias, or at a name under the wildcard that a new site (created, deployed to or renamed
+  to) takes. Closing all the site's connections would not do: SignalR tells a page the server
+  closed not to reconnect, so its pages at every other name would lose realtime until reloaded
+  (seen in Chromium with `DisconnectSite`, then checked again with `DisconnectAt`: the domain's and
+  `def`'s pages stayed connected when `abc.app.localhost` got a site of its own).
+* **Visitor screens and `/_host/brand/brand.css` at an alias used the server's branding.**
+  `VisitorPage` and `BrandingMiddleware` looked the site up with `TryGet`; they use `Resolve` now.
+  Checked in Chromium with a site brand name and accent colour at the domain and a wildcard name.
+* **An exact alias of a site on a shared certificate got none when that certificate did not
+  cover it.** An alias now takes automatic for a shared source as for an uploaded one
+  (`CertificateManager.ForAliases`); automatic still prefers a shared certificate that covers it.
+
+Its fourth note, that functions on a sibling site under the same domain can read the shared
+passcode cookie, is the trade-off described above: only administrators write functions.
+
+**Reviewed again** the same day, after those fixes, by Fable 5.1 at xhigh effort, read-only. It
+found the three fixes right and four more defects, each confirmed in the code and fixed:
+
+* **A management host under a site's wildcard took the site's HTTPS settings.** `TlsMiddleware`
+  looked the host up without checking for a management host first, as the other request-path
+  lookups do. With the site's redirect turned off, the management app's sign-in page was served
+  over plain HTTP (the new test gets a 200 there without the fix), and the site's HSTS reached the
+  management host. It now leaves management hosts to their own settings.
+* **An exact other domain taken from under another site's wildcard left that site's pages there
+  connected.** `SetAliasesAsync` now closes them, as making a site at the name does; checked in
+  Chromium: the page at `abc.app.localhost` closed, those at the domain and `def` stayed.
+* **`get_tls` and `GET /api/v1/sites/{domain}/tls` said a wildcard of a site with no HTTPS had no
+  certificate covering it.** They now give `effective: none` and no problem, as the site's page
+  does, since its names are served none and HTTP there is not redirected.
+* **The README said every exact other domain asks for the passcode again.** One under a wildcard's
+  domain gets the shared cookie and opens with it; the README says so.
+
+**Known:** a redirect switch per alias (decision 1) and certificates per name on first visit
+remain out, as designed.

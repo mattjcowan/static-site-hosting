@@ -72,7 +72,8 @@ public static class ProxyRouteRules
 
     /// <summary>Human-readable reasons a site's routes cannot be saved. Empty means they can.</summary>
     /// <param name="domain">The site the routes are for, or null for server-wide routes (<see cref="ServerProxyRoute"/>).</param>
-    public static IReadOnlyList<string> Validate(string? domain, IReadOnlyList<ProxyRoute> routes)
+    /// <param name="aliases">The site's other domains, which a parent cookie domain may cover instead of its domain.</param>
+    public static IReadOnlyList<string> Validate(string? domain, IReadOnlyList<ProxyRoute> routes, IReadOnlyList<string>? aliases = null)
     {
         var errors = new List<string>();
 
@@ -121,7 +122,7 @@ public static class ProxyRouteRules
                 errors.Add($"{label}: the cookie mode must be one of {string.Join(", ", ProxyCookieModes.All)}.");
             else if (route.CookieMode == ProxyCookieModes.Parent &&
                      (server is not null ? ProxySites.CheckParentDomain(server.Sites, route.CookieParentDomain)
-                         : CheckParentDomain(domain ?? "", route.CookieParentDomain)) is { } parentError)
+                         : CheckParentDomain(domain ?? "", aliases ?? [], route.CookieParentDomain)) is { } parentError)
                 errors.Add($"{label}: {parentError}.");
 
             var headers = route.RequestHeaders ?? [];
@@ -156,14 +157,23 @@ public static class ProxyRouteRules
         return null;
     }
 
-    private static string? CheckParentDomain(string domain, string? parent)
+    /// <summary>
+    /// Whether a cookie domain covers the site's domain or one of its other domains: a wildcard's names
+    /// are covered by the domain it sits on and the domains that one belongs to. At a name the parent does
+    /// not cover, the route's cookies stay host-only (see <see cref="ProxyTransformer.RewriteCookies"/>).
+    /// </summary>
+    private static string? CheckParentDomain(string domain, IReadOnlyList<string> aliases, string? parent)
     {
         var (normalized, _) = SiteStore.NormalizeDomain(parent);
         if (normalized is null) return "name the parent domain cookies are moved to";
         if (!normalized.Contains('.')) return $"'{normalized}' is too broad to share cookies across";
-        if (!domain.Equals(normalized, StringComparison.OrdinalIgnoreCase) &&
-            !domain.EndsWith("." + normalized, StringComparison.OrdinalIgnoreCase))
-            return $"'{normalized}' is not {domain} or a domain it belongs to";
+
+        var names = aliases.Select(alias => SiteAliases.IsWildcard(alias) ? alias[2..] : alias).Prepend(domain);
+        if (!names.Any(name => name.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+                               name.EndsWith("." + normalized, StringComparison.OrdinalIgnoreCase)))
+            return aliases.Count == 0
+                ? $"'{normalized}' is not {domain} or a domain it belongs to"
+                : $"'{normalized}' is not {domain}, one of its other domains, or a domain one of them belongs to";
         return null;
     }
 

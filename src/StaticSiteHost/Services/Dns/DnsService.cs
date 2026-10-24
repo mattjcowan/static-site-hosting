@@ -18,15 +18,19 @@ namespace StaticSiteHost.Services.Dns;
 /// <c>noAddress</c> (nothing to point at is set), <c>conflict</c> (a record this server did not make
 /// is there), <c>error</c>, or <c>notConnected</c>.
 /// </param>
-public sealed record SiteDnsStatus(string Domain, string State, string? Detail, SiteDnsRecords? Records, string? Zone);
+public sealed record SiteDnsStatus(string Domain, string State, string? Detail, SiteDnsRecords? Records, string? Zone)
+{
+    /// <summary>For one of a site's other domains, the site's domain; null for a site.</summary>
+    public string? AliasOf { get; init; }
+}
 
 /// <summary>
 /// Cloudflare for this server: the API token, DNS records that follow sites, and what certificates
 /// need from it (DNS-01 checks, Origin CA certificates).
 ///
 /// Records follow sites in the background: whenever a site is added, renamed or deleted, and every
-/// hour, each site that should have a record gets one pointing at the address set here, and the
-/// records of sites that are gone are deleted. Only records this server made, whose ids it keeps
+/// hour, each site that should have a record gets one pointing at the address set here, and so do
+/// its other domains; the records of sites and names that are gone are deleted. Only records this server made, whose ids it keeps
 /// in config/dns.json, are ever changed or deleted; a site whose name already has a record made
 /// elsewhere is left alone and shown as such.
 /// </summary>
@@ -413,6 +417,10 @@ public sealed class DnsService : BackgroundService
     /// Brings every site's records in line with the settings: made where wanted, pointed at the
     /// address set, proxied as chosen, and deleted for sites that are gone. Each site on its own,
     /// so one that fails never stops the rest.
+    ///
+    /// A site's other domains (<see cref="SiteRecord.Aliases"/>) are names of their own here, a
+    /// wildcard one included (a <c>*.app</c> record), and follow their site: they have records
+    /// while the site does, proxied as the site's are, and lose them when it stops having any.
     /// </summary>
     public async Task ReconcileAsync(CancellationToken ct)
     {
@@ -420,13 +428,28 @@ public sealed class DnsService : BackgroundService
         try
         {
             var settings = await _store.ReadAsync(ct);
-            var sites = _sites.List().Select(s => s.Domain).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var siteList = _sites.List();
+            var sites = siteList.Select(s => s.Domain).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var status = new Dictionary<string, SiteDnsStatus>(StringComparer.OrdinalIgnoreCase);
+
+            // Every name that should be in DNS, to the domain of the site it belongs to.
+            var names = sites.ToDictionary(domain => domain, domain => domain, StringComparer.OrdinalIgnoreCase);
+            foreach (var site in siteList)
+                foreach (var alias in site.Aliases) names.TryAdd(alias, site.Domain);
+
+            // Other domains carry the site they belong to, for the API and the tools.
+            void Publish()
+            {
+                foreach (var (name, owner) in names)
+                    if (!name.Equals(owner, StringComparison.OrdinalIgnoreCase) && status.TryGetValue(name, out var entry))
+                        status[name] = entry with { AliasOf = owner };
+                _status = status;
+            }
 
             if (await TokenAsync(ct) is not { } token)
             {
-                foreach (var domain in sites) status[domain] = new SiteDnsStatus(domain, "notConnected", null, null, null);
-                _status = status;
+                foreach (var name in names.Keys) status[name] = new SiteDnsStatus(name, "notConnected", null, null, null);
+                Publish();
                 return;
             }
 
@@ -437,15 +460,21 @@ public sealed class DnsService : BackgroundService
             }
             catch (Exception ex) when (ex is CloudflareException or HttpRequestException)
             {
-                foreach (var domain in sites) status[domain] = new SiteDnsStatus(domain, "error", ex.Message, null, null);
-                _status = status;
+                foreach (var name in names.Keys) status[name] = new SiteDnsStatus(name, "error", ex.Message, null, null);
+                Publish();
                 return;
             }
 
             var changed = false;
 
-            // The records of sites that are gone.
-            foreach (var entry in settings.Sites.Where(e => !sites.Contains(e.Domain)).ToList())
+            // Whether a site has records, or is to get them: the other domains' follow from this.
+            bool HasRecords(string domain) =>
+                settings.Sites.Any(e => e.Domain == domain) ||
+                settings.RecordsForSites && !settings.Excluded.Contains(domain, StringComparer.OrdinalIgnoreCase);
+
+            // The records of names that are gone: deleted sites, other domains removed, and the other
+            // domains of a site that has no records.
+            foreach (var entry in settings.Sites.Where(e => !names.TryGetValue(e.Domain, out var owner) || owner != e.Domain && !HasRecords(owner)).ToList())
             {
                 try
                 {
@@ -464,14 +493,30 @@ public sealed class DnsService : BackgroundService
 
             var wantedRecords = Wanted(settings);
             var comment = Comment();
-            foreach (var domain in sites.Order(StringComparer.Ordinal))
+            foreach (var (domain, owner) in names.OrderBy(n => n.Key, StringComparer.Ordinal))
             {
                 var entry = settings.Sites.FirstOrDefault(e => e.Domain == domain);
-                var excluded = settings.Excluded.Contains(domain, StringComparer.OrdinalIgnoreCase);
-                if (entry is null && (!settings.RecordsForSites || excluded))
+                var proxied = settings.Proxied;
+                if (owner != domain)
                 {
-                    status[domain] = new SiteDnsStatus(domain, excluded ? "excluded" : "off", null, null, ZoneFor(domain, zones)?.Name);
-                    continue;
+                    if (!HasRecords(owner))
+                    {
+                        var ownerExcluded = settings.Excluded.Contains(owner, StringComparer.OrdinalIgnoreCase);
+                        status[domain] = new SiteDnsStatus(domain, ownerExcluded ? "excluded" : "off", null, null, ZoneFor(domain, zones)?.Name);
+                        continue;
+                    }
+
+                    proxied = settings.Sites.FirstOrDefault(e => e.Domain == owner)?.Proxied ?? settings.Proxied;
+                    if (entry is not null) entry.Proxied = proxied;
+                }
+                else
+                {
+                    var excluded = settings.Excluded.Contains(domain, StringComparer.OrdinalIgnoreCase);
+                    if (entry is null && (!settings.RecordsForSites || excluded))
+                    {
+                        status[domain] = new SiteDnsStatus(domain, excluded ? "excluded" : "off", null, null, ZoneFor(domain, zones)?.Name);
+                        continue;
+                    }
                 }
 
                 if (ZoneFor(domain, zones) is not { } zone)
@@ -487,7 +532,7 @@ public sealed class DnsService : BackgroundService
                 }
 
                 var isNew = entry is null;
-                entry ??= new SiteDnsRecords { Domain = domain, ZoneId = zone.Id, Proxied = settings.Proxied };
+                entry ??= new SiteDnsRecords { Domain = domain, ZoneId = zone.Id, Proxied = proxied };
                 try
                 {
                     var (state, detail, entryChanged) = await ApplyAsync(token, zone, entry, wantedRecords, comment, ct);
@@ -512,7 +557,7 @@ public sealed class DnsService : BackgroundService
                 }, ct);
             }
 
-            _status = status;
+            Publish();
         }
         finally
         {

@@ -493,7 +493,7 @@ public sealed class TlsTests : IDisposable
     }
 
     /// <summary>A response that runs its OnStarting callbacks when told to start, as a server's does.</summary>
-    private sealed class StartingResponse : Microsoft.AspNetCore.Http.Features.HttpResponseFeature
+    internal sealed class StartingResponse : Microsoft.AspNetCore.Http.Features.HttpResponseFeature
     {
         private readonly List<(Func<object, Task> Callback, object State)> _starting = [];
 

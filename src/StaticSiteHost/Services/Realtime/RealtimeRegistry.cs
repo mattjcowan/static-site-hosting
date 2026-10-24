@@ -15,7 +15,8 @@ namespace StaticSiteHost.Services.Realtime;
 ///
 /// Each connection's <see cref="HubCallerContext"/> is kept, which is how one is closed from
 /// outside the hub: by a function (<see cref="IRealtime.DisconnectAsync"/>), or by the host when
-/// the site is deleted, renamed or given a new passcode (<see cref="DisconnectSite"/>). An entry
+/// the site is deleted, renamed or given a new passcode (<see cref="DisconnectSite"/>), or stops
+/// answering at the name a connection was made at (<see cref="DisconnectAt"/>). An entry
 /// goes when its connection ends, so nothing here outlives the connection it describes, and it
 /// holds only framework types and strings: nothing from a function bundle.
 ///
@@ -96,7 +97,8 @@ public sealed class RealtimeRegistry
     /// <see cref="MaxConnectionsPerAddress"/> to it.
     /// </summary>
     /// <param name="address">The client, as <see cref="ClientAddress.Key"/> gives it.</param>
-    public AddResult TryAdd(string domain, HubCallerContext context, string? user, string address)
+    /// <param name="name">The name the connection was made at: the site's domain or one of its other domains.</param>
+    public AddResult TryAdd(string domain, HubCallerContext context, string? user, string address, string name)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(address);
@@ -121,7 +123,7 @@ public sealed class RealtimeRegistry
                     return refusal;
                 }
 
-                site.Connections[context.ConnectionId] = new Connection(context, user, address, DateTimeOffset.UtcNow);
+                site.Connections[context.ConnectionId] = new Connection(context, user, address, name, DateTimeOffset.UtcNow);
                 site.PerAddress[address] = site.PerAddress.GetValueOrDefault(address) + 1;
                 return AddResult.Added;
             }
@@ -209,6 +211,29 @@ public sealed class RealtimeRegistry
 
         foreach (var context in contexts) context.Abort();
         return contexts.Length;
+    }
+
+    /// <summary>
+    /// Closes the connections to <paramref name="domain"/> made at a name
+    /// <paramref name="noLongerAnswered"/> picks, for a site that has stopped answering there: an
+    /// other domain removed, or a site of its own made at a name under its wildcard. Its connections
+    /// at other names stay. Returns how many were closed.
+    /// </summary>
+    /// <remarks>
+    /// Call it once the change has been made, as <see cref="DisconnectSite"/> is: a connection being
+    /// made at the same moment is either among these or sees the change for itself.
+    /// </remarks>
+    public int DisconnectAt(string domain, Func<string, bool> noLongerAnswered)
+    {
+        if (!_sites.TryGetValue(domain, out var site)) return 0;
+
+        (string Id, string Name)[] connections;
+        lock (site.Gate)
+        {
+            connections = [.. site.Connections.Values.Select(connection => (connection.Context.ConnectionId, connection.Name))];
+        }
+
+        return connections.Count(connection => noLongerAnswered(connection.Name) && Abort(domain, connection.Id));
     }
 
     // ---- groups -------------------------------------------------------------
@@ -405,11 +430,12 @@ public sealed class RealtimeRegistry
         }
     }
 
-    private sealed class Connection(HubCallerContext context, string? user, string address, DateTimeOffset connectedUtc)
+    private sealed class Connection(HubCallerContext context, string? user, string address, string name, DateTimeOffset connectedUtc)
     {
         public HubCallerContext Context { get; } = context;
         public string? User { get; set; } = user;
         public string Address { get; } = address;
+        public string Name { get; } = name;
         public DateTimeOffset ConnectedUtc { get; } = connectedUtc;
         public SortedSet<string> Groups { get; } = new(StringComparer.Ordinal);
 

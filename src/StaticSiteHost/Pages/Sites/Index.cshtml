@@ -58,6 +58,10 @@
                                 {
                                     <span class="badge" title="@L["sites.badge.routesTitle"]">@L.Plural("sites.badge.routes", site.Proxy.Count)</span>
                                 }
+                                @if (site.Aliases.Count > 0)
+                                {
+                                    <span class="badge" title="@string.Join(", ", site.Aliases)">@L.Plural("sites.badge.aliases", site.Aliases.Count)</span>
+                                }
                             </td>
                             <td>@(release?.FileCount.ToString("N0") ?? "—")</td>
                             <td class="nowrap">@(release is null ? "—" : Format.Bytes(release.TotalBytes))</td>

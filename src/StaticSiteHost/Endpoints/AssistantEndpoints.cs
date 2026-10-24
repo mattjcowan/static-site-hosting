@@ -174,6 +174,7 @@ public static class AssistantEndpoints
     private static string Line(SiteRecord site)
     {
         var parts = new List<string>();
+        if (site.Aliases.Count > 0) parts.Add("also answers at " + string.Join(", ", site.Aliases));
         if (site.Current is { } release) parts.Add($"{release.FileCount} file(s), release {release.Id}");
         if (site.Proxy.Count > 0) parts.Add("proxy " + string.Join(", ", site.Proxy.Select(r => $"{r.Path} → {r.Target}")));
         if (site.CurrentFunctions is not null) parts.Add("functions");

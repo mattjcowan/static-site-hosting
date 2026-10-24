@@ -18,7 +18,7 @@ namespace StaticSiteHost.Serving;
 /// hosted site, decided purely by the Host header.
 ///
 ///   * a host listed in SiteHosting:ManagementHosts  → management UI and API
-///   * a host with a deployed site                   → the site, behind its passcode if it
+///   * a site's domain or one of its other domains   → the site, behind its passcode if it
 ///                                                     has one (see below)
 ///   * anything else                                 → management app when no management
 ///                                                     hosts are configured, otherwise 404
@@ -87,7 +87,7 @@ public sealed class SiteHostingMiddleware
             return;
         }
 
-        host = host.TrimEnd('.').ToLowerInvariant();
+        host = HostOf(context);
 
         if (_options.IsManagementHost(host))
         {
@@ -95,13 +95,13 @@ public sealed class SiteHostingMiddleware
             return;
         }
 
-        if (_sites.TryGet(host) is { } site)
+        if (_sites.Resolve(host) is { } site)
         {
             if (await _passcodes.TryHandleAsync(context, site)) return;
 
             if (SiteHub.Handles(context.Request.Path))
             {
-                await PassToHubAsync(context, site);
+                await PassToHubAsync(context, site, host);
                 return;
             }
 
@@ -128,6 +128,13 @@ public sealed class SiteHostingMiddleware
             heading, Render(_strings.Html("visitor.noSite.detail", new { domain = host })));
     }
 
+    /// <summary>
+    /// The name a request was made to, as sites are looked up by: lowercase, with no trailing dot.
+    /// For a site, its domain or one of its other domains; visitor screens show it, so a visitor
+    /// sees the name they typed.
+    /// </summary>
+    internal static string HostOf(HttpContext context) => context.Request.Host.Host.TrimEnd('.').ToLowerInvariant();
+
     private static string Render(IHtmlContent html)
     {
         using var writer = new StringWriter();
@@ -141,9 +148,10 @@ public sealed class SiteHostingMiddleware
     /// while the answer can still be plain HTTP with a JSON body a script can read, and before the
     /// site's <c>[RealtimeConnect]</c> hook can run:
     ///
-    ///   * any request that does not come from one of the site's own pages, which
-    ///     <see cref="RealtimeRequestCheck"/> decides in three steps: <c>Sec-Fetch-Site</c> when the
-    ///     browser sends it, else <c>Origin</c>, else a WebSocket or <c>X-Requested-With</c> (403);
+    ///   * any request that does not come from one of the site's own pages at the name it was made
+    ///     to, which <see cref="RealtimeRequestCheck"/> decides in three steps: <c>Sec-Fetch-Site</c>
+    ///     when the browser sends it, else <c>Origin</c>, else a WebSocket or <c>X-Requested-With</c>
+    ///     (403);
     ///   * a new connection from an address that has started SiteHosting:RealtimeNegotiationsPerMinute
     ///     in the last minute on this site (429, with Retry-After);
     ///   * a new connection to a site that has as many as it may, or from an address that has as
@@ -154,12 +162,14 @@ public sealed class SiteHostingMiddleware
     /// connection, and closes one over either limit; refusing here as well means a page that cannot
     /// get in is told so by the failed start, instead of seeing a connection open and close at once.
     /// </summary>
-    private async Task PassToHubAsync(HttpContext context, SiteRecord site)
+    private async Task PassToHubAsync(HttpContext context, SiteRecord site, string host)
     {
         // Every answer under /_host/, the hub's own included, is for the site's pages alone.
         SiteHostEndpoints.MarkSameOrigin(context.Response);
 
-        if (RealtimeRequestCheck.Refusal(context.Request.Headers, RealtimeRequestCheck.IsWebSocketUpgrade(context), site.Domain) is { } refusal)
+        // Checked against the name asked for, so a page connects at its own name: at one of the
+        // site's other domains as well as at its domain, but never from one name to another.
+        if (RealtimeRequestCheck.Refusal(context.Request.Headers, RealtimeRequestCheck.IsWebSocketUpgrade(context), host) is { } refusal)
         {
             await SiteHostEndpoints.WriteErrorAsync(context, StatusCodes.Status403Forbidden, refusal);
             return;

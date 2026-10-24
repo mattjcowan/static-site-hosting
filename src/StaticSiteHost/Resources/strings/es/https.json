@@ -26,6 +26,7 @@
   "https.hosts.certificate": "Certificado",
   "https.hosts.status": "Estado",
   "https.hosts.management": "administración",
+  "https.hosts.aliasOf": "otro dominio de {domain}",
   "https.hosts.selfSigned": "autofirmado",
   "https.hosts.expiresIn.one": "Caduca el {date}, dentro de {count} día.",
   "https.hosts.expiresIn.other": "Caduca el {date}, dentro de {count} días.",

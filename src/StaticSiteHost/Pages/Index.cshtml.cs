@@ -43,7 +43,7 @@ public class IndexModel : PageModel
 
         var actor = User.Identity?.Name ?? "unknown";
         var result = await _deployer.DeployAsync(domain, stream, archive.FileName, actor, "web",
-            canDeployFunctions: User.IsInRole(Roles.Administrator), cancellationToken);
+            canDeployFunctions: User.IsInRole(Roles.Administrator), administrator: User.IsInRole(Roles.Administrator), cancellationToken);
 
         if (!result.Ok) return Respond(false, result.Error, result.Diagnostics);
 

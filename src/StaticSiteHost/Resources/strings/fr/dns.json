@@ -49,6 +49,7 @@
   "dns.sites.record": "Enregistrement",
   "dns.sites.state": "État",
   "dns.sites.inZone": "zone {zone}",
+  "dns.sites.aliasOf": "autre domaine de {domain}",
   "dns.sites.proxied": "proxifié",
   "dns.sites.dnsOnly": "DNS uniquement",
   "dns.sites.proxy": "Proxifier par Cloudflare",

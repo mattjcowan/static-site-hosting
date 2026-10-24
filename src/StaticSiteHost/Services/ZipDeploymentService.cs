@@ -93,6 +93,10 @@ public sealed class ZipDeploymentService
         _logger = logger;
     }
 
+    /// <param name="administrator">
+    /// Whether the caller is an administrator, who alone may create a site at a name another site's
+    /// wildcard answers (see <see cref="SiteAliases.Taken"/>).
+    /// </param>
     public async Task<DeployResult> DeployAsync(
         string? domainInput,
         Stream archive,
@@ -100,9 +104,10 @@ public sealed class ZipDeploymentService
         string actor,
         string source,
         bool canDeployFunctions,
+        bool administrator,
         CancellationToken ct = default)
     {
-        var result = await DeployUnderGateAsync(domainInput, archive, archiveName, actor, source, canDeployFunctions, ct);
+        var result = await DeployUnderGateAsync(domainInput, archive, archiveName, actor, source, canDeployFunctions, administrator, ct);
 
         // Outside the gate: loading functions with background work can take a moment, and the
         // next deploy need not wait for it. A deploy that kept the functions it had finds them
@@ -123,6 +128,7 @@ public sealed class ZipDeploymentService
         string actor,
         string source,
         bool canDeployFunctions,
+        bool administrator,
         CancellationToken ct)
     {
         var (domain, domainError) = SiteStore.NormalizeDomain(domainInput);
@@ -134,6 +140,12 @@ public sealed class ZipDeploymentService
         await _deployGate.WaitAsync(ct);
         try
         {
+            // A deploy to a new domain creates the site, so it may take a name only as creating one may.
+            if (!_sites.Exists(domain) && SiteAliases.Taken(_sites, domain, administrator) is { } taken)
+                return DeployResult.Failed(taken);
+
+            var answeredBy = WildcardAnswering(domain);
+
             // ZipArchive needs to seek to read the central directory; raw request bodies do not seek.
             if (!archive.CanSeek)
             {
@@ -155,7 +167,9 @@ public sealed class ZipDeploymentService
             if (archive.Length > _options.MaxUploadBytes)
                 return DeployResult.Failed($"The archive is larger than the {Format.Bytes(_options.MaxUploadBytes)} upload limit.");
 
-            return await ExtractAndPublishAsync(domain, archive, archiveName, actor, source, canDeployFunctions, ct);
+            var result = await ExtractAndPublishAsync(domain, archive, archiveName, actor, source, canDeployFunctions, ct);
+            if (result.Ok && answeredBy is not null) DisconnectStrays(answeredBy);
+            return result;
         }
         catch (InvalidDataException)
         {
@@ -641,8 +655,9 @@ public sealed class ZipDeploymentService
     /// <summary>
     /// Creates a site with no release, for one made of proxy routes, or to set up before the first
     /// deploy. Anyone who may deploy may do this: deploying to a new domain creates the site anyway.
+    /// A name another site's alias answers is the exception (see <see cref="SiteAliases.Taken"/>).
     /// </summary>
-    public async Task<(bool Ok, string? Error, string? Domain, bool AlreadyExists)> CreateAsync(string? domainInput, string actor)
+    public async Task<(bool Ok, string? Error, string? Domain, bool AlreadyExists)> CreateAsync(string? domainInput, string actor, bool administrator)
     {
         var (domain, error) = SiteStore.NormalizeDomain(domainInput);
         if (domain is null) return (false, error, null, false);
@@ -654,10 +669,13 @@ public sealed class ZipDeploymentService
         try
         {
             if (_sites.Exists(domain)) return (false, $"A site is already published at '{domain}'.", domain, true);
+            if (SiteAliases.Taken(_sites, domain, administrator) is { } taken) return (false, taken, null, false);
 
+            var answeredBy = WildcardAnswering(domain);
             await _sites.SaveAsync(new SiteRecord { Domain = domain, CreatedBy = actor });
             _content.Evict(domain);
             _variables.Evict(domain);
+            if (answeredBy is not null) DisconnectStrays(answeredBy);
 
             await _audit.WriteAsync("site.create", actor, new { domain });
             _logger.LogInformation("Created site {Domain} with no release", domain);
@@ -731,8 +749,19 @@ public sealed class ZipDeploymentService
         await _deployGate.WaitAsync();
         try
         {
+            // Only administrators rename sites, so a name under another site's wildcard may be taken.
+            if (SiteAliases.Taken(_sites, to, administrator: true, self: domain) is { } taken) return (false, taken, null);
+
+            var answeredBy = WildcardAnswering(to);
             var (ok, failure) = await _sites.RenameAsync(domain, to);
             if (!ok) return (false, failure, null);
+
+            // Renamed to one of its own other domains: that name is its domain now.
+            if (_sites.TryGet(to) is { } renamed && renamed.Aliases.Contains(to))
+            {
+                renamed.Aliases = renamed.Aliases.Where(a => a != to).ToList();
+                await _sites.SaveAsync(renamed);
+            }
 
             _content.Evict(domain);
             _content.Evict(to);
@@ -745,11 +774,70 @@ public sealed class ZipDeploymentService
             // Once the rename has been made, not before, so no connection can arrive in between and
             // stay (see RealtimeRegistry.DisconnectSite).
             _realtime.DisconnectSite(domain);
+            if (answeredBy is not null) DisconnectStrays(answeredBy);
 
             await _audit.WriteAsync("site.rename", actor, new { from = domain, to });
             _logger.LogInformation("Moved site {From} to {To}", domain, to);
 
             return (true, null, to);
+        }
+        finally
+        {
+            _deployGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The site whose wildcard answers <paramref name="name"/>, which has no site of its own yet; null
+    /// when there is none. Once a site has been made at the name, or another site has taken it as an
+    /// exact other domain, <see cref="DisconnectStrays"/> closes the pages connected to it there.
+    /// </summary>
+    private string? WildcardAnswering(string name) =>
+        !_sites.Exists(name) && _sites.AliasOwner(name) is { Wildcard: true } owner ? owner.Domain : null;
+
+    /// <summary>
+    /// Closes the realtime connections to <paramref name="domain"/> made at a name that no longer
+    /// reaches it (see <see cref="RealtimeRegistry.DisconnectAt"/>). Its pages at its other names stay
+    /// connected; those closed connect again when they are reloaded, to whatever answers there now.
+    /// </summary>
+    private void DisconnectStrays(string domain) =>
+        _realtime.DisconnectAt(domain, name => !string.Equals(_sites.Resolve(name)?.Domain, domain, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Replaces a site's other domains (<see cref="SiteRecord.Aliases"/>). Under the deploy gate, as
+    /// creating and renaming a site are, so no two of them can take the same name at once. Saving the
+    /// site brings its certificates and DNS records along (<see cref="SiteStore.Changed"/>). Returns
+    /// every reason the list cannot be used. Administrators only; the caller checks.
+    /// </summary>
+    /// <param name="managementHost">The name the management app is being used at, for <see cref="SiteAliases.Check"/>.</param>
+    public async Task<(bool Ok, IReadOnlyList<string> Errors, IReadOnlyList<string> Aliases)> SetAliasesAsync(
+        string domain, IEnumerable<string?>? aliases, string actor, string? managementHost)
+    {
+        await _deployGate.WaitAsync();
+        try
+        {
+            if (_sites.TryGet(domain) is not { } site) return (false, [$"No site is published at '{domain}'."], []);
+
+            var (wanted, errors) = SiteAliases.Check(site, aliases ?? [], _sites, _options, managementHost);
+            if (errors.Count > 0) return (false, errors, site.Aliases);
+
+            var before = site.Aliases;
+            if (before.SequenceEqual(wanted)) return (true, [], before);
+
+            // An exact name taken from under another site's wildcard.
+            var answeredBy = wanted.Except(before).Where(alias => !SiteAliases.IsWildcard(alias))
+                .Select(WildcardAnswering).OfType<string>().Where(owner => owner != site.Domain).Distinct().ToList();
+
+            site.Aliases = wanted;
+            await _sites.SaveAsync(site);
+
+            // A page connected at a name a site no longer answers is closed, once the change is made.
+            if (before.Except(wanted).Any()) DisconnectStrays(site.Domain);
+            foreach (var owner in answeredBy) DisconnectStrays(owner);
+
+            await _audit.WriteAsync("site.aliases", actor, new { domain = site.Domain, before, after = wanted });
+            _logger.LogInformation("Set the other domains of {Domain}: {Aliases}", site.Domain, string.Join(", ", wanted));
+            return (true, [], wanted);
         }
         finally
         {

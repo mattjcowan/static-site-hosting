@@ -10,6 +10,15 @@ namespace StaticSiteHost.Models;
 public sealed class SiteRecord
 {
     public string Domain { get; set; } = "";
+
+    /// <summary>
+    /// The site's other domains: more names it answers at, each a domain or <c>*.</c> and a domain
+    /// (every name one level under it). Every name gets the whole site; <see cref="Domain"/> stays
+    /// its identity. Administrators only: a deploy never brings any, and they move with a rename.
+    /// Replaced as a whole on every change. See <see cref="Services.SiteAliases"/>.
+    /// </summary>
+    public List<string> Aliases { get; set; } = [];
+
     public string? CurrentRelease { get; set; }
     public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedUtc { get; set; }

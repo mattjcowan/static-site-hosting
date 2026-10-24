@@ -24,6 +24,12 @@ namespace StaticSiteHost.Serving;
 /// that was unlocked with the old one. The cookie carries no Domain attribute, which
 /// makes it host-only: unlocking one private site never unlocks another.
 ///
+/// At a name under one of the site's wildcards (<see cref="SiteRecord.Aliases"/>), a second
+/// cookie with the same value goes on the domain the wildcard sits on, so one unlock covers
+/// every name the wildcard answers. It is named for the site, so it never shadows another
+/// site's cookie under that domain, and its value is good for this site alone. The host-only
+/// cookie is set as well, for a browser that will not take a cookie on that domain.
+///
 /// This is a visibility gate, not a vault. It keeps a link that leaks out of being
 /// readable by whoever finds it; it is not a substitute for accounts on content that
 /// would be damaging to disclose.
@@ -111,7 +117,12 @@ public sealed class SitePasscodeGate
     {
         if (!site.IsPasscodeProtected) return true;
 
-        var cookie = context.Request.Cookies[CookieName];
+        var cookies = context.Request.Cookies;
+        return Accepts(site, cookies[CookieName]) || Accepts(site, cookies[SharedCookieName(site)]);
+    }
+
+    private bool Accepts(SiteRecord site, string? cookie)
+    {
         if (string.IsNullOrEmpty(cookie)) return false;
 
         try
@@ -170,18 +181,41 @@ public sealed class SitePasscodeGate
         _throttle.Reset(throttleKey, address);
 
         var lifetime = SessionLifetime;
-        context.Response.Cookies.Append(CookieName, Protector(site.Domain).Protect(Stamp(site), lifetime), new CookieOptions
-        {
-            HttpOnly = true,
-            IsEssential = true,
-            SameSite = SameSiteMode.Lax,
-            Secure = request.IsHttps,
-            Path = "/",
-            MaxAge = lifetime
-        });
+        var token = Protector(site.Domain).Protect(Stamp(site), lifetime);
+        context.Response.Cookies.Append(CookieName, token, SessionCookie(request, lifetime, null));
+
+        if (SharedDomain(site, SiteHostingMiddleware.HostOf(context)) is { } shared)
+            context.Response.Cookies.Append(SharedCookieName(site), token, SessionCookie(request, lifetime, shared));
 
         context.Response.Redirect(returnUrl);
     }
+
+    private static CookieOptions SessionCookie(HttpRequest request, TimeSpan lifetime, string? domain) => new()
+    {
+        HttpOnly = true,
+        IsEssential = true,
+        SameSite = SameSiteMode.Lax,
+        Secure = request.IsHttps,
+        Path = "/",
+        MaxAge = lifetime,
+        Domain = domain
+    };
+
+    /// <summary>
+    /// The domain the shared cookie goes on when a visitor unlocks at <paramref name="name"/>: the one
+    /// a wildcard of the site's sits on (<c>app.example.com</c> for <c>*.app.example.com</c>), when the
+    /// name is that domain or under it, the widest when there are several. Null when there is none.
+    /// </summary>
+    internal static string? SharedDomain(SiteRecord site, string name) =>
+        site.Aliases
+            .Where(SiteAliases.IsWildcard)
+            .Select(alias => alias[2..])
+            .Where(parent => name.Equals(parent, StringComparison.OrdinalIgnoreCase) ||
+                             name.EndsWith("." + parent, StringComparison.OrdinalIgnoreCase))
+            .MinBy(parent => parent.Length);
+
+    /// <summary>The shared cookie's name. It starts with <c>ssh.</c>, so proxy routes never pass it on.</summary>
+    internal static string SharedCookieName(SiteRecord site) => $"{CookieName}.{site.Domain}";
 
     // ---- administration -----------------------------------------------------
 
@@ -289,6 +323,9 @@ public sealed class SitePasscodeGate
         response.Headers["X-Robots-Tag"] = "noindex, nofollow";
         response.Headers["Referrer-Policy"] = "no-referrer";
 
+        // The name the visitor is at, which for one of the site's other domains is not its domain.
+        var name = SiteHostingMiddleware.HostOf(context);
+
         var alert = error is null
             ? ""
             : $"""<p class="error" role="alert">{WebUtility.HtmlEncode(error)}</p>""";
@@ -300,7 +337,7 @@ public sealed class SitePasscodeGate
                 <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
               <h1>{{Encoded("visitor.passcode.title")}}</h1>
-              <p>{{WebUtility.HtmlEncode(site.Domain)}}</p>
+              <p>{{WebUtility.HtmlEncode(name)}}</p>
               <p>{{Encoded("visitor.passcode.hint")}}</p>
             </div>
             <form method="post" action="{{UnlockPath}}">
@@ -313,7 +350,7 @@ public sealed class SitePasscodeGate
             </form>
             """;
 
-        await VisitorPage.WriteAsync(context, statusCode, _strings.Text("visitor.passcode.pageTitle", new { domain = site.Domain }), body);
+        await VisitorPage.WriteAsync(context, statusCode, _strings.Text("visitor.passcode.pageTitle", new { domain = name }), body);
     }
 
     /// <summary>A string in the visitor's language, encoded for HTML.</summary>

@@ -35,10 +35,15 @@ public sealed record HostCertificateStatus(
 {
     /// <summary>When the served certificate is renewed, for one this server renews (Let's Encrypt, self-signed).</summary>
     public DateTimeOffset? RenewsAt { get; init; }
+
+    /// <summary>For one of a site's other domains, the site's domain; null otherwise.</summary>
+    public string? AliasOf { get; init; }
 }
 
 /// <summary>
-/// HTTPS for every host the server answers: each site's domain and each management host. Decides
+/// HTTPS for every host the server answers: each site's domain and exact other domains, and each
+/// management host. A name under a site's wildcard other domain gets no certificate of its own: it is
+/// served the shared certificate that covers it (<see cref="UnderWildcard"/>). Decides
 /// which certificate each serves (see <see cref="Effective"/>), keeps them in memory for the TLS
 /// handshake (<see cref="Select"/>), and in the background issues and renews the ones that come
 /// from Let's Encrypt or are self-signed. It runs only when SiteHosting:Tls:Enabled is on.
@@ -124,27 +129,67 @@ public sealed class CertificateManager : BackgroundService
         var host = string.IsNullOrEmpty(serverName)
             ? (localAddress is { IsIPv4MappedToIPv6: true } ? localAddress.MapToIPv4() : localAddress)?.ToString()
             : serverName.TrimEnd('.').ToLowerInvariant();
-        return host is not null && _served.TryGetValue(host, out var served) ? served.Certificate.Context : _fallback.Value.Context;
+        if (host is null) return _fallback.Value.Context;
+        if (_served.TryGetValue(host, out var served)) return served.Certificate.Context;
+        return UnderWildcard(host)?.Context ?? _fallback.Value.Context;
     }
 
-    /// <summary>Whether the host has a certificate of its own to serve, so sending HTTP visitors to HTTPS works.</summary>
-    public bool Serves(string host) => _served.ContainsKey(host);
+    /// <summary>Whether the host has a certificate to serve, so sending HTTP visitors to HTTPS works.</summary>
+    public bool Serves(string host) => _served.ContainsKey(host) || UnderWildcard(host) is not null;
+
+    /// <summary>
+    /// For a name that reaches a site only through one of its wildcard other domains, the shared
+    /// certificate that covers it, unless the site has no HTTPS. Such names get no certificate of
+    /// their own: any name a visitor tried would mean another one to get.
+    /// </summary>
+    private ServedCertificate? UnderWildcard(string host) =>
+        _sites.TryGet(host) is null &&
+        _sites.AliasOwner(host) is { Wildcard: true } owner &&
+        _sites.TryGet(owner.Domain) is { } site &&
+        (site.Tls?.Source ?? CertificateSources.Automatic) != CertificateSources.None
+            ? SharedFor(host)
+            : null;
+
+    /// <summary>The shared certificate that covers a name, such as every name under a wildcard other domain (<c>*.app.example.com</c>), if one does.</summary>
+    public ServedCertificate? SharedCovering(string name) => SharedFor(name);
 
     // ---------------------------------------------------------------- what each host gets
 
-    /// <summary>The hosts the server answers, with what each asks for: management hosts, then sites.</summary>
-    private Dictionary<string, (string Wanted, bool IsSite)> Desired()
+    /// <summary>
+    /// The hosts the server answers, with what each asks for: management hosts, then sites, then
+    /// sites' exact other domains, each with the site's domain. An other domain asks for what its
+    /// site does (<see cref="ForAliases"/>). Wildcard other domains are not hosts here (see
+    /// <see cref="UnderWildcard"/>).
+    /// </summary>
+    /// <summary>
+    /// Where a site's exact other domain gets its certificate, given the site's source: the same, except
+    /// that an uploaded certificate is for the site's domain alone, and a shared one may not cover the
+    /// other domain. Those become automatic, which still takes a shared certificate that covers it.
+    /// </summary>
+    private static string ForAliases(string source) =>
+        source is CertificateSources.Uploaded or CertificateSources.Shared ? CertificateSources.Automatic : source;
+
+    private Dictionary<string, (string Wanted, bool IsSite, string? AliasOf)> Desired()
     {
-        var hosts = new Dictionary<string, (string, bool)>(StringComparer.OrdinalIgnoreCase);
+        var hosts = new Dictionary<string, (string, bool, string?)>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in _options.ManagementHosts.Where(h => !string.IsNullOrWhiteSpace(h)))
         {
             var host = name.Trim().TrimEnd('.').ToLowerInvariant();
-            if (CertificateStore.IsHostName(host)) hosts[host] = (CertificateSources.Automatic, false);
+            if (CertificateStore.IsHostName(host)) hosts[host] = (CertificateSources.Automatic, false, null);
             else if (_skippedHosts.TryAdd(host, 0))
                 _logger.LogWarning("No certificate for the management host '{Host}': it is not a plain host name (a name or an IPv4 address)", host);
         }
-        foreach (var site in _sites.List())
-            hosts[site.Domain] = (site.Tls?.Source ?? CertificateSources.Automatic, true);
+
+        var sites = _sites.List();
+        foreach (var site in sites)
+            hosts[site.Domain] = (site.Tls?.Source ?? CertificateSources.Automatic, true, null);
+        foreach (var site in sites)
+        {
+            var wanted = ForAliases(site.Tls?.Source ?? CertificateSources.Automatic);
+            foreach (var alias in site.Aliases.Where(a => !SiteAliases.IsWildcard(a)))
+                hosts.TryAdd(alias, (wanted, true, site.Domain));
+        }
+
         return hosts;
     }
 
@@ -198,7 +243,7 @@ public sealed class CertificateManager : BackgroundService
     // ---------------------------------------------------------------- what the pages show
 
     public IReadOnlyList<HostCertificateStatus> Status() =>
-        Desired().Select(pair => StatusOf(pair.Key, pair.Value.Wanted, pair.Value.IsSite))
+        Desired().Select(pair => StatusOf(pair.Key, pair.Value.Wanted, pair.Value.IsSite) with { AliasOf = pair.Value.AliasOf })
             .OrderBy(s => s.IsSite).ThenBy(s => s.Host, StringComparer.Ordinal)
             .ToList();
 
@@ -206,7 +251,7 @@ public sealed class CertificateManager : BackgroundService
     {
         var desired = Desired();
         return desired.TryGetValue(host, out var wanted)
-            ? StatusOf(host, wanted.Wanted, wanted.IsSite)
+            ? StatusOf(host, wanted.Wanted, wanted.IsSite) with { AliasOf = wanted.AliasOf }
             : StatusOf(host, CertificateSources.None, isSite: true);
     }
 
@@ -399,8 +444,13 @@ public sealed class CertificateManager : BackgroundService
         await _sites.SaveAsync(site);
         await _audit.WriteAsync("tls.settings", actor, new { domain = site.Domain, settings.Source, settings.RedirectToHttps, settings.Hsts });
 
-        // What can change at once does; a certificate to get waits for the background loop.
-        if (Enabled) Apply(site.Domain, settings.Source, forced: false);
+        // What can change at once does, for the site's other domains too; a certificate to get waits
+        // for the background loop.
+        if (Enabled)
+        {
+            Apply(site.Domain, settings.Source, forced: false);
+            foreach (var alias in site.Aliases.Where(a => !SiteAliases.IsWildcard(a))) Apply(alias, ForAliases(settings.Source), forced: false);
+        }
         Nudge();
         return null;
     }
@@ -466,7 +516,7 @@ public sealed class CertificateManager : BackgroundService
 
         // Each host on its own: one that fails never stops the others.
         var toIssue = new List<(string Host, string Source)>();
-        foreach (var (host, (wanted, _)) in desired)
+        foreach (var (host, (wanted, _, _)) in desired)
         {
             try
             {
@@ -560,7 +610,7 @@ public sealed class CertificateManager : BackgroundService
     private void ApplyAll()
     {
         if (!Enabled) return;
-        foreach (var (host, (wanted, _)) in Desired()) Apply(host, wanted, forced: false);
+        foreach (var (host, (wanted, _, _)) in Desired()) Apply(host, wanted, forced: false);
         Nudge();
     }
 

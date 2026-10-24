@@ -9,6 +9,25 @@
 <div class="page-head">
     <h1>@Model.Site.Domain</h1>
     <p><a href="@url" target="_blank" rel="noopener">@url</a></p>
+    @if (Model.Site.Aliases.Count > 0)
+    {
+        <p class="muted aliases-line">
+            @L["site.aliases.headLabel"]
+            @for (var i = 0; i < Model.Site.Aliases.Count; i++)
+            {
+                var alias = Model.Site.Aliases[i];
+                var separator = i < Model.Site.Aliases.Count - 1 ? "," : "";
+                if (SiteAliases.IsWildcard(alias))
+                {
+                    <span class="mono">@alias</span>@separator
+                }
+                else
+                {
+                    <a href="@SiteLinks.For(Request, alias)" target="_blank" rel="noopener" class="mono">@alias</a>@separator
+                }
+            }
+        </p>
+    }
 </div>
 
 <nav class="tabs" aria-label="@L["site.tabs.label"]">
@@ -317,6 +336,40 @@
                     <br /><span>@L.Html("site.https.nextAttempt", new { date = next.ToLocalTime().ToString("yyyy-MM-dd HH:mm") })</span>
                 }
             </div>
+        }
+
+        @if (Model.AliasCertificates.Count > 0)
+        {
+            <h3 class="alias-certs-title">@L["site.https.aliasesTitle"]</h3>
+            <ul class="alias-certs">
+                @foreach (var alias in Model.AliasCertificates)
+                {
+                    <li>
+                        <span class="mono">@alias.Name</span>
+                        @if (alias.Served is { } aliasServed)
+                        {
+                            <span class="muted">@L.Html("site.https.served", new { source = SourceName(alias.ServedSource), issuer = aliasServed.Issuer, names = string.Join(", ", aliasServed.Names) })
+                                @L.Plural("site.https.expires", (int)Math.Floor((aliasServed.NotAfter - DateTimeOffset.UtcNow).TotalDays), new { date = aliasServed.NotAfter.ToLocalTime().ToString("yyyy-MM-dd") })</span>
+                        }
+                        else if (alias.PlainHttp)
+                        {
+                            <span class="muted">@L["site.https.plainHttp"]</span>
+                        }
+                        else if (alias.Wildcard)
+                        {
+                            <span class="validation">@L.Html("site.https.aliasNoShared", new { requestUrl = Url.Page("/Admin/Https", null, new { request = alias.Name }, null, null, "request") })</span>
+                        }
+                        else if (alias.Problem is { } aliasProblem)
+                        {
+                            <span class="validation">@aliasProblem</span>
+                        }
+                        else
+                        {
+                            <span class="muted">@L[alias.Busy ? "site.https.busy" : "site.https.noneYet"]</span>
+                        }
+                    </li>
+                }
+            </ul>
         }
     }
 
@@ -1284,6 +1337,43 @@
     {
         <partial name="_BrandingEditor" model="branding" />
     }
+
+    <details class="card section" id="aliases" data-section="aliases" open="@Sections.IsOpen(HttpContext, "aliases")">
+        <summary class="section-head"><h2>
+            @L["site.aliases.title"]
+            @if (Model.Site.Aliases.Count > 0)
+            {
+                <span class="badge">@Model.Site.Aliases.Count</span>
+            }
+        </h2></summary>
+        <p class="hint">@L.Html("site.aliases.hint", new { domain = Model.Site.Domain })</p>
+        @if (Model.AliasErrors.Count > 0)
+        {
+            <div class="alert alert-error">
+                @foreach (var aliasError in Model.AliasErrors)
+                {
+                    <div>@aliasError</div>
+                }
+            </div>
+        }
+        <form method="post" asp-page-handler="Aliases" asp-route-domain="@Model.Site.Domain">
+            <div class="field">
+                <label for="aliases-list">@L["site.aliases.field"]</label>
+                <textarea id="aliases-list" name="aliases" class="rules" rows="4" wrap="off" spellcheck="false" autocomplete="off"
+                          placeholder="www.example.com&#10;*.app.example.com">@Model.AliasesText</textarea>
+            </div>
+            <details class="rule-help aliases-help">
+                <summary>@L["site.aliases.moreTitle"]</summary>
+                <ul>
+                    <li>@L.Html("site.aliases.more.wildcard")</li>
+                    <li>@L.Html("site.aliases.more.name")</li>
+                    <li>@L.Html("site.aliases.more.own")</li>
+                    <li>@L.Html("site.aliases.more.https")</li>
+                </ul>
+            </details>
+            <button type="submit" class="btn-primary">@L["site.aliases.save"]</button>
+        </form>
+    </details>
 
     <details class="card section" data-section="rename" open="@Sections.IsOpen(HttpContext, "rename")">
         <summary class="section-head"><h2>@L["site.rename.title"]</h2></summary>

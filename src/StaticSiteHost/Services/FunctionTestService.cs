@@ -40,11 +40,17 @@ public sealed class FunctionTestService
                     : "That checked build has expired. Check the files again.");
         }
 
-        var host = domain ?? (string.IsNullOrWhiteSpace(request.Host) ? "localhost" : request.Host.Trim());
+        // A site's functions run at the host asked for when it is one of the site's names (one of its
+        // other domains, for code that reads the name), and at its domain otherwise.
+        var asked = string.IsNullOrWhiteSpace(request.Host) ? null : request.Host.Trim();
+        var askedName = SiteStore.NormalizeDomain(asked).Domain;
+        var host = domain is null
+            ? asked ?? "localhost"
+            : askedName is not null && _sites.Resolve(askedName)?.Domain == domain ? askedName : domain;
 
         // The variables a live request to that host would carry: global functions answer for
         // whichever site the host names, and for a host with no site there are none.
-        var variables = _sites.TryGet(SiteStore.NormalizeDomain(host).Domain) is { } site
+        var variables = _sites.Resolve(SiteStore.NormalizeDomain(host).Domain) is { } site
             ? _variables.Resolve(site)
             : NoVariables;
 

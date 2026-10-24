@@ -31,7 +31,7 @@ public static class SiteTabs
         ["Functions"] = "app", ["RemoveFunctionFile"] = "app", ["RemoveFunctions"] = "app",
         ["SetVariable"] = "app", ["RemoveVariable"] = "app", ["Ai"] = "app", ["RemoveAi"] = "app",
         ["Rollback"] = "releases", ["Duplicate"] = "releases",
-        ["Rename"] = "settings", ["Branding"] = "settings", ["RemoveBranding"] = "settings"
+        ["Aliases"] = "settings", ["Rename"] = "settings", ["Branding"] = "settings", ["RemoveBranding"] = "settings"
     };
 
     /// <summary>The tabs a person sees: Settings (renaming and deleting) is for administrators.</summary>

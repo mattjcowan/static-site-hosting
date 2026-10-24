@@ -139,6 +139,7 @@ zip.
 | Variables | Keep settings, keys and text outside the build | Declare them in `_variables.json` in the zip; set values under **Sites → the domain → App → Variables** or with `PUT /api/v1/sites/{domain}/variables` | Members set plain values; only administrators set secrets and `${env:…}` values | [Variables](#variables) |
 | HTTPS | End HTTPS in the server: a certificate per site from Let's Encrypt, Cloudflare, self-signed or uploaded, renewed by itself, with HTTP/2 | `SiteHosting__Tls__Enabled=true`, ports 80 and 443 published; each site's choices under **Sites → the domain → Security → HTTPS** | Administrator | [HTTPS in the server](#https-in-the-server) |
 | DNS | Each site's DNS record made, moved and deleted with it; certificates checked through DNS, wildcards included | A Cloudflare API token under **DNS** | Administrator | [DNS and Cloudflare](#dns-and-cloudflare) |
+| Other domains | Answer at more names than the site's domain, such as `www.example.com`, or `*.app.example.com` for one app at every subdomain | **Sites → the domain → Settings → Other domains**, or `PUT /api/v1/sites/{domain}/aliases` | Administrator | [Other domains](#other-domains) |
 | Passcodes | Keep a site private behind one shared passcode | **Sites → the domain → Security → Visibility**, or `PUT /api/v1/sites/{domain}/passcode` | Member or administrator | [Private sites](#private-sites) |
 | Functions | Answer requests with C# code | A `_functions/` folder in the zip, an upload on the site's **Functions** card, the browser editor, or `PUT /api/v1/sites/{domain}/functions` | Administrator | [Functions](#functions) |
 | Middleware | Run code before every request to the site, files included | A `[Middleware]` method in a function file | Administrator | [Middleware](#middleware) |
@@ -208,7 +209,7 @@ picture needs a model to talk to: it is taken only when `ANTHROPIC_API_KEY` is s
 | Host                                        | Response                                    |
 | ------------------------------------------- | ------------------------------------------- |
 | listed in `SiteHosting:ManagementHosts`      | the management UI and API                   |
-| a domain with a site published to it         | that site: its `/_host/` endpoints, functions and middleware, then its proxy routes, then its files |
+| a site's domain, or one of its [other domains](#other-domains) | that site: its `/_host/` endpoints, functions and middleware, then its proxy routes, then its files |
 | anything else                                | the management UI when no management hosts are configured, otherwise `404` |
 
 A request to `/healthz` on any host goes to the management app, which answers
@@ -225,10 +226,100 @@ port 80.
 **Changing a site's domain.** An administrator can move a site to another domain under
 **Sites → the domain → Settings → Change domain**, with `POST /api/v1/sites/{domain}/rename`, or by asking the
 [assistant](#the-assistant). The site keeps its releases, rules, passcode, variables, proxy routes,
-AI settings, functions and data folder; its functions restart under the new name. The old domain
+AI settings, functions, data folder and other domains; its functions restart under the new name.
+Renaming a site to one of its own other domains takes that name off the list. The old domain
 stops answering at once, and nothing redirects from it. Point DNS at the server first, and update
 any deploy scripts, because API calls name the domain. Visitors to a private site enter the
 passcode again, since the unlock belongs to the old domain.
+
+### Other domains
+
+**What it is.** A site can answer at more names than its domain. Each other domain is an exact
+name, such as `www.example.com`, or a wildcard, such as `*.app.example.com`, which answers every
+name one level under it. Every name gets the whole site: the same release, functions, proxy
+routes, rules, variables and passcode. The site's domain stays its identity: the API, its folder
+on disk and its limits all go by it.
+
+The use it was made for is one app at every subdomain. Deploy a single-page app to
+`app.example.com`, add `*.app.example.com`, and `abc.app.example.com`, `def.app.example.com` and
+every other name under it serve the same files. The app reads its name from
+`location.hostname`, and uses it in its API calls.
+
+**How to use it.** An administrator lists the other domains under **Sites → the domain →
+Settings → Other domains**, one per line, or sends them all with
+`PUT /api/v1/sites/{domain}/aliases`:
+
+```bash
+curl -X PUT https://deploy.example.com/api/v1/sites/app.example.com/aliases \
+  -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"aliases":["*.app.example.com","www.app.example.com"]}'
+```
+
+The list replaces the one before; an empty list removes them all. The site's page shows them under
+its name, and `GET /api/v1/sites/{domain}` returns them as `aliases`.
+
+**Which site answers a name.** A management host first. Then the site at that domain, or the site
+with it as an exact other domain. Then the site with a wildcard one level above it. So a site of
+its own, such as `admin.app.example.com`, keeps its name under another site's
+`*.app.example.com`.
+
+**Reading the name.**
+
+* **Pages:** `location.hostname`. `site.domain` in `/_host/site.js` is the site's domain.
+* **Functions:** `HttpContext.Request.Host`. `ISite.Domain` is the site's domain.
+* **A proxy route's target:** `X-Forwarded-Host`, sent by default, or `Host` with **Host header:
+  visitor's**. A proxy route at `/api` keeps an app's API calls on its own origin, so they need no
+  CORS, and the site's passcode and middleware sit in front of the API. For a sign-in that holds
+  at every name, set the route's cookies to **A parent domain…** with the domain the wildcard sits
+  on, such as `app.example.com`. The parent may be the site's domain, one of its other domains, or
+  a domain one of them belongs to.
+
+**HTTPS and DNS.** With Cloudflare connected under [DNS](#dns-and-cloudflare), each other domain
+gets a DNS record while the site has one, proxied as the site's is; a wildcard gets a `*.app`
+record. A DNS wildcard also matches names further down, such as `x.abc.app.example.com`, so those
+reach the server too, which answers them as it does any name it has no site for. With [HTTPS in the server](#https-in-the-server), an exact other domain gets a certificate
+of its own, from the same source as the site's. An uploaded certificate is for the site's domain
+only, and a shared one may not cover the other domain, so for those it gets automatic, which still
+uses a shared certificate that covers it. A wildcard gets no certificate per name. Its names are served the shared
+certificate that covers it, so get or upload one for `*.app.example.com` under **HTTPS**; until
+then, browsers warn at those names. The site's HTTPS card lists each other domain and its
+certificate. With HTTPS ended in front of the server (Caddy, Railway, a Cloudflare Tunnel), the
+proxy in front must send the names on: a wildcard site block, a wildcard domain, or the tunnel's
+wildcard route.
+
+**Rules and limits.**
+
+* A wildcard covers one level, as a wildcard certificate does: `*.app.example.com` answers
+  `abc.app.example.com`, but not `x.abc.app.example.com` and not `app.example.com` itself. Add
+  those as other domains of their own if the site should answer at them.
+* A wildcard needs a domain of two parts or more after `*.`: `*.example.com`, not `*.com`.
+* A name can belong to one site only: not another site's domain, not another site's exact other
+  domain, and not a wildcard another site has. An exact other domain may take a name from under
+  another site's wildcard.
+* Not a management host. A wildcard may cover one, since management hosts are matched first.
+* With no management hosts set, the management UI answers at any name that has no site, so an
+  other domain may not take the name you have it open at. Set `SiteHosting:ManagementHosts` first.
+* At most 50 other domains per site.
+* A new site at a name another site's wildcard answers takes it from that site, so only an
+  administrator may create one there. A site at another site's exact other domain cannot be
+  created until the name is removed from that site.
+* The MCP tools that create a missing site, `deploy_files` and `set_proxy_route`, refuse a name
+  another site answers at and name that site, so an agent asked about `abc.app.example.com`
+  changes the site that serves it. `create_site` makes a site there on purpose.
+* An API address names a site by its domain only. Another domain in its place gets a `404` that
+  says which site it belongs to.
+* The passcode is asked for once per wildcard: entered at one name it answers, or at the domain it
+  sits on, it unlocks them all (see [Private sites](#private-sites)), and any exact other domain
+  under that domain. An exact other domain elsewhere asks for it again.
+* Realtime: a page connects to the hub at its own name, and is refused from another, even another
+  name of the same site. Groups belong to the site, so pages at different names share them. A site
+  serving many tenants puts the name in its group names and checks it in `[RealtimeJoin]`.
+  Removing an other domain, or giving a name under a wildcard to another site (as its domain or as
+  an exact other domain), closes the connections made at that name; the site's pages at its other
+  names stay connected.
+* Limits (AI chat, realtime connections, passcode tries) are per site, not per name.
+* Only administrators change other domains, since each makes the server answer, and get
+  certificates and DNS records, at a name. A deploy never brings any.
 
 ### Request resolution
 
@@ -955,6 +1046,11 @@ a shared passcode.
 * A passcode is 8 to 200 characters. The minimum comes from `SiteHosting:MinPasscodeLength`.
 * Entering the passcode sets a host-only cookie. It lasts `SiteHosting:PasscodeSessionHours`
   (7 days). It works for that one domain only. Unlocking one private site never unlocks another.
+* Under a wildcard [other domain](#other-domains), one unlock covers every name it answers. A
+  visitor who enters the passcode at `abc.app.example.com`, or at `app.example.com` itself, with
+  `*.app.example.com` set, also gets a cookie on `app.example.com`, named for the site
+  (`ssh.pass.{domain}`). The browser sends it to every name under `app.example.com`, including
+  other sites and servers elsewhere. Only this site accepts it, and proxy routes never pass it on.
 * Replacing or removing the passcode makes every cookie issued for the old one invalid.
 * The server slows down failed attempts per domain and client address, with a growing delay, and
   locks out an address after eight misses. Visitors who are already in are not affected.
@@ -2531,6 +2627,7 @@ send (it drops a scheme, a path and a port) and uses it in lowercase.
 | `DELETE` | `/api/v1/sites/{domain}/ai`                 | remove them, so the site has no AI; administrators only |
 | `GET`    | `/api/v1/ai/providers`                      | the AI providers, without their keys; administrators only |
 | `POST`   | `/api/v1/sites/{domain}/rename`             | `{"domain":"…"}` — move to a new domain; administrators only |
+| `PUT`    | `/api/v1/sites/{domain}/aliases`            | `{"aliases":["www.example.com","*.app.example.com"]}` — replace the site's [other domains](#other-domains); `[]` removes them; administrators only |
 | `GET`    | `/api/v1/sites/{domain}/functions`          | the live functions, their routes, middleware, jobs and hooks, and whether they are loaded |
 | `GET`    | `/api/v1/sites/{domain}/functions/source`   | download the source as uploaded |
 | `PUT`    | `/api/v1/sites/{domain}/functions`          | upload `.cs`/`.linq` files; administrators only |
@@ -2773,7 +2870,7 @@ log entries.
 | Area | Tools |
 | ---- | ----- |
 | You and the server | `who_am_i`, `read_docs` (this manual, section by section), `read_audit_log` |
-| Sites | `list_sites`, `get_site`, `create_site`, `deploy_files`, `duplicate_release`, `rollback_site`, `rename_site`, `delete_site` |
+| Sites | `list_sites`, `get_site`, `create_site`, `deploy_files`, `duplicate_release`, `rollback_site`, `rename_site`, `set_site_aliases`, `delete_site` |
 | Files | `list_site_files`, `read_site_file`, `edit_site_file`, `write_site_files`, `delete_site_files` |
 | Visibility and rules | `set_passcode`, `remove_passcode`, `get_rules`, `set_header_rules`, `set_redirect_rules` |
 | Variables | `get_variables`, `set_variable`, `remove_variable` |
@@ -2988,7 +3085,9 @@ Back up `/data`, and you have backed up everything.
 ## HTTPS in the server
 
 **What it is.** The server ends HTTPS itself, so it needs nothing in front of it on a VPS: every
-site and management host gets a certificate, from Let's Encrypt by default, renewed by itself.
+site, each exact [other domain](#other-domains) and every management host gets a certificate, from
+Let's Encrypt by default, renewed by itself. A wildcard other domain's names are served the shared
+certificate that covers the wildcard.
 Each connection gets the certificate for the host it names. Browsers get HTTP/2, and gRPC works
 end to end through [proxy routes](#proxy-routes) (see [gRPC and gRPC-Web](#grpc-and-grpc-web)). It is off by default:
 behind Caddy, nginx, Railway or a [Cloudflare Tunnel](#cloudflare-tunnel), which end HTTPS
@@ -3074,7 +3173,8 @@ host keeps serving the certificate it had, or a stand-in self-signed one.
 **What it is.** Connect Cloudflare with an API token, and this server:
 
 * gives each site a DNS record pointing at it, made when the site is created, moved when it is
-  renamed and deleted with it;
+  renamed and deleted with it, and gives each of its [other domains](#other-domains) one too,
+  wildcards included, for as long as the site has its own;
 * gets Let's Encrypt certificates checked through DNS (DNS-01) for names in Cloudflare's zones,
   wildcards included, with nothing reaching port 80;
 * makes Cloudflare Origin certificates, for sites Cloudflare proxies.
@@ -3410,7 +3510,8 @@ the Actions tab for a version that is already tagged, for example after a push t
 
 | Term | Meaning |
 | ---- | ------- |
-| **site** | Everything published at one domain: its releases, rules, variables, passcode, proxy routes, functions, data folder and AI settings. |
+| **site** | Everything published at one domain, and at its other domains: its releases, rules, variables, passcode, proxy routes, functions, data folder and AI settings. |
+| **other domain** | Another name a site answers at, besides its domain: an exact one, or a wildcard such as `*.app.example.com` for every name one level under it. Called `aliases` in the API. |
 | **release** | One uploaded zip, unpacked into its own directory, or a copy of another release. Its files can be changed where they are. One release is live at a time. |
 | **functions** | A site's C# code (`.cs` and `.linq` files), compiled by the server. **Global functions** answer on every site. |
 | **handler** | A `public static` method in the functions with a route attribute, such as `[HttpGet("/path")]`. It answers requests. |

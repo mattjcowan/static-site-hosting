@@ -42,7 +42,10 @@ public static class RealtimeRequestCheck
     /// <summary>Why the request is refused, as a sentence for its JSON body; null when it may go on to the hub.</summary>
     /// <param name="headers">The request's headers.</param>
     /// <param name="isWebSocket">Whether it asks to become a WebSocket.</param>
-    /// <param name="domain">The site the request is for.</param>
+    /// <param name="domain">
+    /// The name the request was made to: the site's domain, or one of its other domains. A page
+    /// connects at its own name only, so a page at another of the same site's names is refused too.
+    /// </param>
     public static string? Refusal(IHeaderDictionary headers, bool isWebSocket, string domain)
     {
         var site = headers["Sec-Fetch-Site"];

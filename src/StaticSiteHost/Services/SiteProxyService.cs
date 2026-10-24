@@ -228,7 +228,7 @@ public sealed class SiteProxyService
 
     private async Task<(bool Ok, IReadOnlyList<string> Errors)> SaveAsync(SiteRecord site, List<ProxyRoute> routes, string actor)
     {
-        var errors = ProxyRouteRules.Validate(site.Domain, routes);
+        var errors = ProxyRouteRules.Validate(site.Domain, routes, site.Aliases);
         if (errors.Count > 0) return (false, errors);
 
         // A new list, never the old one edited, so SiteProxy compiles it afresh (see SiteRecord.Proxy).

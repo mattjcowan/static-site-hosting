@@ -21,5 +21,7 @@
   "sites.badge.routes.one": "{count} proxy route",
   "sites.badge.routes.other": "{count} proxy routes",
   "sites.badge.routesTitle": "Paths forwarded to other servers",
+  "sites.badge.aliases.one": "{count} other domain",
+  "sites.badge.aliases.other": "{count} other domains",
   "sites.manage": "Manage"
 }

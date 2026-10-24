@@ -21,5 +21,7 @@
   "sites.badge.routes.one": "{count} ruta de proxy",
   "sites.badge.routes.other": "{count} rutas de proxy",
   "sites.badge.routesTitle": "Rutas reenviadas a otros servidores",
+  "sites.badge.aliases.one": "{count} dominio adicional",
+  "sites.badge.aliases.other": "{count} dominios adicionales",
   "sites.manage": "Administrar"
 }

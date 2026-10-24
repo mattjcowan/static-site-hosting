@@ -192,7 +192,7 @@ public static class FunctionEndpoints
 
         return sites.TryGet(normalized) is { } site
             ? await action(site)
-            : Results.NotFound(new { error = $"No site is published at '{normalized}'." });
+            : Results.NotFound(new { error = ApiEndpoints.NoSite(normalized, sites) });
     }
 
     private static IResult SourceResult(FunctionSourceDownload? download) =>

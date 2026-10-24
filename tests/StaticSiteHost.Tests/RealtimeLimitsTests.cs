@@ -38,15 +38,15 @@ public class RealtimeLimitsTests
     {
         var registry = Registry(perAddress: 2);
 
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a1"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a1"), null, "10.0.0.1", Site));
         Assert.False(registry.IsAddressFull(Site, "10.0.0.1"));
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a2"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a2"), null, "10.0.0.1", Site));
         Assert.True(registry.IsAddressFull(Site, "10.0.0.1"));
-        Assert.Equal(RealtimeRegistry.AddResult.AddressFull, registry.TryAdd(Site, new Caller("a3"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.AddressFull, registry.TryAdd(Site, new Caller("a3"), null, "10.0.0.1", Site));
 
         // Another address, and the same address on another site, are counted apart.
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("b1"), null, "10.0.0.2"));
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd("other.example.com", new Caller("c1"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("b1"), null, "10.0.0.2", Site));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd("other.example.com", new Caller("c1"), null, "10.0.0.1", "other.example.com"));
 
         Assert.Equal(2, registry.ConnectionsFrom(Site, "10.0.0.1"));
         Assert.Equal(3, registry.ConnectionCount(Site));
@@ -58,30 +58,49 @@ public class RealtimeLimitsTests
         var registry = Registry(perAddress: 1);
         var first = new Caller("a1");
 
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, first, null, "10.0.0.1"));
-        Assert.Equal(RealtimeRegistry.AddResult.AddressFull, registry.TryAdd(Site, new Caller("a2"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, first, null, "10.0.0.1", Site));
+        Assert.Equal(RealtimeRegistry.AddResult.AddressFull, registry.TryAdd(Site, new Caller("a2"), null, "10.0.0.1", Site));
 
         Assert.True(registry.Remove(Site, "a1"));
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a3"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a3"), null, "10.0.0.1", Site));
 
         Assert.True(registry.Abort(Site, "a3"));
         Assert.Equal(0, registry.ConnectionsFrom(Site, "10.0.0.1"));
-        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a4"), null, "10.0.0.1"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, registry.TryAdd(Site, new Caller("a4"), null, "10.0.0.1", Site));
 
         Assert.Equal(1, registry.DisconnectSite(Site));
         Assert.Equal(0, registry.ConnectionsFrom(Site, "10.0.0.1"));
     }
 
     [Fact]
+    public void Closing_a_sites_connections_at_one_name_leaves_those_at_its_others()
+    {
+        var registry = Registry();
+        Caller atDomain = new("a1"), atAbc = new("a2"), atDef = new("a3");
+        registry.TryAdd(Site, atDomain, null, "10.0.0.1", Site);
+        registry.TryAdd(Site, atAbc, null, "10.0.0.1", "abc.blog.example.com");
+        registry.TryAdd(Site, atDef, null, "10.0.0.2", "def.blog.example.com");
+
+        Assert.Equal(1, registry.DisconnectAt(Site, name => name == "abc.blog.example.com"));
+        Assert.True(atAbc.Aborted);
+        Assert.False(atDomain.Aborted);
+        Assert.False(atDef.Aborted);
+        Assert.Equal(2, registry.ConnectionCount(Site));
+        Assert.Equal(1, registry.ConnectionsFrom(Site, "10.0.0.1"));
+
+        Assert.Equal(0, registry.DisconnectAt("other.example.com", _ => true));
+    }
+
+    [Fact]
     public void A_full_site_is_full_whoever_asks_and_zero_sets_no_address_limit()
     {
         var full = Registry(perSite: 1, perAddress: 5);
-        Assert.Equal(RealtimeRegistry.AddResult.Added, full.TryAdd(Site, new Caller("a1"), null, "10.0.0.1"));
-        Assert.Equal(RealtimeRegistry.AddResult.SiteFull, full.TryAdd(Site, new Caller("b1"), null, "10.0.0.2"));
+        Assert.Equal(RealtimeRegistry.AddResult.Added, full.TryAdd(Site, new Caller("a1"), null, "10.0.0.1", Site));
+        Assert.Equal(RealtimeRegistry.AddResult.SiteFull, full.TryAdd(Site, new Caller("b1"), null, "10.0.0.2", Site));
 
         var open = Registry(perAddress: 0);
         for (var i = 0; i < 50; i++)
-            Assert.Equal(RealtimeRegistry.AddResult.Added, open.TryAdd(Site, new Caller($"a{i}"), null, "10.0.0.1"));
+            Assert.Equal(RealtimeRegistry.AddResult.Added, open.TryAdd(Site, new Caller($"a{i}"), null, "10.0.0.1", Site));
         Assert.False(open.IsAddressFull(Site, "10.0.0.1"));
     }
 

@@ -50,7 +50,7 @@ public static class ApiEndpoints
 
             var site = sites.TryGet(normalized);
             return site is null
-                ? Results.NotFound(new { error = $"No site is published at '{normalized}'." })
+                ? Results.NotFound(new { error = NoSite(normalized, sites) })
                 : Results.Ok(Describe(site, variables, ai, realtime));
         });
 
@@ -63,7 +63,7 @@ public static class ApiEndpoints
             SiteAiChatFactory ai,
             RealtimeRegistry realtime) =>
         {
-            var (ok, error, created, alreadyExists) = await deployer.CreateAsync(domain, Actor(principal));
+            var (ok, error, created, alreadyExists) = await deployer.CreateAsync(domain, Actor(principal), principal.IsInRole(Roles.Administrator));
             if (!ok) return alreadyExists ? Results.Conflict(new { error }) : Results.BadRequest(new { error });
 
             return Results.Created($"/api/v1/sites/{created}", Describe(sites.TryGet(created)!, variables, ai, realtime));
@@ -557,6 +557,24 @@ public static class ApiEndpoints
             Results.Ok((await providers.ListAsync()).Select(AdminEndpoints.DescribeProvider)))
             .RequireAuthorization(Policies.ApiAdministrator);
 
+        // A site's other domains: replaced as a whole, like its proxy routes.
+        api.MapPut("/sites/{domain}/aliases", async (
+            string domain,
+            AliasesRequest? body,
+            ClaimsPrincipal principal,
+            SiteStore sites,
+            ZipDeploymentService deployer,
+            HttpContext http) =>
+        {
+            var (site, failure) = Find(domain, sites);
+            if (site is null) return failure!;
+
+            var (ok, errors, aliases) = await deployer.SetAliasesAsync(site.Domain, body?.Aliases, Actor(principal), http.Request.Host.Host);
+            return ok
+                ? Results.Ok(new { ok = true, domain = site.Domain, aliases })
+                : Results.BadRequest(new { error = errors[0], errors });
+        }).RequireAuthorization(Policies.ApiAdministrator);
+
         api.MapPost("/sites/{domain}/rename", async (
             string domain,
             RenameRequest? body,
@@ -573,14 +591,14 @@ public static class ApiEndpoints
                 : Results.BadRequest(new { error = failure });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
-        api.MapDelete("/sites/{domain}", async (string domain, ClaimsPrincipal principal, ZipDeploymentService deployer) =>
+        api.MapDelete("/sites/{domain}", async (string domain, ClaimsPrincipal principal, ZipDeploymentService deployer, SiteStore sites) =>
         {
             var (normalized, error) = SiteStore.NormalizeDomain(domain);
             if (normalized is null) return Results.BadRequest(new { error });
 
             return await deployer.DeleteAsync(normalized, Actor(principal))
                 ? Results.Ok(new { ok = true, domain = normalized })
-                : Results.NotFound(new { error = $"No site is published at '{normalized}'." });
+                : Results.NotFound(new { error = NoSite(normalized, sites) });
         }).RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapFunctionEndpoints();
@@ -619,7 +637,7 @@ public static class ApiEndpoints
         }
 
         var result = await deployer.DeployAsync(domain, archive, archiveName, Actor(principal), "api",
-            canDeployFunctions: principal.IsInRole(Roles.Administrator), ct);
+            canDeployFunctions: principal.IsInRole(Roles.Administrator), administrator: principal.IsInRole(Roles.Administrator), ct);
         if (!result.Ok) return Results.BadRequest(new { error = result.Error, diagnostics = result.Diagnostics });
 
         return Results.Ok(new
@@ -745,13 +763,30 @@ public static class ApiEndpoints
 
         var site = sites.TryGet(normalized);
         return site is null
-            ? (null, Results.NotFound(new { error = $"No site is published at '{normalized}'." }))
+            ? (null, Results.NotFound(new { error = NoSite(normalized, sites) }))
             : (site, null);
+    }
+
+    /// <summary>
+    /// Why no site is at a domain in an address. Addresses name a site by its domain only, never by
+    /// one of its other domains, so a script never acts on a site it did not name; this says which
+    /// site such a name belongs to.
+    /// </summary>
+    internal static string NoSite(string domain, SiteStore sites)
+    {
+        if (SiteAliases.Normalize(domain).Alias is { } wildcard && SiteAliases.IsWildcard(wildcard) && sites.AliasOwner(wildcard) is { } wildcardOwner)
+            return $"No site is published at '{wildcard}'. It is another domain of {wildcardOwner.Domain}: use {wildcardOwner.Domain} to manage that site.";
+
+        var name = SiteStore.NormalizeDomain(domain).Domain ?? domain;
+        return sites.Resolve(name) is { } owner
+            ? $"No site is published at '{name}'. It is another domain of {owner.Domain}: use {owner.Domain} to manage that site."
+            : $"No site is published at '{name}'.";
     }
 
     internal static object Describe(SiteRecord site, SiteVariableService variables, SiteAiChatFactory ai, RealtimeRegistry realtime) => new
     {
         domain = site.Domain,
+        aliases = site.Aliases,
         currentRelease = site.CurrentRelease,
         createdUtc = site.CreatedUtc,
         updatedUtc = site.UpdatedUtc,
@@ -872,6 +907,9 @@ public static class ApiEndpoints
         return keyId is null ? name : $"{name} (key {keyId})";
     }
 }
+
+/// <summary>Body of PUT /api/v1/sites/{domain}/aliases: every other domain the site is to have.</summary>
+public sealed record AliasesRequest(List<string?>? Aliases);
 
 /// <summary>Body of POST /api/v1/sites/{domain}/rename.</summary>
 public sealed record RenameRequest(string? Domain);

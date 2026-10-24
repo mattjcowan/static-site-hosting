@@ -26,6 +26,7 @@
   "https.hosts.certificate": "Certificate",
   "https.hosts.status": "Status",
   "https.hosts.management": "management",
+  "https.hosts.aliasOf": "other domain of {domain}",
   "https.hosts.selfSigned": "self-signed",
   "https.hosts.expiresIn.one": "Expires {date}, in {count} day.",
   "https.hosts.expiresIn.other": "Expires {date}, in {count} days.",

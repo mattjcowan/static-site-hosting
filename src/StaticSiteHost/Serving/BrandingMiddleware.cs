@@ -85,7 +85,7 @@ public sealed class BrandingMiddleware
     private async Task StylesheetAsync(HttpContext context)
     {
         var host = context.Request.Host.Host.TrimEnd('.').ToLowerInvariant();
-        var site = _options.IsManagementHost(host) ? null : _sites.TryGet(host);
+        var site = _options.IsManagementHost(host) ? null : _sites.Resolve(host);
         var (version, css) = await _branding.StylesheetAsync(site, context.RequestAborted);
 
         var response = context.Response;

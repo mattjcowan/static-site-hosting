@@ -52,7 +52,7 @@ public static class DnsEndpoints
         api.MapPost("/sites/{domain}/dns", async (
             string domain, SiteDnsRequest? body, ClaimsPrincipal principal, DnsService dns, SiteStore sites, StringCatalog catalog, CancellationToken ct) =>
         {
-            if (Find(domain, sites) is not { } site) return Results.NotFound(new { error = $"No site is published at '{domain}'." });
+            if (Find(domain, sites) is not { } site) return Results.NotFound(new { error = ApiEndpoints.NoSite(domain, sites) });
             return await dns.AddSiteAsync(site.Domain, body?.Proxied, ApiEndpoints.Actor(principal), ct) is { } error
                 ? Results.BadRequest(new { error = error.English(catalog) })
                 : Results.Ok(Describe(dns.Status.GetValueOrDefault(site.Domain)));
@@ -61,7 +61,7 @@ public static class DnsEndpoints
         api.MapDelete("/sites/{domain}/dns", async (
             string domain, ClaimsPrincipal principal, DnsService dns, SiteStore sites, StringCatalog catalog, CancellationToken ct) =>
         {
-            if (Find(domain, sites) is not { } site) return Results.NotFound(new { error = $"No site is published at '{domain}'." });
+            if (Find(domain, sites) is not { } site) return Results.NotFound(new { error = ApiEndpoints.NoSite(domain, sites) });
             return await dns.RemoveSiteAsync(site.Domain, ApiEndpoints.Actor(principal), ct) is { } error
                 ? Results.BadRequest(new { error = error.English(catalog) })
                 : Results.Ok(new { ok = true, domain = site.Domain });
@@ -102,6 +102,7 @@ public static class DnsEndpoints
     internal static object? Describe(SiteDnsStatus? status) => status is null ? null : new
     {
         domain = status.Domain,
+        aliasOf = status.AliasOf,
         state = status.State,
         detail = status.Detail,
         zone = status.Zone,

@@ -8,6 +8,7 @@ namespace StaticSiteHost.Services;
 /// <summary>
 /// In-memory index of every hosted site, backed by one site.json per domain.
 /// Request serving reads from the index, so a page view never touches the metadata files.
+/// Requests find their site with <see cref="Resolve"/>, which knows the sites' other domains too.
 /// </summary>
 public sealed class SiteStore
 {
@@ -18,6 +19,19 @@ public sealed class SiteStore
 
     private readonly ConcurrentDictionary<string, SiteRecord> _sites = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+
+    /// <summary>
+    /// Every site's other domains, to the site's domain: exact ones by name, and wildcards by the name
+    /// they cover the level under (<c>*.app.example.com</c> as <c>app.example.com</c>). Built again
+    /// whole after every change and swapped in, so a request never sees half of one.
+    /// </summary>
+    private volatile AliasIndex _aliases = AliasIndex.Empty;
+    private readonly Lock _indexLock = new();
+
+    private sealed record AliasIndex(IReadOnlyDictionary<string, string> Exact, IReadOnlyDictionary<string, string> Wildcards)
+    {
+        public static readonly AliasIndex Empty = new(new Dictionary<string, string>(), new Dictionary<string, string>());
+    }
     private readonly DataPaths _paths;
     private readonly ILogger<SiteStore> _logger;
 
@@ -62,6 +76,7 @@ public sealed class SiteStore
             }
         }
 
+        IndexAliases();
         _logger.LogInformation("Loaded {Count} hosted site(s) from {Dir}", _sites.Count, _paths.SitesDir);
     }
 
@@ -72,6 +87,53 @@ public sealed class SiteStore
         !string.IsNullOrEmpty(domain) && _sites.TryGetValue(domain, out var site) ? site : null;
 
     public bool Exists(string domain) => _sites.ContainsKey(domain);
+
+    /// <summary>
+    /// The site a request for a host goes to: the one at that domain, else the one with it as an
+    /// other domain, else the one with a wildcard one level above it. The host is lowercase with no
+    /// trailing dot, as <see cref="Serving.SiteHostingMiddleware"/> makes it.
+    /// </summary>
+    public SiteRecord? Resolve(string? host)
+    {
+        if (string.IsNullOrEmpty(host)) return null;
+        if (_sites.TryGetValue(host, out var site)) return site;
+        return AliasOwner(host) is { } owner ? TryGet(owner.Domain) : null;
+    }
+
+    /// <summary>
+    /// The domain of the site whose other domain answers a name, sites' own domains aside, and whether
+    /// that is a wildcard: an exact one first, then a wildcard one level above the name. For a
+    /// wildcard itself (<c>*.app.example.com</c>), the site that has that same wildcard.
+    /// </summary>
+    public (string Domain, bool Wildcard)? AliasOwner(string name)
+    {
+        var aliases = _aliases;
+        if (aliases.Exact.TryGetValue(name, out var domain)) return (domain, false);
+
+        var dot = name.IndexOf('.');
+        return dot > 0 && aliases.Wildcards.TryGetValue(name[(dot + 1)..], out domain) ? (domain, true) : null;
+    }
+
+    private void IndexAliases()
+    {
+        lock (_indexLock)
+        {
+            var exact = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var wildcards = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // In domain order, so if a site.json edited by hand gives two sites the same name, the same one wins every time.
+            foreach (var site in _sites.Values.OrderBy(s => s.Domain, StringComparer.Ordinal))
+            {
+                foreach (var alias in site.Aliases)
+                {
+                    if (SiteAliases.IsWildcard(alias)) wildcards.TryAdd(alias[2..], site.Domain);
+                    else exact.TryAdd(alias, site.Domain);
+                }
+            }
+
+            _aliases = new AliasIndex(exact, wildcards);
+        }
+    }
 
     /// <summary>Absolute path of the directory currently being served for a domain, if any.</summary>
     public string? GetCurrentReleasePath(string domain)
@@ -96,6 +158,7 @@ public sealed class SiteStore
         {
             await WriteMetaAsync(site);
             _sites[site.Domain] = site;
+            IndexAliases();
         }
         finally
         {
@@ -139,6 +202,7 @@ public sealed class SiteStore
             site.Domain = to;
             _sites[to] = site;
             _sites.TryRemove(from, out _);
+            IndexAliases();
 
             // The directory name is what Load trusts, so the move above is what counts; this
             // only brings the file's copy of the domain and its timestamp up to date.
@@ -174,6 +238,7 @@ public sealed class SiteStore
     public async Task<bool> DeleteAsync(string domain)
     {
         if (!_sites.TryRemove(domain, out _)) return false;
+        IndexAliases();
         Changed?.Invoke();
 
         await _writeGate.WaitAsync();

@@ -42,7 +42,7 @@ public class IndexModel : PageModel
     /// </summary>
     public async Task<IActionResult> OnPostCreateAsync(string? domain)
     {
-        var (ok, error, created, _) = await _deployer.CreateAsync(domain, User.Identity?.Name ?? "unknown");
+        var (ok, error, created, _) = await _deployer.CreateAsync(domain, User.Identity?.Name ?? "unknown", User.IsInRole(Roles.Administrator));
         if (!ok)
         {
             TempData["ErrorMessage"] = error;

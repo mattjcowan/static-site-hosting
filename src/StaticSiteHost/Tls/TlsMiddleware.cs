@@ -10,7 +10,8 @@ namespace StaticSiteHost.Tls;
 ///   * Let's Encrypt's check, <c>/.well-known/acme-challenge/{token}</c>, answered for an order in
 ///     progress, on any host and either port, before any site, function or passcode can;
 ///   * an HTTP request for a host that has a certificate sent to HTTPS (308, so a POST stays a
-///     POST), unless its site turned that off; <c>/healthz</c> is never redirected;
+///     POST), unless its site turned that off; <c>/healthz</c> is never redirected. A site's other
+///     domains go by the site's settings, and a management host by none, even under a site's wildcard;
 ///   * <c>Strict-Transport-Security</c> on HTTPS answers for a site that turned it on.
 ///
 /// With HTTPS ended in front of the server instead (SiteHosting:TrustForwardedHeaders), the
@@ -49,7 +50,7 @@ public sealed class TlsMiddleware
         }
 
         var host = request.Host.Host.TrimEnd('.').ToLowerInvariant();
-        var site = host.Length > 0 ? _sites.TryGet(host) : null;
+        var site = host.Length > 0 && !_options.IsManagementHost(host) ? _sites.Resolve(host) : null;
 
         if (!request.IsHttps)
         {

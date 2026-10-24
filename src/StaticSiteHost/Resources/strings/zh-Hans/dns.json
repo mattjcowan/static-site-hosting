@@ -49,6 +49,7 @@
   "dns.sites.record": "记录",
   "dns.sites.state": "状态",
   "dns.sites.inZone": "区域 {zone}",
+  "dns.sites.aliasOf": "{domain} 的其他域名",
   "dns.sites.proxied": "已代理",
   "dns.sites.dnsOnly": "仅 DNS",
   "dns.sites.proxy": "通过 Cloudflare 代理",

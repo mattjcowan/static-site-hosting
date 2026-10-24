@@ -26,6 +26,7 @@
   "https.hosts.certificate": "证书",
   "https.hosts.status": "状态",
   "https.hosts.management": "管理",
+  "https.hosts.aliasOf": "{domain} 的其他域名",
   "https.hosts.selfSigned": "自签名",
   "https.hosts.expiresIn.one": "{date} 到期，还剩 {count} 天。",
   "https.hosts.expiresIn.other": "{date} 到期，还剩 {count} 天。",

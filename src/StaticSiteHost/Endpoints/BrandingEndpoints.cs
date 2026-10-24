@@ -82,19 +82,19 @@ public static class BrandingEndpoints
             .RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapGet("/sites/{domain}/branding", async (string domain, SiteStore sites, BrandingService branding, CancellationToken ct) =>
-            Find(domain, sites) is { } site ? Results.Ok(await DescribeAsync(branding, site, ct)) : NotFound(domain))
+            Find(domain, sites) is { } site ? Results.Ok(await DescribeAsync(branding, site, ct)) : NotFound(domain, sites))
             .RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapPut("/sites/{domain}/branding", async (string domain, Branding? body, ClaimsPrincipal principal, SiteStore sites, BrandingService branding, CancellationToken ct) =>
         {
-            if (Find(domain, sites) is not { } site) return NotFound(domain);
+            if (Find(domain, sites) is not { } site) return NotFound(domain, sites);
             var errors = await branding.SetSiteAsync(site, body, ApiEndpoints.Actor(principal), ct);
             return errors.Count > 0 ? Results.BadRequest(new { error = errors[0], errors }) : Results.Ok(await DescribeAsync(branding, site, ct));
         }).RequireAuthorization(Policies.ApiAdministrator);
 
         api.MapDelete("/sites/{domain}/branding", async (string domain, ClaimsPrincipal principal, SiteStore sites, BrandingService branding, CancellationToken ct) =>
         {
-            if (Find(domain, sites) is not { } site) return NotFound(domain);
+            if (Find(domain, sites) is not { } site) return NotFound(domain, sites);
             await branding.SetSiteAsync(site, null, ApiEndpoints.Actor(principal), ct);
             return Results.Ok(await DescribeAsync(branding, site, ct));
         }).RequireAuthorization(Policies.ApiAdministrator);
@@ -137,7 +137,7 @@ public static class BrandingEndpoints
     private static SiteRecord? Find(string domain, SiteStore sites) =>
         SiteStore.NormalizeDomain(domain).Domain is { } normalized ? sites.TryGet(normalized) : null;
 
-    private static IResult NotFound(string domain) => Results.NotFound(new { error = $"No site is published at '{domain}'." });
+    private static IResult NotFound(string domain, SiteStore sites) => Results.NotFound(new { error = ApiEndpoints.NoSite(domain, sites) });
 }
 
 /// <summary>Body of PUT /api/v1/branding/google-fonts.</summary>

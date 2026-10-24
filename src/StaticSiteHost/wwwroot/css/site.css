@@ -1085,6 +1085,12 @@ td.actions .validation { white-space: normal; text-align: left; max-width: 24rem
 .inline-form { display: inline; margin-left: var(--space-2); font-size: 0.8em; font-weight: 500; }
 .tls-upload summary { cursor: pointer; font-weight: 550; }
 .tls-upload form { margin-top: 0.75rem; }
+.alias-certs-title { margin: 1rem 0 0.4rem; }
+.alias-certs { margin: 0 0 1.25rem; padding: 0; list-style: none; display: grid; gap: 0.35rem; font-size: 0.9rem; }
+.alias-certs li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; overflow-wrap: anywhere; }
+.page-head .aliases-line { margin-top: 2px; font-size: 0.875rem; overflow-wrap: anywhere; }
+.page-head .aliases-line a { color: inherit; }
+.aliases-help { margin-bottom: 1rem; }
 .steps { margin: 0.75rem 0 1rem; padding-left: 1.4rem; display: grid; gap: 0.5rem; font-size: 0.925rem; }
 .steps li::marker { color: var(--muted); font-weight: 600; }
 .guide { margin-top: 0.75rem; }

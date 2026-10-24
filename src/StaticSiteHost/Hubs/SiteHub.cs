@@ -103,7 +103,7 @@ public sealed class SiteHub : Hub
         }
 
         var address = ClientAddress.Key(http.Connection.RemoteIpAddress);
-        switch (_registry.TryAdd(domain, Context, hook.User, address))
+        switch (_registry.TryAdd(domain, Context, hook.User, address, SiteHostingMiddleware.HostOf(http)))
         {
             case RealtimeRegistry.AddResult.SiteFull:
                 _logger.LogDebug(
@@ -128,7 +128,7 @@ public sealed class SiteHub : Hub
             // through. Each of those closes the domain's connections once it is done, and this
             // check comes after the registration, so whichever order the two run in, this
             // connection goes.
-            if (!IsStillServed(http, site, domain))
+            if (!IsStillServed(_sites, _passcodes, http, site))
             {
                 _logger.LogDebug("Closed realtime connection {ConnectionId}: {Domain} changed while it was being made", Context.ConnectionId, domain);
                 _registry.Remove(domain, Context.ConnectionId);
@@ -228,14 +228,13 @@ public sealed class SiteHub : Hub
 
     /// <summary>
     /// False when the site has changed under the request making this connection since it was let
-    /// in: the store no longer has this record under this domain (deleted), the record has a domain
-    /// other than the one the request came in on (renamed), or the request's passcode cookie no
-    /// longer opens it (a new passcode).
+    /// in: the name the request came in on, the site's domain or one of its other domains, no longer
+    /// reaches this record (the site was deleted or renamed, the other domain removed, or a site of
+    /// its own took the name), or the request's passcode cookie no longer opens it (a new passcode).
     /// </summary>
-    private bool IsStillServed(HttpContext http, SiteRecord site, string domain) =>
-        ReferenceEquals(_sites.TryGet(domain), site) &&
-        string.Equals(http.Request.Host.Host.TrimEnd('.'), domain, StringComparison.OrdinalIgnoreCase) &&
-        _passcodes.IsUnlocked(http, site);
+    internal static bool IsStillServed(SiteStore sites, SitePasscodeGate passcodes, HttpContext http, SiteRecord site) =>
+        ReferenceEquals(sites.Resolve(SiteHostingMiddleware.HostOf(http)), site) &&
+        passcodes.IsUnlocked(http, site);
 
     private static string? DomainOf(HubCallerContext context) =>
         context.Items.TryGetValue(DomainKey, out var domain) ? domain as string : null;

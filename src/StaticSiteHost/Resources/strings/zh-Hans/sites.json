@@ -21,5 +21,7 @@
   "sites.badge.routes.one": "{count} 条代理路由",
   "sites.badge.routes.other": "{count} 条代理路由",
   "sites.badge.routesTitle": "转发到其他服务器的路径",
+  "sites.badge.aliases.one": "{count} 个其他域名",
+  "sites.badge.aliases.other": "{count} 个其他域名",
   "sites.manage": "管理"
 }

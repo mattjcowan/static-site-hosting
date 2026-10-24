@@ -29,7 +29,7 @@ internal static class VisitorPage
         var services = context.RequestServices;
         var host = context.Request.Host.Host.TrimEnd('.').ToLowerInvariant();
         var options = services.GetRequiredService<IOptions<SiteHostingOptions>>().Value;
-        var site = options.IsManagementHost(host) ? null : services.GetRequiredService<SiteStore>().TryGet(host);
+        var site = options.IsManagementHost(host) ? null : services.GetRequiredService<SiteStore>().Resolve(host);
         var brand = await services.GetRequiredService<BrandingService>().ViewAsync(site, Brand.DefaultName, context.RequestAborted);
         var language = services.GetRequiredService<StringCatalog>().Resolve(System.Globalization.CultureInfo.CurrentUICulture).Name;
 

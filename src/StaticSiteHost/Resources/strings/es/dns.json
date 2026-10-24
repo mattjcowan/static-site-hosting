@@ -49,6 +49,7 @@
   "dns.sites.record": "Registro",
   "dns.sites.state": "Estado",
   "dns.sites.inZone": "zona {zone}",
+  "dns.sites.aliasOf": "otro dominio de {domain}",
   "dns.sites.proxied": "con proxy",
   "dns.sites.dnsOnly": "solo DNS",
   "dns.sites.proxy": "Usar el proxy de Cloudflare",

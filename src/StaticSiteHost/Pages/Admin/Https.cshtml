@@ -76,7 +76,12 @@ else
                     {
                         <tr>
                             <td>
-                                @if (host.IsSite)
+                                @if (host.AliasOf is { } aliasOf)
+                                {
+                                    <a asp-page="/Sites/Details" asp-route-domain="@aliasOf" asp-route-tab="security" asp-fragment="https" class="mono">@host.Host</a>
+                                    <span class="badge">@L.Text("https.hosts.aliasOf", new { domain = aliasOf })</span>
+                                }
+                                else if (host.IsSite)
                                 {
                                     <a asp-page="/Sites/Details" asp-route-domain="@host.Host" asp-route-tab="security" asp-fragment="https" class="mono">@host.Host</a>
                                 }
@@ -224,7 +229,7 @@ else
 
     @if (Model.Enabled)
     {
-        <details class="tls-upload" open="@(Model.RequestError is not null)">
+        <details class="tls-upload" id="request" open="@Model.RequestOpen">
             <summary>@L["https.request.title"]</summary>
             @if (!Model.CloudflareConnected)
             {

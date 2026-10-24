@@ -238,6 +238,22 @@ public class DetailsModel : PageModel
     /// <summary>Why the last HTTPS change or upload was refused, shown on the card.</summary>
     public string? TlsError { get; private set; }
 
+    /// <summary>One of the site's other domains on the HTTPS card, and the certificate it is served.</summary>
+    /// <param name="Wildcard">A wildcard, which is served the shared certificate that covers it, if one does.</param>
+    /// <param name="Problem">Why it has no certificate, for an exact one: the last failure, or what it asks for cannot be had.</param>
+    /// <param name="PlainHttp">The site has no HTTPS, so nor does this name.</param>
+    public sealed record AliasCertificate(
+        string Name, bool Wildcard, StaticSiteHost.Tls.ServedCertificate? Served, string? ServedSource, string? Problem, bool Busy, bool PlainHttp);
+
+    /// <summary>The HTTPS card's list of the site's other domains, when HTTPS is in the server.</summary>
+    public IReadOnlyList<AliasCertificate> AliasCertificates { get; private set; } = [];
+
+    /// <summary>The Other domains box: one per line, as saved, or as typed when a save was refused.</summary>
+    public string AliasesText { get; private set; } = "";
+
+    /// <summary>Why the last save of the other domains was refused.</summary>
+    public IReadOnlyList<string> AliasErrors { get; private set; } = [];
+
     public bool IsAdministrator => User.IsInRole(Roles.Administrator);
 
     /// <summary>The tab shown: the one a form's handler belongs to after a post, else the one the address names.</summary>
@@ -495,11 +511,26 @@ public class DetailsModel : PageModel
         AiSnippet = BuildAiSnippet(site.Domain);
 
         Certificate = _certificates.Enabled ? _certificates.StatusOf(site.Domain) : null;
+        AliasCertificates = _certificates.Enabled ? site.Aliases.Select(alias => AliasCertificateOf(site, alias)).ToList() : [];
+        AliasesText = string.Join("\n", site.Aliases);
 
         RealtimeConnections = _realtime.ConnectionCount(site.Domain);
         RealtimeGroups = _realtime.GroupSizes(site.Domain);
         RealtimeSnippet = BuildRealtimeSnippet();
         RealtimePublishSnippet = BuildRealtimePublishSnippet(site.Domain);
+    }
+
+    private AliasCertificate AliasCertificateOf(SiteRecord site, string alias)
+    {
+        if (SiteAliases.IsWildcard(alias))
+        {
+            var plain = (site.Tls?.Source ?? CertificateSources.Automatic) == CertificateSources.None;
+            return new AliasCertificate(alias, true, plain ? null : _certificates.SharedCovering(alias), CertificateSources.Shared, null, false, plain);
+        }
+
+        var status = _certificates.StatusOf(alias);
+        return new AliasCertificate(alias, false, status.Served, status.ServedSource, status.Problem ?? status.State.LastError, status.Busy,
+            status.Effective == CertificateSources.None);
     }
 
     private void LoadProxy(SiteRecord site)
@@ -1120,6 +1151,31 @@ public class DetailsModel : PageModel
         await _branding.SetSiteAsync(site, null, User.Identity?.Name ?? "unknown", HttpContext.RequestAborted);
         TempData["StatusMessage"] = _strings.Text("site.branding.removed", new { domain = site.Domain });
         return RedirectToPage(null, null, new { domain = site.Domain }, "branding");
+    }
+
+    /// <summary>Saves the site's other domains, typed one per line (commas and spaces separate them too).</summary>
+    public async Task<IActionResult> OnPostAliasesAsync(string domain, string? aliases)
+    {
+        if (!IsAdministrator) return Forbid();
+
+        var site = Resolve(domain);
+        if (site is null) return RedirectToPage("Index");
+
+        var names = (aliases ?? "").Split(['\r', '\n', ',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        var (ok, errors, saved) = await _deployer.SetAliasesAsync(site.Domain, names, User.Identity?.Name ?? "unknown", Request.Host.Host);
+        if (!ok)
+        {
+            // Shown again as typed, with why, rather than thrown away.
+            await LoadAsync(site);
+            AliasesText = aliases ?? "";
+            AliasErrors = errors;
+            return Page();
+        }
+
+        TempData["StatusMessage"] = saved.Count == 0
+            ? _strings.Text("site.aliases.removed", new { domain = site.Domain })
+            : _strings.Plural("site.aliases.saved", saved.Count, new { domain = site.Domain });
+        return RedirectToPage(new { domain = site.Domain });
     }
 
     public async Task<IActionResult> OnPostRenameAsync(string domain, string? newDomain)

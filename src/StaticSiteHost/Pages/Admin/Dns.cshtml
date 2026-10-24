@@ -169,9 +169,18 @@
                 <tbody>
                     @foreach (var site in Model.Sites)
                     {
+                        var aliasOf = Model.AliasOwners.GetValueOrDefault(site.Domain);
                         <tr>
                             <td>
-                                <a asp-page="/Sites/Details" asp-route-domain="@site.Domain" class="mono">@site.Domain</a>
+                                @if (aliasOf is not null)
+                                {
+                                    <a asp-page="/Sites/Details" asp-route-domain="@aliasOf" asp-route-tab="settings" asp-fragment="aliases" class="mono">@site.Domain</a>
+                                    <span class="badge">@L.Text("dns.sites.aliasOf", new { domain = aliasOf })</span>
+                                }
+                                else
+                                {
+                                    <a asp-page="/Sites/Details" asp-route-domain="@site.Domain" class="mono">@site.Domain</a>
+                                }
                                 @if (site.Zone is { } zone)
                                 {
                                     <div class="cell-sub">@L.Text("dns.sites.inZone", new { zone })</div>
@@ -228,7 +237,11 @@
                                 }
                             </td>
                             <td class="actions">
-                                @if (site.Records is { Records.Count: > 0 } current)
+                                @if (aliasOf is not null)
+                                {
+                                    @* Follows its site: changed on the site's row. *@
+                                }
+                                else if (site.Records is { Records.Count: > 0 } current)
                                 {
                                     <form method="post" asp-page-handler="AddSite">
                                         <input type="hidden" name="domain" value="@site.Domain" />

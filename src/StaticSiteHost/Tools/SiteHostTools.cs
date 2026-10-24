@@ -115,6 +115,8 @@ public static class SiteHostTools
         - The same path forwarded for many sites (such as /api for every site under a domain): one
           set_server_proxy_route with sites "*.that-domain"; a site's own route at that path overrides it.
         - Site from files: deploy_files (creates the site if needed; it replaces every file).
+        - One site at many names, such as an app at every subdomain: set_site_aliases with "*.that-domain";
+          the app reads the name from location.hostname.
         - Change an existing site's files: read_site_file, then edit_site_file for each change, or
           write_site_files for new files. Both keep every other file. Never deploy_files for a small change.
         - Private site: set_passcode. Caching or security headers: set_header_rules. Moved pages: set_redirect_rules.
@@ -193,12 +195,12 @@ public static class SiteHostTools
     // ================================================================ sites
 
     [SiteHostTool("list_sites", ToolEffect.Read)]
-    [Description("Every site on the server, with its current release, rule counts, proxy routes and functions.")]
+    [Description("Every site on the server, with its other domains (aliases), current release, rule counts, proxy routes and functions.")]
     public static JsonElement ListSites(IServiceProvider services) =>
         ToJson(services.GetRequiredService<SiteStore>().List().Select(site => DescribeSite(services, site)));
 
     [SiteHostTool("get_site", ToolEffect.Read)]
-    [Description("One site in full: releases, counts of rules and routes, functions, whether it has a passcode.")]
+    [Description("One site in full: its other domains (aliases), releases, counts of rules and routes, functions, whether it has a passcode. A site's other domain is not a site: use the site's domain.")]
     public static JsonElement GetSite(IServiceProvider services, [Description("The site's domain.")] string domain) =>
         WithSite(services, domain, site => DescribeSite(services, site));
 
@@ -207,14 +209,14 @@ public static class SiteHostTools
     public static async Task<JsonElement> CreateSite(IServiceProvider services, [Description("The domain, such as app.example.com.")] string domain)
     {
         var caller = Caller.Of(services);
-        var (ok, error, created, _) = await services.GetRequiredService<ZipDeploymentService>().CreateAsync(domain, caller.Actor);
+        var (ok, error, created, _) = await services.GetRequiredService<ZipDeploymentService>().CreateAsync(domain, caller.Actor, caller.IsAdministrator);
         return ok
             ? ToJson(DescribeSite(services, services.GetRequiredService<SiteStore>().TryGet(created)!))
             : Error(error);
     }
 
     [SiteHostTool("deploy_files", ToolEffect.Change)]
-    [Description("Publishes a new release of a site from the files given, creating the site if it does not exist. The files REPLACE THE WHOLE previous release: any file not given is gone from the live site (the old release stays available to roll back to). Use it for a new site or a full rebuild; to change some files of an existing site, use edit_site_file or write_site_files, which keep the rest. Put index.html at the root; a path with no file falls back to the nearest index.html, so a single-page app works as is; a link to /about is answered by about.html. Optional files read from the release: _headers and _redirects (the formats of set_header_rules and set_redirect_rules), _variables.json (declares variables), and C# function files in a top-level _functions/ folder (administrators only).")]
+    [Description("Publishes a new release of a site from the files given, creating the site if it does not exist. The files REPLACE THE WHOLE previous release: any file not given is gone from the live site (the old release stays available to roll back to). Use it for a new site or a full rebuild; to change some files of an existing site, use edit_site_file or write_site_files, which keep the rest. Put index.html at the root; a path with no file falls back to the nearest index.html, so a single-page app works as is; a link to /about is answered by about.html. Optional files read from the release: _headers and _redirects (the formats of set_header_rules and set_redirect_rules), _variables.json (declares variables), and C# function files in a top-level _functions/ folder (administrators only). Refused at another site's other domain: deploy to that site.")]
     public static async Task<JsonElement> DeployFiles(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
@@ -223,6 +225,7 @@ public static class SiteHostTools
     {
         var caller = Caller.Of(services);
         if (files is not { Count: > 0 }) return Error("Give at least one file, such as index.html.");
+        if (AnsweredElsewhere(services, domain) is { } elsewhere) return Error(elsewhere);
 
         using var zip = new MemoryStream();
         using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
@@ -246,7 +249,7 @@ public static class SiteHostTools
 
         zip.Position = 0;
         var result = await services.GetRequiredService<ZipDeploymentService>().DeployAsync(
-            domain, zip, "files.zip", caller.Actor, "mcp", canDeployFunctions: caller.IsAdministrator, ct);
+            domain, zip, "files.zip", caller.Actor, "mcp", canDeployFunctions: caller.IsAdministrator, administrator: caller.IsAdministrator, ct);
 
         return result.Ok
             ? ToJson(new
@@ -432,6 +435,29 @@ public static class SiteHostTools
         });
     }
 
+    [SiteHostTool("set_site_aliases", ToolEffect.Change)]
+    [Description("Sets every other domain a site answers at, beside its domain, replacing the list (an empty list removes them). " +
+                 "Each is a domain, or *. and a domain for every name one level under it: *.app.example.com answers abc.app.example.com, " +
+                 "not app.example.com itself. Every name gets the whole site (files, functions, proxy routes, passcode); pages read " +
+                 "location.hostname, functions HttpContext.Request.Host, proxy targets X-Forwarded-Host. A site at a name of its own " +
+                 "keeps it under a wildcard. With Cloudflare connected each gets a DNS record; with HTTPS in this server an exact one " +
+                 "gets a certificate, and a wildcard needs a shared certificate covering it (request_shared_certificate). Administrators only.")]
+    public static async Task<JsonElement> SetSiteAliases(
+        IServiceProvider services,
+        [Description("The site's domain.")] string domain,
+        [Description("Every other domain the site is to have, such as [\"www.example.com\", \"*.app.example.com\"].")] IReadOnlyList<string> aliases)
+    {
+        var caller = Caller.Of(services);
+        if (caller.AdministratorsOnly() is { } refused) return refused;
+
+        return await WithSiteAsync(services, domain, async site =>
+        {
+            var (ok, errors, saved) = await services.GetRequiredService<ZipDeploymentService>()
+                .SetAliasesAsync(site.Domain, aliases, caller.Actor, caller.Http.Request.Host.Host);
+            return ok ? new { ok = true, domain = site.Domain, aliases = saved } : (object)new { errors };
+        });
+    }
+
     [SiteHostTool("delete_site", ToolEffect.Destructive)]
     [Description("Deletes a site and everything it has: every release, its settings, functions and data. It cannot be undone. Administrators only.")]
     public static async Task<JsonElement> DeleteSite(IServiceProvider services, [Description("The site's domain.")] string domain)
@@ -450,7 +476,7 @@ public static class SiteHostTools
     // ================================================================ visibility
 
     [SiteHostTool("set_passcode", ToolEffect.Change)]
-    [Description("Makes a site private: visitors must enter this passcode before anything is served, proxied paths included. At least 8 characters. Replacing it signs out everyone who entered the old one.")]
+    [Description("Makes a site private: visitors must enter this passcode before anything is served, proxied paths included, at every one of its names. Entered at a name under a wildcard other domain, it unlocks every name that wildcard answers. At least 8 characters. Replacing it signs out everyone who entered the old one.")]
     public static async Task<JsonElement> SetPasscode(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
@@ -570,11 +596,11 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("set_proxy_route", ToolEffect.Change)]
-    [Description("Adds a proxy route to a site, or changes the one at the same path: every request under the path is forwarded to the target server and its answer sent back. Path '/' forwards everything; '/api' forwards /api and everything under it (not /apis), and by default removes '/api' first, so /api/users goes to {target}/users. The longest matching path wins, so '/' and '/api' can be set together. Settings left out take their defaults. Creates the site first when it does not exist, so no create_site is needed. Call it once per route; several calls can go in one turn. The result includes 'check': a GET sent to the target just now, with its status, so there is no need to call test_proxy_route after it. Administrators only.")]
+    [Description("Adds a proxy route to a site, or changes the one at the same path: every request under the path is forwarded to the target server and its answer sent back. Path '/' forwards everything; '/api' forwards /api and everything under it (not /apis), and by default removes '/api' first, so /api/users goes to {target}/users. The longest matching path wins, so '/' and '/api' can be set together. Settings left out take their defaults. Creates the site first when it does not exist, so no create_site is needed; refused at another site's other domain, whose routes are that site's. Call it once per route; several calls can go in one turn. The result includes 'check': a GET sent to the target just now, with its status, so there is no need to call test_proxy_route after it. Administrators only.")]
     public static async Task<JsonElement> SetProxyRoute(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
-        [Description("The route. Required: path and target (an http:// or https:// URL, such as http://api:8080). Optional settings: stripPath (default true), enabled, webSockets, crossSiteWebSockets, streaming (server-sent events), grpcWeb (translate a browser's gRPC-Web calls to gRPC for a gRPC server that has no gRPC-Web of its own), httpVersion ('auto', '1.1' or '2'; gRPC always goes over HTTP/2 unless this is '1.1'), timeoutSeconds (default 100), maxRequestBodyBytes, keepHost, forwardedHeaders, requestHeaders ([{name, value}], empty value removes), cookieMode ('host', 'keep' or 'parent') with cookieParentDomain, rewriteRedirects, filesFirst, acceptAnyCertificate.")] ProxyRoute route,
+        [Description("The route. Required: path and target (an http:// or https:// URL, such as http://api:8080). Optional settings: stripPath (default true), enabled, webSockets, crossSiteWebSockets, streaming (server-sent events), grpcWeb (translate a browser's gRPC-Web calls to gRPC for a gRPC server that has no gRPC-Web of its own), httpVersion ('auto', '1.1' or '2'; gRPC always goes over HTTP/2 unless this is '1.1'), timeoutSeconds (default 100), maxRequestBodyBytes, keepHost, forwardedHeaders, requestHeaders ([{name, value}], empty value removes), cookieMode ('host', 'keep' or 'parent' with cookieParentDomain: the site's domain, one of its other domains or a domain they belong to; for a sign-in at every name of a wildcard *.app.example.com, 'app.example.com'), rewriteRedirects, filesFirst, acceptAnyCertificate.")] ProxyRoute route,
         [Description("The path the route is saved under now, to change its path. Leave out otherwise.")] string? originalPath = null)
     {
         var caller = Caller.Of(services);
@@ -585,12 +611,14 @@ public static class SiteHostTools
         if (normalized is null) return Error(domainError);
         if (services.GetRequiredService<SiteStore>().TryGet(normalized) is null)
         {
+            if (AnsweredElsewhere(services, normalized) is { } elsewhere) return Error(elsewhere);
+
             // Checked first, so a route that cannot be saved does not leave an empty site behind.
             if (SiteProxyService.CheckNewSiteRoute(normalized, route) is { Count: > 0 } routeErrors)
                 return ToJson(new { errors = routeErrors });
 
             // Someone else creating it at the same moment is as good as creating it here.
-            var (created, createError, _, alreadyExists) = await services.GetRequiredService<ZipDeploymentService>().CreateAsync(normalized, caller.Actor);
+            var (created, createError, _, alreadyExists) = await services.GetRequiredService<ZipDeploymentService>().CreateAsync(normalized, caller.Actor, caller.IsAdministrator);
             if (!created && !alreadyExists) return Error(createError);
         }
 
@@ -717,7 +745,7 @@ public static class SiteHostTools
     // ================================================================ HTTPS
 
     [SiteHostTool("get_tls", ToolEffect.Read)]
-    [Description("HTTPS: with a domain, that site's settings and certificate (where it comes from, issuer, expiry, the last error); with none, the whole server: whether HTTPS is ended here, the ACME directory, every host's certificate and the shared certificates. Administrators only for the whole server.")]
+    [Description("HTTPS: with a domain, that site's settings and certificate (where it comes from, issuer, expiry, the last error) and each of its other domains' certificate; with none, the whole server: whether HTTPS is ended here, the ACME directory, every host's certificate and the shared certificates. Administrators only for the whole server.")]
     public static JsonElement GetTls(IServiceProvider services, [Description("A site's domain, or empty for the whole server.")] string? domain = null)
     {
         var certificates = services.GetRequiredService<StaticSiteHost.Tls.CertificateManager>();
@@ -768,7 +796,7 @@ public static class SiteHostTools
     // ================================================================ DNS (Cloudflare)
 
     [SiteHostTool("get_dns", ToolEffect.Read)]
-    [Description("DNS through Cloudflare: whether a token is connected and the zones it can edit, whether every site gets a DNS record and what records point at (IPv4, IPv6 or a CNAME target), whether they go through Cloudflare's proxy, and each site's record and state (ok, off, excluded, noZone, noAddress, conflict, error). Administrators only.")]
+    [Description("DNS through Cloudflare: whether a token is connected and the zones it can edit, whether every site gets a DNS record and what records point at (IPv4, IPv6 or a CNAME target), whether they go through Cloudflare's proxy, and each site's record and state (ok, off, excluded, noZone, noAddress, conflict, error). A site's other domains are listed too, with aliasOf naming the site: they follow its record and have no settings of their own. Administrators only.")]
     public static async Task<JsonElement> GetDns(IServiceProvider services, CancellationToken ct = default)
     {
         if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
@@ -813,7 +841,7 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("add_site_dns_record", ToolEffect.Change)]
-    [Description("Gives one site its DNS record now (or changes whether it goes through Cloudflare's proxy), even when records are not made for every site. Administrators only.")]
+    [Description("Gives one site its DNS record now (or changes whether it goes through Cloudflare's proxy), even when records are not made for every site. Its other domains get records with it. Administrators only.")]
     public static async Task<JsonElement> AddSiteDnsRecord(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
@@ -831,7 +859,7 @@ public static class SiteHostTools
     }
 
     [SiteHostTool("remove_site_dns_record", ToolEffect.Destructive)]
-    [Description("Deletes the DNS records this server made for a site, and makes none for it again until asked. Visitors stop reaching the site by name once the change spreads. Administrators only.")]
+    [Description("Deletes the DNS records this server made for a site and its other domains, and makes none for them again until asked. Visitors stop reaching the site by name once the change spreads. Administrators only.")]
     public static async Task<JsonElement> RemoveSiteDnsRecord(
         IServiceProvider services,
         [Description("The site's domain.")] string domain,
@@ -849,7 +877,7 @@ public static class SiteHostTools
 
     [SiteHostTool("renew_certificate", ToolEffect.Change)]
     [Description("Gets a new certificate for a site or a management host now, from Let's Encrypt or self-signed as its settings say, even when the last attempt failed recently. Takes a few seconds to a minute; get_tls shows the result. Administrators only.")]
-    public static JsonElement RenewCertificate(IServiceProvider services, [Description("The site's domain, or a management host.")] string host)
+    public static JsonElement RenewCertificate(IServiceProvider services, [Description("The site's domain, one of its exact other domains, or a management host.")] string host)
     {
         if (Caller.Of(services).AdministratorsOnly() is { } refused) return refused;
 
@@ -1566,6 +1594,22 @@ public static class SiteHostTools
             : (normalized, null);
     }
 
+    /// <summary>
+    /// Why a tool that creates a site when there is none must not create one at this name: another site
+    /// answers at it, as one of its other domains. A model that names it means that site, so the change is
+    /// refused rather than taking the name from it; create_site makes a site there on purpose.
+    /// </summary>
+    private static string? AnsweredElsewhere(IServiceProvider services, string domain)
+    {
+        var sites = services.GetRequiredService<SiteStore>();
+        if (SiteStore.NormalizeDomain(domain).Domain is not { } name || sites.Exists(name) || sites.AliasOwner(name) is not { } owner)
+            return null;
+
+        return owner.Wildcard
+            ? ApiEndpoints.NoSite(name, sites) + $" To give it a site of its own instead, which takes the name from {owner.Domain}, call create_site first."
+            : ApiEndpoints.NoSite(name, sites);
+    }
+
     private static JsonElement WithSite(IServiceProvider services, string domain, Func<SiteRecord, object> action)
     {
         var (site, error) = Find(services, domain);
@@ -1580,11 +1624,18 @@ public static class SiteHostTools
 
     private static (SiteRecord? Site, string? Error) Find(IServiceProvider services, string domain)
     {
+        var sites = services.GetRequiredService<SiteStore>();
         var (normalized, error) = SiteStore.NormalizeDomain(domain);
-        if (normalized is null) return (null, error);
 
-        var site = services.GetRequiredService<SiteStore>().TryGet(normalized);
-        return site is null ? (null, $"No site is published at '{normalized}'. create_site makes one.") : (site, null);
+        // A wildcard is no domain, but it may be a site's other domain: say whose.
+        if (normalized is null) return (null, SiteAliases.IsWildcard((domain ?? "").Trim()) ? ApiEndpoints.NoSite(domain!, sites) : error);
+
+        if (sites.TryGet(normalized) is { } site) return (site, null);
+
+        // One of a site's other domains: say whose, rather than suggest a new site there.
+        return (null, sites.Resolve(normalized) is not null
+            ? ApiEndpoints.NoSite(normalized, sites)
+            : $"No site is published at '{normalized}'. create_site makes one.");
     }
 
     /// <summary>A provider by id or, failing that, by name.</summary>

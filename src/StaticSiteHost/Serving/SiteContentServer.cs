@@ -103,7 +103,7 @@ public sealed class SiteContentServer
             var strings = StringsFor(context);
             await WriteMessageAsync(context, StatusCodes.Status503ServiceUnavailable,
                 strings.Text("visitor.unavailable.title"),
-                WebUtility.HtmlEncode(strings.Text("visitor.unavailable.detail", new { domain })));
+                WebUtility.HtmlEncode(strings.Text("visitor.unavailable.detail", new { domain = SiteHostingMiddleware.HostOf(context) })));
             return;
         }
 

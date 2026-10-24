@@ -45,6 +45,9 @@ public class DnsModel : PageModel
     /// <summary>Each site's record, in domain order.</summary>
     public IReadOnlyList<SiteDnsStatus> Sites { get; private set; } = [];
 
+    /// <summary>For each row that is one of a site's other domains, the site's domain. Their records follow the site's.</summary>
+    public IReadOnlyDictionary<string, string> AliasOwners { get; private set; } = new Dictionary<string, string>();
+
     /// <summary>Why the last change on this page was refused, and which form it came from.</summary>
     public string? Error { get; private set; }
 
@@ -78,11 +81,22 @@ public class DnsModel : PageModel
             }
         }
 
+        // Each site, then its other domains, whose records follow the site's.
         var status = _dns.Status;
-        Sites = _sites.List()
-            .Select(s => status.TryGetValue(s.Domain, out var known) ? known : new SiteDnsStatus(s.Domain, "pending", null, null, null))
-            .OrderBy(s => s.Domain, StringComparer.Ordinal)
-            .ToList();
+        SiteDnsStatus StatusOf(string name) => status.TryGetValue(name, out var known) ? known : new SiteDnsStatus(name, "pending", null, null, null);
+        var rows = new List<SiteDnsStatus>();
+        var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var site in _sites.List())
+        {
+            rows.Add(StatusOf(site.Domain));
+            foreach (var alias in site.Aliases)
+            {
+                if (!_sites.Exists(alias) && owners.TryAdd(alias, site.Domain)) rows.Add(StatusOf(alias));
+            }
+        }
+
+        Sites = rows;
+        AliasOwners = owners;
     }
 
     public async Task<IActionResult> OnPostTokenAsync(string? token, CancellationToken ct)

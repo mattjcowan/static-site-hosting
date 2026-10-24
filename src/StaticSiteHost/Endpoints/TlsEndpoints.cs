@@ -139,13 +139,36 @@ public static class TlsEndpoints
         source = site.Tls?.Source ?? CertificateSources.Automatic,
         redirectToHttps = site.Tls?.RedirectToHttps ?? true,
         hsts = site.Tls?.Hsts ?? false,
-        status = certificates.Enabled ? DescribeHost(certificates.StatusOf(site.Domain)) : null
+        status = certificates.Enabled ? DescribeHost(certificates.StatusOf(site.Domain)) : null,
+        aliases = certificates.Enabled ? site.Aliases.Select(alias => DescribeAlias(site, alias, certificates)) : null
     };
+
+    /// <summary>
+    /// One of a site's other domains: an exact one has a certificate of its own, as a host does; a
+    /// wildcard is served the shared certificate that covers it, and has a problem when none does,
+    /// unless the site has no HTTPS: then its names are served none, and plain HTTP is not redirected.
+    /// </summary>
+    private static object DescribeAlias(SiteRecord site, string alias, CertificateManager certificates)
+    {
+        if (!SiteAliases.IsWildcard(alias)) return DescribeHost(certificates.StatusOf(alias));
+
+        var plain = (site.Tls?.Source ?? CertificateSources.Automatic) == CertificateSources.None;
+        var shared = plain ? null : certificates.SharedCovering(alias);
+        return new
+        {
+            host = alias,
+            wildcard = true,
+            effective = plain ? CertificateSources.None : CertificateSources.Shared,
+            certificate = shared is null ? null : new { source = CertificateSources.Shared, names = shared.Names, issuer = shared.Issuer, notAfter = shared.NotAfter },
+            problem = shared is null && !plain ? $"No shared certificate covers {alias}. Get or upload one under HTTPS; until then, names under it get a stand-in certificate browsers warn about." : null
+        };
+    }
 
     internal static object DescribeHost(HostCertificateStatus status) => new
     {
         host = status.Host,
         site = status.IsSite,
+        aliasOf = status.AliasOf,
         source = status.Wanted,
         effective = status.Effective,
         problem = status.Problem,
@@ -173,14 +196,14 @@ public static class TlsEndpoints
     {
         var (normalized, error) = SiteStore.NormalizeDomain(domain);
         if (normalized is null) return Results.BadRequest(new { error });
-        return sites.TryGet(normalized) is { } site ? action(site) : Results.NotFound(new { error = $"No site is published at '{normalized}'." });
+        return sites.TryGet(normalized) is { } site ? action(site) : Results.NotFound(new { error = ApiEndpoints.NoSite(normalized, sites) });
     }
 
     private static async Task<IResult> WithSite(string domain, SiteStore sites, Func<SiteRecord, Task<IResult>> action)
     {
         var (normalized, error) = SiteStore.NormalizeDomain(domain);
         if (normalized is null) return Results.BadRequest(new { error });
-        return sites.TryGet(normalized) is { } site ? await action(site) : Results.NotFound(new { error = $"No site is published at '{normalized}'." });
+        return sites.TryGet(normalized) is { } site ? await action(site) : Results.NotFound(new { error = ApiEndpoints.NoSite(normalized, sites) });
     }
 }
 

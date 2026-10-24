@@ -49,7 +49,15 @@ public class HttpsModel : PageModel
     public string? RequestNames { get; private set; }
     public string? RequestSource { get; private set; }
 
-    public async Task OnGetAsync(CancellationToken ct) => await LoadAsync(ct);
+    /// <summary>Whether the request form is open: after a refused request, or when a link asks for a name.</summary>
+    public bool RequestOpen => RequestError is not null || RequestNames is not null;
+
+    /// <param name="request">Names to fill the request form with, such as a site's wildcard other domain from its HTTPS card.</param>
+    public async Task OnGetAsync(string? request, CancellationToken ct)
+    {
+        RequestNames = string.IsNullOrWhiteSpace(request) ? null : request.Trim();
+        await LoadAsync(ct);
+    }
 
     private async Task LoadAsync(CancellationToken ct)
     {
