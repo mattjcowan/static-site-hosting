@@ -1,7 +1,7 @@
 # Design: proxy routes, certificates and DNS
 
-Status: phases 1–5 built. Phases 1–4 are released (0.5.0 to 0.10.0); phase 5, other domains for
-a site, was built on 2026-10-23 and is not released yet. See [Progress](#progress) at the end for
+Status: phases 1–5 built and released (0.5.0 to 0.10.1); phase 5, other domains for a site, is
+in 0.10.1. See [Progress](#progress) at the end for
 what was built, where it differs from the design, and what comes next. User-facing documentation lives in the README's
 [Proxy routes](../../README.md#proxy-routes) section.
 
