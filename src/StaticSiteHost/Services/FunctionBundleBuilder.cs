@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -149,7 +150,7 @@ public sealed class FunctionBundleBuilder
         {
             _logger.LogError(ex, "Function build in {Dir} failed while writing to disk", bundleDir);
             TryDeleteDirectory(bundleDir);
-            return FunctionDeployResult.Failed("The functions could not be written to disk. Check the server logs.");
+            return FunctionDeployResult.Failed(ServerText.Get("functions.error.disk"));
         }
         finally
         {
@@ -182,8 +183,8 @@ public sealed class FunctionBundleBuilder
     /// </summary>
     private static (List<FunctionFile>? Files, string? Error) Validate(IReadOnlyList<FunctionFile> files)
     {
-        if (files.Count == 0) return (null, "Add at least one .cs or .linq file.");
-        if (files.Count > MaxFiles) return (null, $"Functions are limited to {MaxFiles} files.");
+        if (files.Count == 0) return (null, ServerText.Get("functions.error.noFiles"));
+        if (files.Count > MaxFiles) return (null, ServerText.Get("functions.error.tooManyFiles", new { max = MaxFiles }));
 
         var named = new List<FunctionFile>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -192,18 +193,18 @@ public sealed class FunctionBundleBuilder
         foreach (var file in files)
         {
             var name = SafeFileName(file.Name);
-            if (!seen.Add(name)) return (null, $"Two files are named {name}. Each file needs its own name.");
+            if (!seen.Add(name)) return (null, ServerText.Get("functions.error.sameName", new { name }));
 
             var bytes = Encoding.UTF8.GetByteCount(file.Text);
             if (bytes > FunctionSourceReader.MaxSourceBytes)
-                return (null, $"{name} is over the {Format.Bytes(FunctionSourceReader.MaxSourceBytes)} limit for one file.");
+                return (null, ServerText.Get("functions.error.fileLimit", new { name, limit = Format.Bytes(FunctionSourceReader.MaxSourceBytes) }));
 
             total += bytes;
             named.Add(file with { Name = name });
         }
 
         if (total > MaxTotalBytes)
-            return (null, $"Together the files are over the {Format.Bytes(MaxTotalBytes)} limit.");
+            return (null, ServerText.Get("functions.error.totalLimit", new { limit = Format.Bytes(MaxTotalBytes) }));
 
         return (named, null);
     }

@@ -1,3 +1,4 @@
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -51,21 +52,21 @@ public static class ProxyRouteRules
     /// </summary>
     public static (Uri? Target, string? Error) ResolveTarget(string? target)
     {
-        if (string.IsNullOrWhiteSpace(target)) return (null, "a target URL is required");
+        if (string.IsNullOrWhiteSpace(target)) return (null, ServerText.Get("proxy.error.targetRequired"));
 
         var unset = new List<string>();
         var expanded = SiteVariableService.Expand(target.Trim(), unset).Trim();
         if (unset.Count > 0)
-            return (null, $"the server has no environment variable {string.Join(", ", unset)}");
+            return (null, ServerText.Get("proxy.error.targetUnset", new { names = string.Join(", ", unset) }));
 
         if (!Uri.TryCreate(expanded, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-            return (null, "the target must be an http:// or https:// URL");
+            return (null, ServerText.Get("proxy.error.targetScheme"));
 
-        if (string.IsNullOrEmpty(uri.Host)) return (null, "the target URL has no host");
-        if (uri.UserInfo.Length > 0) return (null, "the target URL may not carry a user name or password; set an Authorization request header instead");
-        if (uri.Query.Length > 0) return (null, "the target URL may not have a query string");
-        if (uri.Fragment.Length > 0) return (null, "the target URL may not have a fragment");
+        if (string.IsNullOrEmpty(uri.Host)) return (null, ServerText.Get("proxy.error.targetNoHost"));
+        if (uri.UserInfo.Length > 0) return (null, ServerText.Get("proxy.error.targetUserInfo"));
+        if (uri.Query.Length > 0) return (null, ServerText.Get("proxy.error.targetQuery"));
+        if (uri.Fragment.Length > 0) return (null, ServerText.Get("proxy.error.targetFragment"));
 
         return (uri, null);
     }
@@ -79,9 +80,7 @@ public static class ProxyRouteRules
 
         if (routes.Count > MaxRoutes)
         {
-            errors.Add(domain is null
-                ? $"There can be at most {MaxRoutes} server-wide proxy routes; this is {routes.Count}."
-                : $"A site can have at most {MaxRoutes} proxy routes; this is {routes.Count}.");
+            errors.Add(ServerText.Get(domain is null ? "proxy.error.tooManyServer" : "proxy.error.tooManySite", new { max = MaxRoutes, count = routes.Count }));
             return errors;
         }
 
@@ -90,69 +89,72 @@ public static class ProxyRouteRules
         for (var i = 0; i < routes.Count; i++)
         {
             var route = routes[i];
-            var label = $"Route {i + 1} ({route.Path})";
+            var label = ServerText.Get("proxy.error.routeLabel", new { number = i + 1, path = route.Path });
 
             var server = route as ServerProxyRoute;
-            if (server is not null && ProxySites.Check(server.Sites) is { } sitesError) errors.Add($"{label}: {sitesError}.");
+            if (server is not null && ProxySites.Check(server.Sites) is { } sitesError) errors.Add(Problem(label, sitesError));
 
             // Two server-wide routes may share a path when they are for different sites.
-            if (CheckPath(route.Path) is { } pathError) errors.Add($"{label}: {pathError}.");
+            if (CheckPath(route.Path) is { } pathError) errors.Add(Problem(label, pathError));
             else if (!seen.Add(server is null ? route.Path : $"{ProxySites.Normalize(server.Sites)}|{route.Path}"))
-                errors.Add($"{label}: another route already has this path{(server is null ? "" : " for the same sites")}.");
+                errors.Add(Problem(label, ServerText.Get(server is null ? "proxy.error.samePath" : "proxy.error.samePathSameSites")));
 
             if (string.IsNullOrWhiteSpace(route.Target))
-                errors.Add($"{label}: a target URL is required.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.targetRequired")));
             else if (route.Target.Length > MaxTargetLength)
-                errors.Add($"{label}: the target must be {MaxTargetLength} characters or fewer.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.targetLong", new { max = MaxTargetLength })));
             else if (!SiteVariableService.ReferencesEnvironment(route.Target) && ResolveTarget(route.Target).Error is { } targetError)
-                errors.Add($"{label}: {targetError}.");
+                errors.Add(Problem(label, targetError));
 
             if (!ProxyHttpVersions.All.Contains(route.HttpVersion))
-                errors.Add($"{label}: the HTTP version must be one of {string.Join(", ", ProxyHttpVersions.All)}.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.httpVersion", new { versions = string.Join(", ", ProxyHttpVersions.All) })));
             else if (route.GrpcWeb && route.HttpVersion == ProxyHttpVersions.Http11)
-                errors.Add($"{label}: gRPC-Web is translated to gRPC, which needs HTTP/2; set the HTTP version to auto or 2.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.grpcWebHttp11")));
 
             if (route.TimeoutSeconds < 1 || route.TimeoutSeconds > MaxTimeoutSeconds)
-                errors.Add($"{label}: the timeout must be between 1 and {MaxTimeoutSeconds} seconds.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.timeout", new { max = MaxTimeoutSeconds })));
 
             if (route.MaxRequestBodyBytes is < 0)
-                errors.Add($"{label}: the largest request body cannot be negative.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.bodyNegative")));
 
             if (!ProxyCookieModes.All.Contains(route.CookieMode))
-                errors.Add($"{label}: the cookie mode must be one of {string.Join(", ", ProxyCookieModes.All)}.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.cookieMode", new { modes = string.Join(", ", ProxyCookieModes.All) })));
             else if (route.CookieMode == ProxyCookieModes.Parent &&
                      (server is not null ? ProxySites.CheckParentDomain(server.Sites, route.CookieParentDomain)
                          : CheckParentDomain(domain ?? "", aliases ?? [], route.CookieParentDomain)) is { } parentError)
-                errors.Add($"{label}: {parentError}.");
+                errors.Add(Problem(label, parentError));
 
             var headers = route.RequestHeaders ?? [];
             if (headers.Count > MaxRequestHeaders)
-                errors.Add($"{label}: sets {headers.Count} request headers, more than the {MaxRequestHeaders} allowed.");
+                errors.Add(Problem(label, ServerText.Get("proxy.error.tooManyHeaders", new { count = headers.Count, max = MaxRequestHeaders })));
 
             var headerNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var header in headers)
             {
-                if (CheckRequestHeader(header?.Name, header?.Value) is { } headerError) errors.Add($"{label}: {headerError}.");
-                else if (!headerNames.Add(header!.Name)) errors.Add($"{label}: the request header {header.Name} is listed twice.");
+                if (CheckRequestHeader(header?.Name, header?.Value) is { } headerError) errors.Add(Problem(label, headerError));
+                else if (!headerNames.Add(header!.Name)) errors.Add(Problem(label, ServerText.Get("proxy.error.headerTwice", new { name = header.Name })));
             }
         }
 
         return errors;
     }
 
+    /// <summary>One reason a route cannot be saved, after the route it is about.</summary>
+    private static string Problem(string label, string problem) => ServerText.Get("proxy.error.route", new { label, problem });
+
     private static string? CheckPath(string path)
     {
-        if (string.IsNullOrEmpty(path) || !path.StartsWith('/')) return "the path must start with /";
-        if (path.Length > MaxPathLength) return $"the path must be {MaxPathLength} characters or fewer";
+        if (string.IsNullOrEmpty(path) || !path.StartsWith('/')) return ServerText.Get("proxy.error.pathSlash");
+        if (path.Length > MaxPathLength) return ServerText.Get("proxy.error.pathLong", new { max = MaxPathLength });
         if (path.Any(c => char.IsControl(c) || c is '?' or '#' or '\\' or '%' or ' '))
-            return "the path may not contain spaces, ?, #, %, \\ or control characters";
-        if (path.Contains("//", StringComparison.Ordinal)) return "the path may not contain an empty segment (//)";
-        if (path.Split('/').Any(segment => segment is "." or "..")) return "the path may not contain . or .. segments";
+            return ServerText.Get("proxy.error.pathCharacters");
+        if (path.Contains("//", StringComparison.Ordinal)) return ServerText.Get("proxy.error.pathEmptySegment");
+        if (path.Split('/').Any(segment => segment is "." or "..")) return ServerText.Get("proxy.error.pathDots");
 
         if (path.Equals("/_host", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/_host/", StringComparison.OrdinalIgnoreCase))
-            return "/_host/ belongs to the server's own endpoints";
+            return ServerText.Get("proxy.error.pathHost");
         if (path.Equals("/healthz", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/healthz/", StringComparison.OrdinalIgnoreCase))
-            return "/healthz belongs to the server";
+            return ServerText.Get("proxy.error.pathHealthz");
 
         return null;
     }
@@ -165,26 +167,26 @@ public static class ProxyRouteRules
     private static string? CheckParentDomain(string domain, IReadOnlyList<string> aliases, string? parent)
     {
         var (normalized, _) = SiteStore.NormalizeDomain(parent);
-        if (normalized is null) return "name the parent domain cookies are moved to";
-        if (!normalized.Contains('.')) return $"'{normalized}' is too broad to share cookies across";
+        if (normalized is null) return ServerText.Get("proxy.error.parentRequired");
+        if (!normalized.Contains('.')) return ServerText.Get("proxy.error.parentTooBroad", new { parent = normalized });
 
         var names = aliases.Select(alias => SiteAliases.IsWildcard(alias) ? alias[2..] : alias).Prepend(domain);
         if (!names.Any(name => name.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
                                name.EndsWith("." + normalized, StringComparison.OrdinalIgnoreCase)))
             return aliases.Count == 0
-                ? $"'{normalized}' is not {domain} or a domain it belongs to"
-                : $"'{normalized}' is not {domain}, one of its other domains, or a domain one of them belongs to";
+                ? ServerText.Get("proxy.error.parentNotCovering", new { parent = normalized, domain })
+                : ServerText.Get("proxy.error.parentNotCoveringAliases", new { parent = normalized, domain });
         return null;
     }
 
     private static string? CheckRequestHeader(string? name, string? value)
     {
-        if (string.IsNullOrWhiteSpace(name)) return "a request header needs a name";
-        if (name.Length > MaxHeaderNameLength) return $"request header names must be {MaxHeaderNameLength} characters or fewer";
-        if (!name.All(IsTokenChar)) return $"'{name}' is not a valid header name";
-        if (ReservedRequestHeaders.Contains(name)) return $"the request header {name} is managed by the server and cannot be set";
-        if ((value ?? "").Length > MaxHeaderValueLength) return $"the value of {name} must be {MaxHeaderValueLength} characters or fewer";
-        if ((value ?? "").Any(c => c is '\r' or '\n' or '\0')) return $"the value of {name} may not contain line breaks";
+        if (string.IsNullOrWhiteSpace(name)) return ServerText.Get("proxy.error.headerNoName");
+        if (name.Length > MaxHeaderNameLength) return ServerText.Get("proxy.error.headerNameLong", new { max = MaxHeaderNameLength });
+        if (!name.All(IsTokenChar)) return ServerText.Get("proxy.error.headerNameInvalid", new { name });
+        if (ReservedRequestHeaders.Contains(name)) return ServerText.Get("proxy.error.headerReserved", new { name });
+        if ((value ?? "").Length > MaxHeaderValueLength) return ServerText.Get("proxy.error.headerValueLong", new { name, max = MaxHeaderValueLength });
+        if ((value ?? "").Any(c => c is '\r' or '\n' or '\0')) return ServerText.Get("proxy.error.headerValueLineBreak", new { name });
         return null;
     }
 
@@ -213,7 +215,7 @@ public static class ProxyRouteRules
             var colon = line.IndexOf(':');
             if (colon <= 0)
             {
-                error = $"Request headers, line {lineNumber}: write Name: value, or Name: alone to remove a header.";
+                error = ServerText.Get("proxy.error.headersLine", new { line = lineNumber });
                 return false;
             }
 

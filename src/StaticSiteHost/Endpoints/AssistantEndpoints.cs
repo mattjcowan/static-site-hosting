@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Antiforgery;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services;
@@ -63,7 +64,7 @@ public static class AssistantEndpoints
         if (provider is null || !(isAdministrator || settings.MembersMayUse))
         {
             http.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await http.Response.WriteAsJsonAsync(new { error = "The assistant is not turned on for you. An administrator sets it up under AI." }, ct);
+            await http.Response.WriteAsJsonAsync(new { error = ServerText.Get("ai.assistant.error.off") }, ct);
             return;
         }
 
@@ -86,7 +87,7 @@ public static class AssistantEndpoints
         if (request.Message is { Length: > 8000 })
         {
             http.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await http.Response.WriteAsJsonAsync(new { error = "A message is limited to 8,000 characters." }, ct);
+            await http.Response.WriteAsJsonAsync(new { error = ServerText.Get("ai.assistant.error.messageLong") }, ct);
             return;
         }
 

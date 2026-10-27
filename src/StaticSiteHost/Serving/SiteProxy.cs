@@ -341,7 +341,8 @@ internal sealed class CompiledProxyRoute
     {
         var prefix = route.Path == "/" ? "" : route.Path;
 
-        var (target, problem) = ProxyRouteRules.ResolveTarget(route.Target);
+        // Only the log reads the problem, so it is English whoever made the request.
+        var (target, problem) = ServerText.English(() => ProxyRouteRules.ResolveTarget(route.Target));
         if (target is null)
         {
             // Once per change to the routes, not once per request.

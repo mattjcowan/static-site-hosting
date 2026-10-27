@@ -1,4 +1,5 @@
 using System.Text.Json;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -25,8 +26,6 @@ public static class VariableFileText
 {
     /// <summary>Name of the file read out of the root of a deployed archive.</summary>
     public const string FileName = "_variables.json";
-
-    private const string KeyList = "default, description, public, secret or required";
 
     private static readonly JsonDocumentOptions DocumentOptions = new()
     {
@@ -72,8 +71,8 @@ public static class VariableFileText
         catch (JsonException ex)
         {
             problems.Add(ex.LineNumber is { } line
-                ? $"Line {line + 1}: this is not valid JSON near character {ex.BytePositionInLine + 1}."
-                : "This is not valid JSON.");
+                ? ServerText.Get("site.variables.error.notJsonAt", new { line = line + 1, character = ex.BytePositionInLine + 1 })
+                : ServerText.Get("site.variables.error.notJson"));
             return false;
         }
 
@@ -82,14 +81,14 @@ public static class VariableFileText
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
-                problems.Add("The file must be a JSON object keyed by variable name, such as { \"SITE_TITLE\": \"My site\" }.");
+                problems.Add(ServerText.Get("site.variables.error.notObject"));
                 return false;
             }
 
             var count = root.EnumerateObject().Count();
             if (count > SiteVariableService.MaxVariables)
             {
-                problems.Add($"A release can declare at most {SiteVariableService.MaxVariables} variables; this declares {count}.");
+                problems.Add(ServerText.Get("site.variables.error.declaresTooMany", new { max = SiteVariableService.MaxVariables, count }));
                 return false;
             }
 
@@ -107,7 +106,7 @@ public static class VariableFileText
 
                 if (!seen.Add(name))
                 {
-                    problems.Add($"{name}: declared more than once.");
+                    problems.Add(ServerText.Get("site.variables.error.declaredTwice", new { name }));
                     continue;
                 }
 
@@ -137,7 +136,7 @@ public static class VariableFileText
                 {
                     if (!keys.Add(setting.Name))
                     {
-                        problems.Add($"{name}: '{setting.Name}' is given more than once.");
+                        problems.Add(ServerText.Get("site.variables.error.keyTwice", new { name, key = setting.Name }));
                         continue;
                     }
 
@@ -159,7 +158,7 @@ public static class VariableFileText
                             definition.Required = ReadBoolean(name, setting, problems);
                             break;
                         default:
-                            problems.Add($"{name}: unknown key '{setting.Name}'. Use {KeyList}.");
+                            problems.Add(ServerText.Get("site.variables.error.unknownKey", new { name, key = setting.Name }));
                             break;
                     }
                 }
@@ -167,21 +166,20 @@ public static class VariableFileText
                 break;
 
             default:
-                problems.Add($"{name}: expected a string (the default) or an object, found {Describe(value.ValueKind)}." +
-                             (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False
-                                 ? " Put the value in quotes."
-                                 : ""));
+                problems.Add(ServerText.Get(value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False
+                    ? "site.variables.error.entryKindQuote"
+                    : "site.variables.error.entryKind", new { name, found = Describe(value.ValueKind) }));
                 return null;
         }
 
         if (definition.Public && definition.Secret)
-            problems.Add($"{name}: cannot be both public and secret, because a secret never reaches the browser.");
+            problems.Add(ServerText.Get("site.variables.error.declaredPublicAndSecret", new { name }));
 
         if (definition.Description.Length > SiteVariableService.MaxDescriptionLength)
-            problems.Add($"{name}: the description is longer than {SiteVariableService.MaxDescriptionLength} characters.");
+            problems.Add(ServerText.Get("site.variables.error.descriptionLong", new { name, max = SiteVariableService.MaxDescriptionLength }));
 
         if (SiteVariableService.IsValueTooLong(definition.Default))
-            problems.Add($"{name}: the default is larger than {SiteVariableService.MaxValueBytes / 1024} KB.");
+            problems.Add(ServerText.Get("site.variables.error.defaultLong", new { name, size = SiteVariableService.MaxValueBytes / 1024 }));
 
         return problems.Count == before ? definition : null;
     }
@@ -195,10 +193,9 @@ public static class VariableFileText
             case JsonValueKind.Null:
                 return null;
             default:
-                problems.Add($"{name}: '{setting.Name}' must be a string, found {Describe(setting.Value.ValueKind)}." +
-                             (setting.Value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False
-                                 ? " Put it in quotes."
-                                 : ""));
+                problems.Add(ServerText.Get(setting.Value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False
+                    ? "site.variables.error.keyStringQuote"
+                    : "site.variables.error.keyString", new { name, key = setting.Name, found = Describe(setting.Value.ValueKind) }));
                 return null;
         }
     }
@@ -207,18 +204,18 @@ public static class VariableFileText
     {
         if (setting.Value.ValueKind is JsonValueKind.True or JsonValueKind.False) return setting.Value.GetBoolean();
 
-        problems.Add($"{name}: '{setting.Name}' must be true or false, found {Describe(setting.Value.ValueKind)}.");
+        problems.Add(ServerText.Get("site.variables.error.keyBoolean", new { name, key = setting.Name, found = Describe(setting.Value.ValueKind) }));
         return false;
     }
 
     private static string Describe(JsonValueKind kind) => kind switch
     {
-        JsonValueKind.Number => "a number",
-        JsonValueKind.True or JsonValueKind.False => "true or false",
-        JsonValueKind.Null => "null",
-        JsonValueKind.Array => "a list",
-        JsonValueKind.Object => "an object",
-        JsonValueKind.String => "a string",
-        _ => "nothing"
+        JsonValueKind.Number => ServerText.Get("site.variables.kind.number"),
+        JsonValueKind.True or JsonValueKind.False => ServerText.Get("site.variables.kind.boolean"),
+        JsonValueKind.Null => ServerText.Get("site.variables.kind.null"),
+        JsonValueKind.Array => ServerText.Get("site.variables.kind.list"),
+        JsonValueKind.Object => ServerText.Get("site.variables.kind.object"),
+        JsonValueKind.String => ServerText.Get("site.variables.kind.string"),
+        _ => ServerText.Get("site.variables.kind.nothing")
     };
 }

@@ -51,5 +51,22 @@
   "users.action.blocked": "{username} can no longer sign in, and their API keys stop working.",
   "users.action.allowed": "{username} can sign in again.",
   "users.action.deleteConfirm": "Delete {username}? Their API keys stop working at once. This cannot be undone.",
-  "users.action.deleted": "Deleted {username} and their API keys."
+  "users.action.deleted": "Deleted {username} and their API keys.",
+
+  "users.error.usernameRequired": "A username is required.",
+  "users.error.usernameLength": "Usernames must be between 3 and 64 characters.",
+  "users.error.usernameCharacters": "Usernames may contain letters, digits and . _ @ + - and must start and end with a letter or digit.",
+  "users.error.usernameTaken": "That username is already taken.",
+  "users.error.passwordRequired": "A password is required.",
+  "users.error.passwordShort.one": "Passwords must be at least {count} character.",
+  "users.error.passwordShort.other": "Passwords must be at least {count} characters.",
+  "users.error.passwordLong": "Passwords must be 256 characters or fewer.",
+  "users.error.unknownRole": "Unknown role.",
+  "users.error.noUser": "No such user.",
+  "users.error.linkFailed": "The private link could not be made. Try again.",
+  "users.error.ownRole": "You cannot change your own role.",
+  "users.error.ownDisable": "You cannot disable your own account.",
+  "users.error.ownDelete": "You cannot delete your own account.",
+  "users.error.bootstrap": "The bootstrap administrator cannot be deleted.",
+  "users.error.lastAdministrator": "At least one active administrator must remain."
 }

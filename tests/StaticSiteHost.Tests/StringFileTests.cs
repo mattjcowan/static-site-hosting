@@ -98,12 +98,8 @@ public partial class StringFileTests
     }
 
     /// <summary>The code that shows text: the pages, the visitor screens and the scripts.</summary>
-    private static readonly string[] TextCode = ["Pages", "Serving", "Tls", Path.Combine("wwwroot", "js")];
-
-    /// <summary>Code elsewhere that names keys: the Files tab's answers, the errors of changes to a release's files, and DNS.</summary>
-    private static readonly string[] TextFiles =
-        [Path.Combine("Endpoints", "SiteFileEditorEndpoints.cs"), Path.Combine("Services", "ReleaseEditor.cs"), Path.Combine("Services", "ZipDeploymentService.cs"),
-         Path.Combine("Services", "Dns", "DnsService.cs")];
+    /// <summary>Code that names keys: the pages and scripts, and the services and endpoints whose messages pages show.</summary>
+    private static readonly string[] TextCode = ["Pages", "Serving", "Tls", "Services", "Endpoints", Path.Combine("wwwroot", "js")];
 
     /// <summary>
     /// A key the code names is a quoted literal that looks like one (an area, a dot, more) in the
@@ -120,8 +116,7 @@ public partial class StringFileTests
             .Select(dir => Path.Combine(Source, dir))
             .Where(Directory.Exists)
             .SelectMany(dir => Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories))
-            .Where(f => (f.EndsWith(".cs") || f.EndsWith(".cshtml") || f.EndsWith(".js")) && !f.EndsWith(".min.js"))
-            .Concat(TextFiles.Select(f => Path.Combine(Source, f)));
+            .Where(f => (f.EndsWith(".cs") || f.EndsWith(".cshtml") || f.EndsWith(".js")) && !f.EndsWith(".min.js"));
 
         return files
             .SelectMany(File.ReadLines)
@@ -133,10 +128,13 @@ public partial class StringFileTests
     }
 
     /// <summary>File names that look like keys ("site.js", "account.bin") end in one of these.</summary>
-    private static readonly HashSet<string> FileExtensions = ["js", "json", "bin", "pem", "txt", "cs", "html", "css", "zip", "md", "linq", "xml"];
+    private static readonly HashSet<string> FileExtensions = ["js", "json", "bin", "pem", "txt", "cs", "csproj", "html", "css", "zip", "md", "linq", "xml"];
 
-    /// <summary>Literals in the text code that look like keys and are not: the realtime event the site page's examples listen for.</summary>
-    private static readonly HashSet<string> NotKeys = ["site.deployed"];
+    /// <summary>
+    /// Literals in the text code that look like keys and are not: the realtime event the site page's
+    /// examples listen for, and the audit actions <c>SiteRuleService</c> passes along.
+    /// </summary>
+    private static readonly HashSet<string> NotKeys = ["site.deployed", "site.headers", "site.redirects"];
 
     [Fact]
     public void Every_key_the_code_names_is_in_english()

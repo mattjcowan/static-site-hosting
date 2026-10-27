@@ -1,4 +1,5 @@
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -41,9 +42,9 @@ public static class SiteAliases
         var value = input?.Trim() ?? "";
         var wildcard = IsWildcard(value);
         var (domain, error) = SiteStore.NormalizeDomain(wildcard ? value[2..] : value);
-        if (domain is null) return (null, $"'{value}' is not a domain, or *. followed by one: {error}");
+        if (domain is null) return (null, ServerText.Get("sites.error.aliasInvalid", new { value, error }));
         if (wildcard && !domain.Contains('.'))
-            return (null, $"'{value}' is too broad. A wildcard needs a domain of two parts or more after *., such as *.example.com.");
+            return (null, ServerText.Get("sites.error.aliasTooBroad", new { value }));
 
         return (wildcard ? "*." + domain : domain, null);
     }
@@ -76,23 +77,23 @@ public static class SiteAliases
 
             var wildcard = IsWildcard(alias);
             if (alias == site.Domain)
-                errors.Add($"'{alias}' is this site's own domain.");
+                errors.Add(ServerText.Get("sites.error.aliasOwnDomain", new { alias }));
             else if (!wildcard && sites.Exists(alias))
-                errors.Add($"'{alias}' is the domain of another site.");
+                errors.Add(ServerText.Get("sites.error.aliasOtherSite", new { alias }));
             // An exact alias may take a name from under another site's wildcard: the exact name wins.
             else if (sites.AliasOwner(alias) is { } owner && owner.Domain != site.Domain && (wildcard || !owner.Wildcard))
-                errors.Add($"'{alias}' is already a domain of {owner.Domain}.");
+                errors.Add(ServerText.Get("sites.error.aliasTaken", new { alias, site = owner.Domain }));
             // A wildcard may cover a management host: management hosts are matched before any site.
             else if (!wildcard && options.IsManagementHost(alias))
-                errors.Add($"'{alias}' is reserved for the management interface.");
+                errors.Add(ServerText.Get("sites.error.aliasManagement", new { alias }));
             else if (!options.HasManagementHosts && managementHost is { Length: > 0 } && Covers(alias, managementHost))
-                errors.Add($"'{alias}' would take {managementHost}, where this management app is open, because no management hosts are set. Set SiteHosting:ManagementHosts first.");
+                errors.Add(ServerText.Get("sites.error.aliasTakesManagement", new { alias, host = managementHost }));
             else
                 aliases.Add(alias);
         }
 
         if (aliases.Count > MaxPerSite)
-            errors.Add($"A site can have at most {MaxPerSite} other domains, and this list has {aliases.Count}. A wildcard such as *.example.com answers many names at once.");
+            errors.Add(ServerText.Get("sites.error.aliasTooMany", new { max = MaxPerSite, count = aliases.Count }));
 
         return (aliases, errors);
     }
@@ -109,10 +110,10 @@ public static class SiteAliases
         if (sites.AliasOwner(name) is not { } owner || owner.Domain == self) return null;
 
         if (!owner.Wildcard)
-            return $"'{name}' is a domain of {owner.Domain}. Remove it from that site's other domains first.";
+            return ServerText.Get("sites.error.nameIsAlias", new { name, site = owner.Domain });
 
         return administrator
             ? null
-            : $"'{name}' is answered by {owner.Domain}, through its other domain *.{name[(name.IndexOf('.') + 1)..]}. Only an administrator can give it a site of its own.";
+            : ServerText.Get("sites.error.nameUnderWildcard", new { name, site = owner.Domain, wildcard = "*." + name[(name.IndexOf('.') + 1)..] });
     }
 }

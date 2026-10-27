@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -179,14 +180,13 @@ public sealed class SiteStore
         await _writeGate.WaitAsync();
         try
         {
-            if (!_sites.TryGetValue(from, out var site)) return (false, $"No site is published at '{from}'.");
-            if (_sites.ContainsKey(to)) return (false, $"A site is already published at '{to}'.");
+            if (!_sites.TryGetValue(from, out var site)) return (false, ServerText.Get("sites.error.noSite", new { domain = from }));
+            if (_sites.ContainsKey(to)) return (false, ServerText.Get("sites.error.exists", new { domain = to }));
 
             var target = _paths.SiteDir(to);
             if (Directory.Exists(target))
             {
-                return (false,
-                    $"'{to}' still has files on disk from an earlier site. Remove {target} and try again.");
+                return (false, ServerText.Get("sites.error.leftoverFiles", new { domain = to, path = target }));
             }
 
             try
@@ -196,7 +196,7 @@ public sealed class SiteStore
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 _logger.LogError(ex, "Could not move {From} to {To}", from, to);
-                return (false, "The site's files could not be moved. Nothing was changed.");
+                return (false, ServerText.Get("sites.error.moveFailed"));
             }
 
             site.Domain = to;
@@ -267,7 +267,7 @@ public sealed class SiteStore
     /// </summary>
     public static (string? Domain, string? Error) NormalizeDomain(string? input)
     {
-        if (string.IsNullOrWhiteSpace(input)) return (null, "A domain is required.");
+        if (string.IsNullOrWhiteSpace(input)) return (null, ServerText.Get("sites.error.domainRequired"));
 
         var value = input.Trim();
 
@@ -284,7 +284,7 @@ public sealed class SiteStore
         if (colonIndex > 0) value = value[..colonIndex];
 
         value = value.TrimEnd('.').Trim();
-        if (value.Length == 0) return (null, "A domain is required.");
+        if (value.Length == 0) return (null, ServerText.Get("sites.error.domainRequired"));
 
         try
         {
@@ -292,23 +292,23 @@ public sealed class SiteStore
         }
         catch (ArgumentException)
         {
-            return (null, "That is not a valid domain name.");
+            return (null, ServerText.Get("sites.error.domainInvalid"));
         }
 
         value = value.ToLowerInvariant();
 
-        if (value.Length > 253) return (null, "Domain names must be 253 characters or fewer.");
+        if (value.Length > 253) return (null, ServerText.Get("sites.error.domainLong"));
 
         foreach (var label in value.Split('.'))
         {
             if (label.Length is 0 or > 63)
-                return (null, "Each part of a domain name must be between 1 and 63 characters.");
+                return (null, ServerText.Get("sites.error.domainPartLength"));
             if (label[0] == '-' || label[^1] == '-')
-                return (null, "Parts of a domain name cannot start or end with a hyphen.");
+                return (null, ServerText.Get("sites.error.domainHyphen"));
             foreach (var c in label)
             {
                 if (!(char.IsAsciiLetterOrDigit(c) || c == '-'))
-                    return (null, "Domain names may only contain letters, digits, hyphens and dots.");
+                    return (null, ServerText.Get("sites.error.domainCharacters"));
             }
         }
 

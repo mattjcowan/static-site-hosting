@@ -1,6 +1,7 @@
 using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using StaticSiteHost.Localization;
 
 namespace StaticSiteHost.Tls;
 
@@ -35,7 +36,7 @@ public static class CertificateMaterial
     {
         var all = new X509Certificate2Collection();
         all.ImportFromPem(chainPem);
-        if (all.Count == 0) throw new CryptographicException("There is no certificate in it.");
+        if (all.Count == 0) throw new CryptographicException(ServerText.Get("https.upload.error.noCertificate"));
 
         using var withKey = X509Certificate2.CreateFromPem(Pem(all[0]), keyPem);
         // Exported and loaded again, so the key is one SslStream can use on every platform,
@@ -60,9 +61,9 @@ public static class CertificateMaterial
     public static (ServedCertificate? Certificate, string? Error) Check(string? chainPem, string? keyPem, string? host)
     {
         if (string.IsNullOrWhiteSpace(chainPem) || !chainPem.Contains("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal))
-            return (null, "Paste the certificate as PEM: it starts with -----BEGIN CERTIFICATE-----. Put any intermediate certificates after it.");
+            return (null, ServerText.Get("https.upload.error.certificatePem"));
         if (string.IsNullOrWhiteSpace(keyPem) || !keyPem.Contains("PRIVATE KEY-----", StringComparison.Ordinal))
-            return (null, "Paste the private key as PEM: it starts with -----BEGIN PRIVATE KEY----- (or RSA or EC PRIVATE KEY). An encrypted key cannot be used.");
+            return (null, ServerText.Get("https.upload.error.keyPem"));
 
         ServedCertificate certificate;
         try
@@ -71,21 +72,21 @@ public static class CertificateMaterial
         }
         catch (CryptographicException ex)
         {
-            return (null, $"The certificate and key could not be read together: {ex.Message} Check that the key is the certificate's own.");
+            return (null, ServerText.Get("https.upload.error.unreadableTogether", new { problem = ex.Message }));
         }
         catch (ArgumentException ex)
         {
             return (null, ex.Message.Contains("does not match", StringComparison.OrdinalIgnoreCase)
-                ? "The private key is not this certificate's own. Paste the key that was made with this certificate."
-                : $"The certificate and key could not be read: {ex.Message.Split(" (Parameter")[0]}");
+                ? ServerText.Get("https.upload.error.keyMismatch")
+                : ServerText.Get("https.upload.error.unreadable", new { problem = ex.Message.Split(" (Parameter")[0] }));
         }
 
         if (certificate.NotAfter < DateTimeOffset.UtcNow)
-            return (null, $"The certificate expired on {certificate.NotAfter:yyyy-MM-dd}.");
+            return (null, ServerText.Get("https.upload.error.expired", new { date = certificate.NotAfter.ToString("yyyy-MM-dd") }));
         if (certificate.Names.Count == 0)
-            return (null, "The certificate names no host (it has no DNS names).");
+            return (null, ServerText.Get("https.upload.error.noNames"));
         if (host is not null && !certificate.Covers(host))
-            return (null, $"The certificate is for {string.Join(", ", certificate.Names)}, not {host}.");
+            return (null, ServerText.Get("https.upload.error.otherHost", new { names = string.Join(", ", certificate.Names), host }));
 
         return (certificate, null);
     }

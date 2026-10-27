@@ -1,4 +1,5 @@
 using System.Text;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Serving;
@@ -86,14 +87,16 @@ public sealed class SiteRedirectRules
 
         if (rules.Count > MaxRules)
         {
-            errors.Add($"A site can have at most {MaxRules} rules; this is {rules.Count}.");
+            errors.Add(ServerText.Get("site.rules.error.tooMany", new { max = MaxRules, count = rules.Count }));
             return errors;
         }
 
         for (var i = 0; i < rules.Count; i++)
         {
-            var label = string.IsNullOrWhiteSpace(rules[i].From) ? $"Rule {i + 1}" : $"Rule {i + 1} ({rules[i].From.Trim()})";
-            errors.AddRange(Problems(rules[i]).Select(problem => $"{label}: {problem}."));
+            var label = string.IsNullOrWhiteSpace(rules[i].From)
+                ? ServerText.Get("site.rules.error.label", new { number = i + 1 })
+                : ServerText.Get("site.rules.error.labelPath", new { number = i + 1, path = rules[i].From.Trim() });
+            errors.AddRange(Problems(rules[i]).Select(problem => ServerText.Get("site.rules.error.rule", new { label, problem })));
         }
 
         return errors;
@@ -111,33 +114,36 @@ public sealed class SiteRedirectRules
         var redirect = IsRedirect(rule.Status);
         if (!redirect && !RewriteStatuses.Contains(rule.Status))
         {
-            problems.Add(
-                $"{rule.Status} is not a status a rule can use — " +
-                $"{string.Join(", ", RedirectStatuses)} redirect, {string.Join(" and ", RewriteStatuses)} rewrite");
+            problems.Add(ServerText.Get("site.rules.error.status", new
+            {
+                status = rule.Status,
+                redirects = string.Join(", ", RedirectStatuses),
+                rewrites = string.Join(", ", RewriteStatuses)
+            }));
         }
 
         var target = rule.To?.Trim() ?? "";
 
         if (target.Length == 0)
         {
-            problems.Add("a target is required");
+            problems.Add(ServerText.Get("site.rules.error.targetRequired"));
         }
         else if (target.Length > MaxTargetLength)
         {
-            problems.Add($"targets must be {MaxTargetLength} characters or fewer");
+            problems.Add(ServerText.Get("site.rules.error.targetLong", new { max = MaxTargetLength }));
         }
         else if (target.Any(char.IsControl))
         {
-            problems.Add($"'{target}' contains a character that cannot appear in a URL");
+            problems.Add(ServerText.Get("site.rules.error.targetCharacter", new { target }));
         }
         else if (IsAbsolute(target))
         {
             // Sending a visitor to another site is a fair thing to want; serving one is not.
-            if (!redirect) problems.Add($"'{target}' is another site, which only a redirect can point at");
+            if (!redirect) problems.Add(ServerText.Get("site.rules.error.rewriteAbsolute", new { target }));
         }
         else if (!target.StartsWith('/') || target.StartsWith("//"))
         {
-            problems.Add($"'{target}' must be a path starting with '/', or an http(s) address");
+            problems.Add(ServerText.Get("site.rules.error.targetForm", new { target }));
         }
 
         if (hasGlob && glob is not null)
@@ -146,9 +152,8 @@ public sealed class SiteRedirectRules
             if (highest > glob.Wildcards)
             {
                 problems.Add(glob.Wildcards == 0
-                    ? $"'{target}' uses a placeholder but '{glob.Pattern}' has no wildcard to fill it"
-                    : $"'{target}' uses :{highest} but '{glob.Pattern}' has only " +
-                      $"{glob.Wildcards} wildcard{(glob.Wildcards == 1 ? "" : "s")}");
+                    ? ServerText.Get("site.rules.error.placeholderNoWildcard", new { target, pattern = glob.Pattern })
+                    : ServerText.Plural("site.rules.error.placeholderTooHigh", glob.Wildcards, new { target, placeholder = ":" + highest, pattern = glob.Pattern }));
             }
         }
 

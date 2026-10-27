@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -164,7 +165,7 @@ public sealed partial class BrandingService
     {
         var settings = await _store.ReadAsync(ct);
         if (!settings.AllowGoogleFonts)
-            return (null, "Google Fonts are not allowed on this server. Allow them under Branding, in the Font library, first.");
+            return (null, ServerText.Get("branding.google.error.notAllowed"));
 
         var (url, css, error) = await _google.StylesheetAsync(family, ct);
         if (url is null || css is null) return (null, error);

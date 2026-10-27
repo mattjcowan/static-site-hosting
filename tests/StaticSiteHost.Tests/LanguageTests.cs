@@ -31,8 +31,11 @@ public class LanguageTests
     [InlineData("en-GB,fr;q=0.8", "en")]
     [InlineData("zh", "zh-Hans")]
     [InlineData("zh-TW,zh;q=0.9", "zh-Hans")]
-    [InlineData("zh-TW", "en")]
-    [InlineData("zh-HK,en;q=0.9", "en")]
+    [InlineData("zh-TW", "zh-Hans")]
+    [InlineData("zh-HK,en;q=0.9", "zh-Hans")]
+    [InlineData("zh-MO", "zh-Hans")]
+    [InlineData("zh-Hant-TW", "zh-Hans")]
+    [InlineData("en-US,zh-TW;q=0.9", "en")]
     [InlineData("de,it,nl,fr", "fr")]
     public async Task The_browser_language_is_used_when_there_is_a_translation(string? acceptLanguage, string expected) =>
         Assert.Equal(expected, await LanguageFor(acceptLanguage));
@@ -41,10 +44,25 @@ public class LanguageTests
     public async Task The_language_picked_in_the_menu_wins_over_the_browser() =>
         Assert.Equal("es", await LanguageFor("fr-FR,fr;q=0.9", cookie: "c=es|uic=es"));
 
-    /// <summary>Runs one request through the app's language step and returns the language it chose.</summary>
-    internal static async Task<string> LanguageFor(string? acceptLanguage, string? cookie = null)
+    [Theory]
+    [InlineData("zh-TW", "zh-Hant")]
+    [InlineData("zh-HK,en;q=0.9", "zh-Hant")]
+    [InlineData("zh-CN", "zh-Hans")]
+    public async Task Traditional_Chinese_gets_its_own_translation_once_there_is_one(string acceptLanguage, string expected)
     {
-        var services = new ServiceCollection().AddLogging().AddSingleton<StringCatalog>().BuildServiceProvider();
+        var catalog = new StringCatalog(new Dictionary<string, Dictionary<string, string>>
+        {
+            ["en"] = new() { ["common.save"] = "Save" },
+            ["zh-Hans"] = new() { ["common.save"] = "保存" },
+            ["zh-Hant"] = new() { ["common.save"] = "儲存" }
+        });
+        Assert.Equal(expected, await LanguageFor(acceptLanguage, catalog: catalog));
+    }
+
+    /// <summary>Runs one request through the app's language step and returns the language it chose.</summary>
+    internal static async Task<string> LanguageFor(string? acceptLanguage, string? cookie = null, StringCatalog? catalog = null)
+    {
+        var services = new ServiceCollection().AddLogging().AddSingleton(catalog ?? new StringCatalog()).BuildServiceProvider();
         var app = new ApplicationBuilder(services);
         app.UseSiteHostLanguages();
         string? chosen = null;

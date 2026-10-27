@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 
 namespace StaticSiteHost.Serving;
 
@@ -48,7 +49,7 @@ public sealed class PathGlob
 
         if (string.IsNullOrWhiteSpace(pattern))
         {
-            error = "a path pattern is required";
+            error = ServerText.Get("site.rules.error.patternRequired");
             return false;
         }
 
@@ -56,19 +57,19 @@ public sealed class PathGlob
 
         if (pattern[0] != '/')
         {
-            error = $"'{pattern}' must start with '/' (for example /*.json)";
+            error = ServerText.Get("site.rules.error.patternSlash", new { pattern });
             return false;
         }
 
         if (pattern.Length > MaxPatternLength)
         {
-            error = $"path patterns must be {MaxPatternLength} characters or fewer";
+            error = ServerText.Get("site.rules.error.patternLong", new { max = MaxPatternLength });
             return false;
         }
 
         if (pattern.Any(c => char.IsControl(c) || c == '\\'))
         {
-            error = $"'{pattern}' contains a character that cannot appear in a URL path";
+            error = ServerText.Get("site.rules.error.patternCharacter", new { pattern });
             return false;
         }
 
@@ -76,7 +77,7 @@ public sealed class PathGlob
 
         if (wildcards > MaxWildcards)
         {
-            error = $"'{pattern}' has {wildcards} wildcards; {MaxWildcards} is the most a pattern may have";
+            error = ServerText.Get("site.rules.error.patternWildcards", new { pattern, count = wildcards, max = MaxWildcards });
             return false;
         }
 

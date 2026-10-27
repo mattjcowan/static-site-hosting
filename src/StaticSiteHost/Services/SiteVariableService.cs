@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.DataProtection;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -150,10 +151,9 @@ public sealed partial class SiteVariableService
 
     /// <summary>Why a variable name is refused, or null when it is fine.</summary>
     public static string? CheckName(string? name) =>
-        string.IsNullOrEmpty(name) ? "A variable name is required."
+        string.IsNullOrEmpty(name) ? ServerText.Get("site.variables.error.nameRequired")
         : NamePattern().IsMatch(name) ? null
-        : $"'{name}' is not a valid variable name. Use letters, digits and underscores, starting with a " +
-          "letter or an underscore, up to 64 characters.";
+        : ServerText.Get("site.variables.error.nameInvalid", new { name });
 
     /// <summary>Whether a value or default is within <see cref="MaxValueBytes"/>.</summary>
     public static bool IsValueTooLong(string? value) =>
@@ -347,7 +347,7 @@ public sealed partial class SiteVariableService
             if (value is null)
             {
                 if (existing is null)
-                    return (false, $"{name} has no value set here to keep. Send a value, even an empty one.");
+                    return (false, ServerText.Get("site.variables.error.nothingToKeep", new { name }));
 
                 value = Reveal(site.Domain, name, existing.Value, existing.Secret);
             }
@@ -356,7 +356,7 @@ public sealed partial class SiteVariableService
             if (error is not null) return (false, error);
 
             if (existing is null && site.Variables.Count >= MaxVariables)
-                return (false, $"A site can hold at most {MaxVariables} variables. Remove one first.");
+                return (false, ServerText.Get("site.variables.error.full", new { max = MaxVariables }));
 
             site.Variables = existing is null
                 ? [.. site.Variables, stored!]
@@ -416,7 +416,7 @@ public sealed partial class SiteVariableService
         SiteRecord site, IReadOnlyList<SiteVariable> variables, string actor, bool isAdministrator)
     {
         if (variables.Count > MaxVariables)
-            return (false, [$"A site can hold at most {MaxVariables} variables; this is {variables.Count}."]);
+            return (false, [ServerText.Get("site.variables.error.tooMany", new { max = MaxVariables, count = variables.Count })]);
 
         await _writeGate.WaitAsync();
         try
@@ -438,7 +438,7 @@ public sealed partial class SiteVariableService
 
                 if (name.Length > 0 && !seen.Add(name))
                 {
-                    errors.Add($"Variable {i + 1}: {name} appears more than once.");
+                    errors.Add(ServerText.Get("site.variables.error.numbered", new { number = i + 1, problem = ServerText.Get("site.variables.error.twice", new { name }) }));
                     continue;
                 }
 
@@ -447,7 +447,7 @@ public sealed partial class SiteVariableService
                 var error = TryPrepare(site, name, candidate.Value, candidate.Public, candidate.Secret,
                     site.Variables.FirstOrDefault(v => v.Name == name), actor, isAdministrator, out var stored);
 
-                if (error is not null) errors.Add($"Variable {i + 1}: {error}");
+                if (error is not null) errors.Add(ServerText.Get("site.variables.error.numbered", new { number = i + 1, problem = error }));
                 else replacement.Add(stored!);
             }
 
@@ -455,8 +455,8 @@ public sealed partial class SiteVariableService
 
             if (replacement.Count + held.Count > MaxVariables)
             {
-                return (false, [$"A site can hold at most {MaxVariables} variables; with the {held.Count} only an " +
-                                $"administrator can change, this would be {replacement.Count + held.Count}."]);
+                return (false, [ServerText.Get("site.variables.error.tooManyWithHeld",
+                    new { max = MaxVariables, held = held.Count, count = replacement.Count + held.Count })]);
             }
 
             site.Variables = [.. replacement, .. held];
@@ -484,7 +484,7 @@ public sealed partial class SiteVariableService
         value ??= "";
 
         if (CheckName(name) is { } nameError) return nameError;
-        if (IsValueTooLong(value)) return $"{name}: a value can be at most {MaxValueBytes / 1024} KB.";
+        if (IsValueTooLong(value)) return ServerText.Get("site.variables.error.valueLong", new { name, size = MaxValueBytes / 1024 });
 
         var (isPublic, isSecret, error) = Flags(
             name, DefinitionOf(site, name), existing, value, requestedPublic, requestedSecret, isAdministrator);
@@ -528,7 +528,7 @@ public sealed partial class SiteVariableService
         else
         {
             if (askedPublic && askedSecret)
-                return (false, false, $"{name} cannot be both public and secret: a secret never reaches the browser.");
+                return (false, false, ServerText.Get("site.variables.error.publicAndSecret", new { name }));
 
             (isPublic, isSecret) = (askedPublic, askedSecret);
         }
@@ -541,16 +541,12 @@ public sealed partial class SiteVariableService
 
             if (isSecret)
             {
-                return (false, false,
-                    $"{name} is a secret, and only administrators can set, change or remove secrets: they are usually " +
-                    "credentials an administrator was trusted with. Ask an administrator to set it.");
+                return (false, false, ServerText.Get("site.variables.error.secretAdministrators", new { name }));
             }
 
             if (readsEnvironment)
             {
-                return (false, false,
-                    $"{name}: only administrators can use ${{env:…}}, because the server's environment holds its " +
-                    "own secrets. Ask an administrator to set this value.");
+                return (false, false, ServerText.Get("site.variables.error.environmentAdministrators", new { name }));
             }
         }
 
@@ -568,8 +564,7 @@ public sealed partial class SiteVariableService
         stored.Secret || definition?.Secret == true || ReferencesEnvironment(stored.Value);
 
     private static string HeldByAdministrators(string name) =>
-        $"{name} holds a value only an administrator can change or remove: it is a secret, or it reads the server's " +
-        "environment. Ask an administrator.";
+        ServerText.Get("site.variables.error.held", new { name });
 
     private static VariableDefinition? DefinitionOf(SiteRecord site, string name) =>
         site.Current?.Variables.FirstOrDefault(d => d.Name == name);
@@ -658,10 +653,7 @@ public sealed partial class SiteVariableService
 
         if (dropped.Count > 0)
         {
-            warnings.Add(
-                $"The default for {string.Join(", ", dropped)} was dropped: only an administrator's deploy can use " +
-                "${env:…}, because the server's environment holds its own secrets. Set the value under Variables on " +
-                "the site page, or ask an administrator to deploy.");
+            warnings.Add(ServerText.Get("site.variables.error.defaultDropped", new { names = string.Join(", ", dropped) }));
         }
     }
 }

@@ -22,6 +22,11 @@ public sealed class StringCatalog
 
     private readonly FrozenDictionary<string, FrozenDictionary<string, string>> _languages;
 
+    private static readonly Lazy<StringCatalog> SharedCatalog = new(() => new StringCatalog());
+
+    /// <summary>The build's strings, loaded once: what the localizer and <see cref="ServerText"/> read.</summary>
+    public static StringCatalog Shared => SharedCatalog.Value;
+
     public StringCatalog() : this(typeof(StringCatalog).Assembly) { }
 
     internal StringCatalog(Assembly assembly) : this(Load(assembly)) { }

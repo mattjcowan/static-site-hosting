@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services.Realtime;
 
@@ -92,7 +93,7 @@ public sealed class FunctionDeploymentService
         // A site with no release yet (one made only of proxy routes) is given an empty one to carry
         // its functions: see ZipDeploymentService.SetFunctionsAsync.
         if (_sites.TryGet(domain) is null)
-            return FunctionDeployResult.Failed($"No site is published at '{domain}'.");
+            return FunctionDeployResult.Failed(ServerText.Get("sites.error.noSite", new { domain }));
 
         var built = await _builder.BuildAsync(_paths.FunctionsDir(domain), files, actor, source, ct);
         if (!built.Ok) return built;
@@ -124,12 +125,12 @@ public sealed class FunctionDeploymentService
         string? domain, string fileName, string actor, string source, CancellationToken ct = default)
     {
         var files = await LiveFilesAsync(domain);
-        if (files.Count == 0) return FunctionDeployResult.Failed("No functions are deployed here.");
+        if (files.Count == 0) return FunctionDeployResult.Failed(ServerText.Get("functions.error.noneDeployed"));
 
         var remaining = files.Where(f => !f.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (remaining.Count == files.Count) return FunctionDeployResult.Failed($"{fileName} is not one of the live files.");
+        if (remaining.Count == files.Count) return FunctionDeployResult.Failed(ServerText.Get("functions.error.notLiveFile", new { name = fileName }));
         if (remaining.Count == 0)
-            return FunctionDeployResult.Failed($"{fileName} is the only file. Remove the functions altogether instead.");
+            return FunctionDeployResult.Failed(ServerText.Get("functions.error.onlyFile", new { name = fileName }));
 
         return await DeployAsync(domain, remaining, actor, source, replace: true, ct);
     }
@@ -138,7 +139,7 @@ public sealed class FunctionDeploymentService
     {
         if (domain is null)
         {
-            if ((await GlobalAsync()).Current is null) return (false, "No global functions are deployed.");
+            if ((await GlobalAsync()).Current is null) return (false, ServerText.Get("functions.error.noGlobal"));
 
             await ReplaceGlobalAsync(null);
             await _audit.WriteAsync("functions.remove", actor, new { });

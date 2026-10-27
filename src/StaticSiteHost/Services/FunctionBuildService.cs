@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -141,14 +142,12 @@ public sealed class FunctionBuildService
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _logger.LogWarning("Function build timed out after {Timeout}", BuildTimeout);
-            return FunctionBuildResult.Failed(
-                $"The build did not finish within {BuildTimeout.TotalMinutes:0} minutes and was stopped.");
+            return FunctionBuildResult.Failed(ServerText.Get("functions.error.buildTimeout", new { minutes = BuildTimeout.TotalMinutes.ToString("0") }));
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
         {
             _logger.LogError(ex, "The dotnet SDK could not be started");
-            return FunctionBuildResult.Failed(
-                "The .NET SDK is not available on the server, so functions cannot be compiled.");
+            return FunctionBuildResult.Failed(ServerText.Get("functions.error.noSdk"));
         }
 
         var combined = Truncate(run.Output + "\n" + run.Error);
@@ -165,10 +164,9 @@ public sealed class FunctionBuildService
 
             return FunctionBuildResult.Failed(
                 errors.Count > 0
-                    ? errors[0].Code.StartsWith("CS", StringComparison.Ordinal)
-                        ? $"The function did not compile: {errors[0]}"
-                        : $"The build failed: {errors[0]}"
-                    : $"The build failed with exit code {run.ExitCode}.",
+                    ? ServerText.Get(errors[0].Code.StartsWith("CS", StringComparison.Ordinal) ? "functions.error.didNotCompile" : "functions.error.buildFailed",
+                        new { error = errors[0].ToString() })
+                    : ServerText.Get("functions.error.buildExitCode", new { code = run.ExitCode }),
                 diagnostics,
                 combined);
         }
@@ -180,7 +178,7 @@ public sealed class FunctionBuildService
         if (!File.Exists(assemblyPath))
         {
             return FunctionBuildResult.Failed(
-                "The build reported success but produced no assembly.", diagnostics, combined);
+                ServerText.Get("functions.error.noAssembly"), diagnostics, combined);
         }
 
         _logger.LogInformation(

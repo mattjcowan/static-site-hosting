@@ -1,3 +1,4 @@
+using StaticSiteHost.Localization;
 using StaticSiteHost.Services.Ai;
 
 namespace StaticSiteHost.Services.Assistant;
@@ -69,10 +70,10 @@ public sealed class AssistantSettingsStore
         providerId = string.IsNullOrWhiteSpace(providerId) ? null : providerId.Trim();
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
 
-        if (providerId is not null && _providers.Find(providerId) is null) return "That AI provider no longer exists.";
-        if (model is { Length: > AiProviderStore.MaxModelLength }) return $"The model name must be {AiProviderStore.MaxModelLength} characters or fewer.";
+        if (providerId is not null && _providers.Find(providerId) is null) return ServerText.Get("ai.assistant.error.providerGone");
+        if (model is { Length: > AiProviderStore.MaxModelLength }) return ServerText.Get("ai.assistant.error.modelLong", new { max = AiProviderStore.MaxModelLength });
         if (memberMessagesPerDay is < 0 or > AssistantSettings.MaxMemberMessagesPerDay)
-            return $"The daily limit for members is 0 (no limit) to {AssistantSettings.MaxMemberMessagesPerDay:N0} messages.";
+            return ServerText.Get("ai.assistant.error.dailyLimit", new { max = AssistantSettings.MaxMemberMessagesPerDay.ToString("N0") });
 
         await _store.UpdateAsync(settings =>
         {

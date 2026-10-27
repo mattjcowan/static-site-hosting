@@ -16,7 +16,7 @@
   "js.files.noRelease": "此站点还没有版本。创建一个文件或上传一些文件：它们将成为站点的第一个版本，并立即上线。",
   "js.files.noFiles": "此版本没有文件。创建一个文件或上传一些文件。",
   "js.files.noMatch": "没有与筛选条件匹配的文件。",
-  "js.files.moreMatches.one": "还有 {count} 个匹配的文件。输入更完整的名称即可找到它。",
+  "js.files.moreMatches.one": "还有 {count} 个匹配的文件。输入更完整的名称即可找到它们。",
   "js.files.moreMatches.other": "还有 {count} 个匹配的文件。输入更完整的名称即可找到它们。",
   "js.files.state.unsaved": "未保存",
   "js.files.choose": "选择一个文件，即可在此处查看。",

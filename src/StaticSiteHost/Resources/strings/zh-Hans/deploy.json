@@ -24,5 +24,27 @@
   "deploy.resolve.folder": "返回 `{file}`。",
   "deploy.resolve.page": "如果 `{htmlFile}` 存在，则返回它。否则返回最近的 `index.html`，从 `{folderIndex}` 逐级向上直到 `{rootIndex}`。",
   "deploy.resolve.asset": "按原样返回。如果文件不存在，则返回 `404`，而不是 HTML 页面。",
-  "deploy.resolve.notFound": "如果站点有此文件，所有未匹配任何内容的路径都由它响应。"
+  "deploy.resolve.notFound": "如果站点有此文件，所有未匹配任何内容的路径都由它响应。",
+
+  "deploy.error.empty": "上传的文件是空的。",
+  "deploy.error.uploadLimit": "压缩包超过了 {limit} 的上传上限。",
+  "deploy.error.notZip": "该文件不是可读取的 zip 压缩包。",
+  "deploy.error.disk": "无法将压缩包写入磁盘。请查看服务器日志。",
+  "deploy.error.tooManyEntries": "压缩包中的条目超过了允许的 {max} 个。",
+  "deploy.error.fileLimit": "“{path}”超过了单个文件 {limit} 的上限。",
+  "deploy.error.noFiles": "压缩包中没有可用的文件。",
+  "deploy.error.expandsTo": "压缩包解压后为 {size}，超过了 {limit} 的上限。",
+  "deploy.error.extractionLimit": "压缩包解压后超过了配置的解压上限。",
+  "deploy.error.functionsAdministrators": "此压缩包包含 `{folder}` 文件夹，由于它会作为代码在服务器上运行，只有管理员才能部署。请移除该文件夹，或请管理员来部署。",
+  "deploy.error.functionFileLimit": "`{path}` 超过了单个函数文件 {limit} 的上限。",
+  "deploy.error.functionsDidNotBuild": "未部署任何内容：函数未能编译。{error}",
+  "deploy.warning.skipped.one": "已跳过 {count} 个条目（路径不安全或名称被排除）。",
+  "deploy.warning.skipped.other": "已跳过 {count} 个条目（路径不安全或名称被排除）。",
+  "deploy.warning.functionFileIgnored": "已忽略 `{path}`：只有直接位于 `{folder}` 中的 `.cs` 和 `.linq` 文件才会被编译。",
+  "deploy.warning.noFunctionFiles": "`{folder}` 中没有 `.cs` 或 `.linq` 文件，因此站点保留原有的函数。",
+  "deploy.warning.noIndex": "站点根目录中没有找到 `index.html`——请求将返回 404。",
+  "deploy.warning.ruleFileLarge": "“{name}”超过了 {limit}，已被忽略。",
+  "deploy.warning.ruleFileIgnored": "已忽略“{name}”——{problems}",
+  "deploy.warning.missingVariables.one": "变量 {names} 为必填项，但没有值。请在站点页面的“变量”中设置。",
+  "deploy.warning.missingVariables.other": "变量 {names} 为必填项，但没有值。请在站点页面的“变量”中设置。"
 }

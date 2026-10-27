@@ -24,5 +24,27 @@
   "deploy.resolve.folder": "Serves `{file}`.",
   "deploy.resolve.page": "Serves `{htmlFile}` if it exists. If not, serves the nearest `index.html`, from `{folderIndex}` up to `{rootIndex}`.",
   "deploy.resolve.asset": "Served as it is. If it is missing, the answer is a `404`, not an HTML page.",
-  "deploy.resolve.notFound": "If the site has one, it answers every path that matches nothing."
+  "deploy.resolve.notFound": "If the site has one, it answers every path that matches nothing.",
+
+  "deploy.error.empty": "The uploaded file is empty.",
+  "deploy.error.uploadLimit": "The archive is larger than the {limit} upload limit.",
+  "deploy.error.notZip": "That file is not a readable zip archive.",
+  "deploy.error.disk": "The archive could not be written to disk. Check the server logs.",
+  "deploy.error.tooManyEntries": "The archive holds more than the {max} allowed entries.",
+  "deploy.error.fileLimit": "'{path}' is larger than the {limit} per-file limit.",
+  "deploy.error.noFiles": "The archive contains no usable files.",
+  "deploy.error.expandsTo": "The archive expands to {size}, over the {limit} limit.",
+  "deploy.error.extractionLimit": "The archive expands to more than the configured extraction limit.",
+  "deploy.error.functionsAdministrators": "This archive contains a `{folder}` folder, which only administrators can deploy because it runs as code on the server. Remove the folder, or ask an administrator to deploy it.",
+  "deploy.error.functionFileLimit": "`{path}` is over the {limit} limit for one function file.",
+  "deploy.error.functionsDidNotBuild": "Nothing was deployed: the functions did not build. {error}",
+  "deploy.warning.skipped.one": "{count} entry was skipped (unsafe path or excluded name).",
+  "deploy.warning.skipped.other": "{count} entries were skipped (unsafe path or excluded name).",
+  "deploy.warning.functionFileIgnored": "`{path}` was ignored: only `.cs` and `.linq` files directly inside `{folder}` are compiled.",
+  "deploy.warning.noFunctionFiles": "`{folder}` holds no `.cs` or `.linq` files, so the site keeps the functions it had.",
+  "deploy.warning.noIndex": "No `index.html` was found at the root of the site — requests will fall back to a 404.",
+  "deploy.warning.ruleFileLarge": "'{name}' is larger than {limit} and was ignored.",
+  "deploy.warning.ruleFileIgnored": "'{name}' was ignored — {problems}",
+  "deploy.warning.missingVariables.one": "The variable {names} is required but has no value. Set it under Variables on the site page.",
+  "deploy.warning.missingVariables.other": "The variables {names} are required but have no value. Set them under Variables on the site page."
 }

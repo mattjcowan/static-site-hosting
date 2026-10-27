@@ -38,7 +38,7 @@
   "common.assistant.new": "Nueva",
   "common.assistant.newTitle": "Empezar una conversación nueva",
   "common.assistant.close": "Cerrar el asistente",
-  "common.assistant.empty": "Dile qué configurar. Por ejemplo: “Crea shop.example.com, envía / a http://web:3000 y /api a http://api:8080 con WebSockets.” Actúa en tu nombre y pregunta antes de eliminar algo.",
+  "common.assistant.empty": "Dile qué configurar. Por ejemplo: “Crea shop.example.com, envía / a http://web:3000 y /api a http://api:8080 con WebSockets”. Actúa en tu nombre y pregunta antes de eliminar algo.",
   "common.assistant.placeholder": "Pregunta o dile qué hacer…",
   "common.assistant.message": "Mensaje",
   "common.assistant.send": "Enviar",

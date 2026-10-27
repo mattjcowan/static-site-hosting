@@ -1,4 +1,5 @@
 using System.Text;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Serving;
@@ -51,13 +52,13 @@ public static class HeaderRuleText
             var colon = line.IndexOf(':');
             if (colon <= 0)
             {
-                problems.Add($"Line {lineNumber}: expected a path starting with '/' or a 'Header: value' line.");
+                problems.Add(ServerText.Get("site.rules.error.headersLine", new { line = lineNumber }));
                 continue;
             }
 
             if (current is null)
             {
-                problems.Add($"Line {lineNumber}: '{line[..colon]}' comes before any path pattern.");
+                problems.Add(ServerText.Get("site.rules.error.headerBeforePath", new { line = lineNumber, name = line[..colon] }));
                 continue;
             }
 

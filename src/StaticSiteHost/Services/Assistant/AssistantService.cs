@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using StaticSiteHost.Functions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Services.Ai;
 using StaticSiteHost.Tools;
 
@@ -133,7 +135,7 @@ public sealed class AssistantService
         {
             if (string.IsNullOrWhiteSpace(request.Message))
             {
-                await emit(new { type = "error", message = "That conversation has ended. Start a new one." });
+                await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.ended") });
                 return;
             }
 
@@ -143,7 +145,7 @@ public sealed class AssistantService
 
         if (!await conversation.Gate.WaitAsync(TimeSpan.Zero, ct))
         {
-            await emit(new { type = "error", message = "The assistant is still working on your last message." });
+            await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.busy") });
             return;
         }
 
@@ -157,7 +159,7 @@ public sealed class AssistantService
             {
                 if (request.Decision is not ("run" or "cancel"))
                 {
-                    await emit(new { type = "error", message = "Choose Run or Cancel for the step that is waiting first." });
+                    await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.waiting") });
                     return;
                 }
 
@@ -167,13 +169,13 @@ public sealed class AssistantService
             {
                 if (string.IsNullOrWhiteSpace(request.Message))
                 {
-                    await emit(new { type = "error", message = "Type a message." });
+                    await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.empty") });
                     return;
                 }
 
                 if (conversation.Messages.Count >= AssistantConversation.MaxMessages)
                 {
-                    await emit(new { type = "error", message = "This conversation is long enough to slow every answer down. Start a new one." });
+                    await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.tooLong") });
                     return;
                 }
 
@@ -204,7 +206,7 @@ public sealed class AssistantService
             // the answer off, and keep the conversation usable.
             _logger.LogError(ex, "The assistant failed part way through an answer");
             Abandon(conversation);
-            await emit(new { type = "error", message = "The assistant ran into a problem on the server. The details are in the server log." });
+            await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.server") });
         }
         finally
         {
@@ -258,7 +260,7 @@ public sealed class AssistantService
                 if (chunk.Final is { } final) answer = final;
             }
 
-            if (answer is null) throw new AiChatException("The AI provider ended its answer without finishing it. Try again.");
+            if (answer is null) throw new AiChatException(ServerText.Get("ai.assistant.error.unfinished"));
 
             usage.Input += answer.InputTokens;
             usage.Output += answer.OutputTokens;
@@ -267,7 +269,7 @@ public sealed class AssistantService
             {
                 conversation.Messages.Add(AiMessage.Assistant(answer.Text.Length > 0 ? answer.Text : "(no answer)"));
                 if (answer.StopReason is "length" or "max_tokens")
-                    await emit(new { type = "error", message = "The answer was cut off at its length limit." });
+                    await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.cutOff") });
                 return;
             }
 
@@ -279,7 +281,7 @@ public sealed class AssistantService
             if (!await RunCallsAsync(conversation, decision: null, services, emit, usage, ct)) return;
         }
 
-        await emit(new { type = "error", message = $"Stopped after {MaxRounds} steps. Say what to do next, more precisely." });
+        await emit(new { type = "error", message = ServerText.Get("ai.assistant.error.steps", new { count = MaxRounds }) });
         conversation.Messages.Add(AiMessage.Assistant($"(stopped after {MaxRounds} steps)"));
     }
 
@@ -339,6 +341,8 @@ public sealed class AssistantService
             foreach (var property in call.Arguments.EnumerateObject()) arguments[property.Name] = property.Value.Clone();
         }
 
+        // The tools answer the model in English, as they do over MCP, whatever language the page is in.
+        CultureInfo.CurrentUICulture = LocalizationSetup.English;
         try
         {
             var value = await tool.Function.InvokeAsync(arguments, ct);

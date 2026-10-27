@@ -58,5 +58,5 @@
   "account.changePassword.mismatch": "两次输入的密码不一致。",
   "account.changePassword.wrongCurrent": "这不是你的当前密码。",
   "account.changePassword.same": "新密码必须与当前密码不同。",
-  "account.changePassword.done": "密码已更改。你在其他所有地方的登录都已退出。"
+  "account.changePassword.done": "密码已更改。你已在其他所有地方退出登录。"
 }

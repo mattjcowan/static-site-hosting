@@ -3388,8 +3388,9 @@ anywhere you would rather not publish ports 80 and 443. It needs the domain's DN
 
 The management app and the visitor screens come in **English, French, Spanish and Simplified
 Chinese**. Each person sees the language their browser asks for, or the one they pick with the
-language button at the bottom of the menu. A visitor on a site sees its passcode and error screens
-in their browser's language.
+language button at the bottom of the menu. A browser that asks for Traditional Chinese gets
+Simplified Chinese. A visitor on a site sees its passcode and error screens in their browser's
+language.
 
 Every word lives in `src/StaticSiteHost/Resources/strings/{language}/*.json` (`en`, `fr`, `es`,
 `zh-Hans`), built into the server. English is complete, and any other language falls back to it
@@ -3407,9 +3408,11 @@ before you rely on them for your own users.
   placeholder matches English. The language then appears in the menu's language button.
 * **Writing the English.** `.claude/skills/ui-copy/SKILL.md` has the rules and the glossary:
   short sentences, plain words, one term for one thing.
-* **What stays English:** the API's answers, MCP tool descriptions, log lines, this README, and
-  for now the validation messages the API and the UI share. Sizes are written as `KB`, `MB` and
-  `GB` in every language.
+* **What stays English:** the API's answers and MCP's, whatever language the caller's browser
+  asks for; log lines; this README; and messages about C# you wrote, which appear beside the
+  compiler's own English errors. The messages the API and the pages share, such as why a proxy
+  route cannot be saved, are English in the API and translated on the pages. Sizes this server
+  works out, such as a deploy's, are written as `KB`, `MB` and `GB` in every language.
 
 ---
 

@@ -77,5 +77,21 @@
   "https.request.error.noNames": "Give at least one name.",
   "https.request.error.noCloudflare": "Connect Cloudflare on the DNS page first.",
   "https.request.error.noZone": "No Cloudflare zone the token can edit holds {name}.",
-  "https.request.error.noOrigin": "The Cloudflare token is not allowed to make Origin certificates for {name}. Give it SSL and Certificates: Edit on that zone."
+  "https.request.error.noOrigin": "The Cloudflare token is not allowed to make Origin certificates for {name}. Give it SSL and Certificates: Edit on that zone.",
+
+  "https.problem.noShared": "No shared certificate covers this host. Upload one under HTTPS, or choose another source.",
+  "https.problem.letsEncryptPrivate": "Let's Encrypt only issues for public names, and this is not one. Choose self-signed or upload one.",
+  "https.problem.originPrivate": "Cloudflare only makes Origin certificates for names in your zones, and this is not one.",
+  "https.problem.notUploaded": "No certificate has been uploaded for this site.",
+  "https.error.source": "The source is one of: {sources}.",
+  "https.error.uploadFirst": "Upload a certificate for this site first; uploading one chooses it.",
+  "https.upload.error.certificatePem": "Paste the certificate as PEM: it starts with `-----BEGIN CERTIFICATE-----`. Put any intermediate certificates after it.",
+  "https.upload.error.keyPem": "Paste the private key as PEM: it starts with `-----BEGIN PRIVATE KEY-----` (or RSA or EC PRIVATE KEY). An encrypted key cannot be used.",
+  "https.upload.error.noCertificate": "There is no certificate in it.",
+  "https.upload.error.unreadableTogether": "The certificate and key could not be read together: {problem} Check that the key is the certificate's own.",
+  "https.upload.error.keyMismatch": "The private key is not this certificate's own. Paste the key that was made with this certificate.",
+  "https.upload.error.unreadable": "The certificate and key could not be read: {problem}",
+  "https.upload.error.expired": "The certificate expired on {date}.",
+  "https.upload.error.noNames": "The certificate names no host (it has no DNS names).",
+  "https.upload.error.otherHost": "The certificate is for {names}, not {host}."
 }

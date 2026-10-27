@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -196,9 +197,9 @@ public sealed partial class BrandingStore
     /// <summary>Stores an image and returns its id, or why it was refused.</summary>
     public async Task<(string? Id, string? Error)> SaveAssetAsync(byte[] data, CancellationToken ct = default)
     {
-        if (data.Length == 0) return (null, "The file is empty.");
-        if (data.Length > MaxAssetBytes) return (null, $"An image can be at most {MaxAssetBytes / 1024} KB.");
-        if (ImageType(data) is not { } type) return (null, "Upload an image: SVG, PNG, WebP, JPEG, GIF or ICO.");
+        if (data.Length == 0) return (null, ServerText.Get("branding.error.emptyFile"));
+        if (data.Length > MaxAssetBytes) return (null, ServerText.Get("branding.error.imageLarge", new { size = MaxAssetBytes / 1024 }));
+        if (ImageType(data) is not { } type) return (null, ServerText.Get("branding.error.notImage"));
 
         var id = Convert.ToHexStringLower(SHA256.HashData(data))[..16] + "." + type;
         Directory.CreateDirectory(_assets);
@@ -252,16 +253,16 @@ public sealed partial class BrandingStore
         string? googleCssUrl, string? actor, CancellationToken ct = default)
     {
         family = family.Trim();
-        if (!IsFamilyName(family)) return (null, "A font's name can have letters, digits, spaces and hyphens, at most 60 of them, such as Inter or Source Serif 4.");
-        if (kind != BrandFont.GoogleLinked && files.Count == 0) return (null, "Add at least one font file: WOFF2, WOFF, TTF or OTF.");
-        if (files.Count > MaxFontFiles) return (null, $"A font can have at most {MaxFontFiles} files.");
-        if (files.Sum(f => (long)f.Data.Length) > MaxFontBytes) return (null, $"A font's files can be at most {MaxFontBytes / (1024 * 1024)} MB together.");
+        if (!IsFamilyName(family)) return (null, ServerText.Get("branding.error.fontName"));
+        if (kind != BrandFont.GoogleLinked && files.Count == 0) return (null, ServerText.Get("branding.error.noFontFiles"));
+        if (files.Count > MaxFontFiles) return (null, ServerText.Get("branding.error.tooManyFontFiles", new { max = MaxFontFiles }));
+        if (files.Sum(f => (long)f.Data.Length) > MaxFontBytes) return (null, ServerText.Get("branding.error.fontLarge", new { size = MaxFontBytes / (1024 * 1024) }));
 
         var types = new string[files.Count];
         for (var i = 0; i < files.Count; i++)
         {
-            if (files[i].Data.Length > MaxFontFileBytes) return (null, $"A font file can be at most {MaxFontFileBytes / (1024 * 1024)} MB.");
-            if (FontType(files[i].Data) is not { } type) return (null, "One of the files is not a font. Use WOFF2, WOFF, TTF or OTF files.");
+            if (files[i].Data.Length > MaxFontFileBytes) return (null, ServerText.Get("branding.error.fontFileLarge", new { size = MaxFontFileBytes / (1024 * 1024) }));
+            if (FontType(files[i].Data) is not { } type) return (null, ServerText.Get("branding.error.notFont"));
             types[i] = type;
         }
 
@@ -302,7 +303,7 @@ public sealed partial class BrandingStore
         if (!added)
         {
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-            return (null, $"The library can hold at most {MaxFonts} fonts. Remove one first.");
+            return (null, ServerText.Get("branding.error.libraryFull", new { max = MaxFonts }));
         }
 
         OnChanged();

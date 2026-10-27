@@ -51,5 +51,22 @@
   "users.action.blocked": "{username} 已无法登录，其 API 密钥也已停止工作。",
   "users.action.allowed": "{username} 可以重新登录了。",
   "users.action.deleteConfirm": "要删除 {username} 吗？其 API 密钥会立即停止工作。此操作无法撤销。",
-  "users.action.deleted": "已删除 {username} 及其 API 密钥。"
+  "users.action.deleted": "已删除 {username} 及其 API 密钥。",
+
+  "users.error.usernameRequired": "用户名为必填项。",
+  "users.error.usernameLength": "用户名长度必须在 3 到 64 个字符之间。",
+  "users.error.usernameCharacters": "用户名只能包含字母、数字以及 . _ @ + -，并且必须以字母或数字开头和结尾。",
+  "users.error.usernameTaken": "该用户名已被使用。",
+  "users.error.passwordRequired": "密码为必填项。",
+  "users.error.passwordShort.one": "密码至少需要 {count} 个字符。",
+  "users.error.passwordShort.other": "密码至少需要 {count} 个字符。",
+  "users.error.passwordLong": "密码最多 256 个字符。",
+  "users.error.unknownRole": "未知角色。",
+  "users.error.noUser": "没有这个用户。",
+  "users.error.linkFailed": "无法生成私密链接。请重试。",
+  "users.error.ownRole": "你不能更改自己的角色。",
+  "users.error.ownDisable": "你不能停用自己的账号。",
+  "users.error.ownDelete": "你不能删除自己的账号。",
+  "users.error.bootstrap": "初始管理员不能删除。",
+  "users.error.lastAdministrator": "必须至少保留一个未被禁止登录的管理员。"
 }

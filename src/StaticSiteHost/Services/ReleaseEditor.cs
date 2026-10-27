@@ -114,7 +114,7 @@ public sealed class ReleaseEditor
             var had = name == HeaderRuleText.FileName ? headers.Count > 0 : name == RedirectRuleText.FileName ? redirects.Count > 0 : variables.Count > 0;
             if (toDelete.Remove(name))
             {
-                if (!had) warnings.Add($"'{name}' was not in the release, so there was nothing to delete.");
+                if (!had) warnings.Add(ServerText.Get("site.files.warning.nothingToDelete", new { path = name }));
                 if (name == HeaderRuleText.FileName) headers = [];
                 else if (name == RedirectRuleText.FileName) redirects = [];
                 else (variables, variablesChanged) = ([], true);
@@ -188,7 +188,7 @@ public sealed class ReleaseEditor
             }
             else
             {
-                warnings.Add($"'{path}' was not in the release, so there was nothing to delete.");
+                warnings.Add(ServerText.Get("site.files.warning.nothingToDelete", new { path }));
             }
         }
 

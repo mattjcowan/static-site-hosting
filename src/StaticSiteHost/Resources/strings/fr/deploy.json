@@ -24,5 +24,27 @@
   "deploy.resolve.folder": "Sert `{file}`.",
   "deploy.resolve.page": "Sert `{htmlFile}` s'il existe. Sinon, sert le fichier `index.html` le plus proche, de `{folderIndex}` jusqu'à `{rootIndex}`.",
   "deploy.resolve.asset": "Servi tel quel. S'il manque, la réponse est une erreur `404`, pas une page HTML.",
-  "deploy.resolve.notFound": "Si le site a cette page, elle répond à tout chemin qui ne correspond à rien."
+  "deploy.resolve.notFound": "Si le site a cette page, elle répond à tout chemin qui ne correspond à rien.",
+
+  "deploy.error.empty": "Le fichier envoyé est vide.",
+  "deploy.error.uploadLimit": "L'archive dépasse la limite d'envoi de {limit}.",
+  "deploy.error.notZip": "Ce fichier n'est pas une archive zip lisible.",
+  "deploy.error.disk": "L'archive n'a pas pu être écrite sur le disque. Consultez les journaux du serveur.",
+  "deploy.error.tooManyEntries": "L'archive contient plus que les {max} entrées autorisées.",
+  "deploy.error.fileLimit": "« {path} » dépasse la limite de {limit} par fichier.",
+  "deploy.error.noFiles": "L'archive ne contient aucun fichier utilisable.",
+  "deploy.error.expandsTo": "Décompressée, l'archive fait {size}, au-delà de la limite de {limit}.",
+  "deploy.error.extractionLimit": "Décompressée, l'archive dépasse la limite d'extraction configurée.",
+  "deploy.error.functionsAdministrators": "Cette archive contient un dossier `{folder}`, que seuls les administrateurs peuvent déployer, car il s'exécute comme du code sur le serveur. Retirez le dossier, ou demandez à un administrateur de la déployer.",
+  "deploy.error.functionFileLimit": "`{path}` dépasse la limite de {limit} pour un fichier de fonctions.",
+  "deploy.error.functionsDidNotBuild": "Rien n'a été déployé : les fonctions n'ont pas pu être compilées. {error}",
+  "deploy.warning.skipped.one": "{count} entrée a été ignorée (chemin dangereux ou nom exclu).",
+  "deploy.warning.skipped.other": "{count} entrées ont été ignorées (chemin dangereux ou nom exclu).",
+  "deploy.warning.functionFileIgnored": "`{path}` a été ignoré : seuls les fichiers `.cs` et `.linq` placés directement dans `{folder}` sont compilés.",
+  "deploy.warning.noFunctionFiles": "`{folder}` ne contient aucun fichier `.cs` ou `.linq`, donc le site garde les fonctions qu'il avait.",
+  "deploy.warning.noIndex": "Aucun `index.html` n'a été trouvé à la racine du site — les requêtes aboutiront à une erreur 404.",
+  "deploy.warning.ruleFileLarge": "« {name} » dépasse {limit} et a été ignoré.",
+  "deploy.warning.ruleFileIgnored": "« {name} » a été ignoré — {problems}",
+  "deploy.warning.missingVariables.one": "La variable {names} est obligatoire mais n'a pas de valeur. Définissez-la sous Variables sur la page du site.",
+  "deploy.warning.missingVariables.other": "Les variables {names} sont obligatoires mais n'ont pas de valeur. Définissez-les sous Variables sur la page du site."
 }

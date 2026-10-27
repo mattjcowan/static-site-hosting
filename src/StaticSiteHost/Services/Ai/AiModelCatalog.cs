@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services.Ai;
@@ -68,11 +69,11 @@ public sealed partial class AiModelCatalog
     public Task<AiModelList> ProbeAsync(string? kind, string? baseUrl, string? apiKey, CancellationToken ct)
     {
         kind = kind?.Trim().ToLowerInvariant();
-        if (!AiProviderRecord.IsKnownKind(kind)) return Task.FromResult(AiModelList.Failed("Choose a kind first."));
+        if (!AiProviderRecord.IsKnownKind(kind)) return Task.FromResult(AiModelList.Failed(ServerText.Get("ai.models.error.kind")));
 
         var (url, error) = AiProviderStore.NormalizeBaseUrl(string.IsNullOrWhiteSpace(baseUrl) ? AiProviderStore.DefaultBaseUrl(kind!) : baseUrl);
         return url is null
-            ? Task.FromResult(AiModelList.Failed(error ?? "The base URL cannot be used."))
+            ? Task.FromResult(AiModelList.Failed(error ?? ServerText.Get("ai.models.error.baseUrl")))
             : FetchAsync(kind!, url, string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim(), ct);
     }
 
@@ -106,9 +107,9 @@ public sealed partial class AiModelCatalog
             {
                 return AiModelList.Failed((int)response.StatusCode switch
                 {
-                    401 or 403 => "The provider refused the key, so it would not list its models.",
-                    404 => "This provider does not list its models. Type the model's name instead.",
-                    var status => $"The provider answered {status} when asked for its models."
+                    401 or 403 => ServerText.Get("ai.models.error.refused"),
+                    404 => ServerText.Get("ai.models.error.noList"),
+                    var status => ServerText.Get("ai.models.error.status", new { status })
                 });
             }
 
@@ -120,12 +121,12 @@ public sealed partial class AiModelCatalog
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return AiModelList.Failed("The provider did not list its models in time.");
+            return AiModelList.Failed(ServerText.Get("ai.models.error.timeout"));
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException)
         {
             _logger.LogInformation(ex, "Could not list the models of the AI provider at {BaseUrl}", baseUrl);
-            return AiModelList.Failed("The provider could not be reached to list its models.");
+            return AiModelList.Failed(ServerText.Get("ai.models.error.unreachable"));
         }
     }
 

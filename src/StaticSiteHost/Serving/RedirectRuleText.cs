@@ -1,4 +1,5 @@
 using System.Text;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Serving;
@@ -47,7 +48,7 @@ public static class RedirectRuleText
 
             if (columns.Length is < 2 or > 3)
             {
-                problems.Add($"Line {lineNumber}: expected 'from to [status]', found {columns.Length} column(s).");
+                problems.Add(ServerText.Plural("site.rules.error.redirectColumns", columns.Length, new { line = lineNumber }));
                 continue;
             }
 
@@ -65,7 +66,7 @@ public static class RedirectRuleText
 
                 if (!int.TryParse(status, out var parsed))
                 {
-                    problems.Add($"Line {lineNumber}: '{columns[2]}' is not a status code.");
+                    problems.Add(ServerText.Get("site.rules.error.notStatus", new { line = lineNumber, value = columns[2] }));
                     continue;
                 }
 

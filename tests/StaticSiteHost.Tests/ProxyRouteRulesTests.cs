@@ -190,8 +190,8 @@ public class ProxyRouteRulesTests
         // No server here, so no ports of its own to refuse: ProxyForwardingTests covers those.
         using var invokers = new ProxyInvokers(Microsoft.Extensions.Options.Options.Create(new Configuration.SiteHostingOptions()));
 
-        Assert.Contains("ProxyBlockedNetworks", invokers.Refusal(IPAddress.Parse("169.254.169.254"), 80));
-        Assert.Contains("ProxyBlockedNetworks", invokers.Refusal(IPAddress.Parse("fe80::1"), 80));
+        Assert.Equal("proxy.connect.blocked", invokers.Refusal(IPAddress.Parse("169.254.169.254"), 80));
+        Assert.Equal("proxy.connect.blocked", invokers.Refusal(IPAddress.Parse("fe80::1"), 80));
         Assert.Null(invokers.Refusal(IPAddress.Loopback, 3000));
         Assert.Null(invokers.Refusal(IPAddress.IPv6Loopback, 3000));
         Assert.Null(invokers.Refusal(IPAddress.Parse("10.1.2.3"), 80));

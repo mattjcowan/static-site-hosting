@@ -1,3 +1,4 @@
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Serving;
@@ -89,30 +90,30 @@ public sealed class SiteHeaderRules
 
         if (rules.Count > MaxRules)
         {
-            errors.Add($"A site can have at most {MaxRules} rules; this is {rules.Count}.");
+            errors.Add(ServerText.Get("site.rules.error.tooMany", new { max = MaxRules, count = rules.Count }));
             return errors;
         }
 
         for (var i = 0; i < rules.Count; i++)
         {
             var rule = rules[i];
-            var label = $"Rule {i + 1}";
+            var label = ServerText.Get("site.rules.error.label", new { number = i + 1 });
 
             if (!PathGlob.TryCompile(rule.For, out _, out var globError))
-                errors.Add($"{label}: {globError}.");
+                errors.Add(ServerText.Get("site.rules.error.rule", new { label, problem = globError }));
             else
-                label = $"Rule {i + 1} ({rule.For.Trim()})";
+                label = ServerText.Get("site.rules.error.labelPath", new { number = i + 1, path = rule.For.Trim() });
 
             var set = rule.Set ?? [];
 
             if (set.Count == 0)
-                errors.Add($"{label}: sets no headers.");
+                errors.Add(ServerText.Get("site.rules.error.rule", new { label, problem = ServerText.Get("site.rules.error.noHeaders") }));
             else if (set.Count > MaxHeadersPerRule)
-                errors.Add($"{label}: sets {set.Count} headers, more than the {MaxHeadersPerRule} allowed.");
+                errors.Add(ServerText.Get("site.rules.error.rule", new { label, problem = ServerText.Get("site.rules.error.tooManyHeaders", new { count = set.Count, max = MaxHeadersPerRule }) }));
 
             foreach (var (name, value) in set)
             {
-                if (!IsAllowed(name, value, out var headerError)) errors.Add($"{label}: {headerError}.");
+                if (!IsAllowed(name, value, out var headerError)) errors.Add(ServerText.Get("site.rules.error.rule", new { label, problem = headerError }));
             }
         }
 
@@ -125,7 +126,7 @@ public sealed class SiteHeaderRules
 
         if (string.IsNullOrWhiteSpace(name))
         {
-            error = "a header name is required";
+            error = ServerText.Get("site.rules.error.headerNameRequired");
             return false;
         }
 
@@ -133,19 +134,19 @@ public sealed class SiteHeaderRules
 
         if (name.Length > MaxNameLength)
         {
-            error = $"header names must be {MaxNameLength} characters or fewer";
+            error = ServerText.Get("site.rules.error.headerNameLong", new { max = MaxNameLength });
             return false;
         }
 
         if (!name.All(IsTokenChar))
         {
-            error = $"'{name}' is not a valid header name";
+            error = ServerText.Get("site.rules.error.headerNameInvalid", new { name });
             return false;
         }
 
         if (Reserved.Contains(name))
         {
-            error = $"'{name}' cannot be set by a rule";
+            error = ServerText.Get("site.rules.error.headerReserved", new { name });
             return false;
         }
 
@@ -153,14 +154,14 @@ public sealed class SiteHeaderRules
 
         if (value.Length > MaxValueLength)
         {
-            error = $"the value for '{name}' is longer than the {MaxValueLength} character limit";
+            error = ServerText.Get("site.rules.error.headerValueLong", new { name, max = MaxValueLength });
             return false;
         }
 
         // A newline here would let a rule append headers of its own to the response.
         if (!value.All(c => char.IsBetween(c, ' ', '~')))
         {
-            error = $"the value for '{name}' may only contain printable ASCII";
+            error = ServerText.Get("site.rules.error.headerValueAscii", new { name });
             return false;
         }
 

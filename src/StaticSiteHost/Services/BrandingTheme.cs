@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -62,43 +63,43 @@ public static partial class BrandingTheme
         var errors = new List<string>();
 
         if (branding.Name is { Length: > MaxNameLength })
-            errors.Add($"The name can be at most {MaxNameLength} characters.");
+            errors.Add(ServerText.Get("branding.error.nameLong", new { max = MaxNameLength }));
         if (branding.Name is { } name && name.Any(char.IsControl))
-            errors.Add("The name cannot contain line breaks or control characters.");
+            errors.Add(ServerText.Get("branding.error.nameControl"));
         if (site && branding.SignInMessage is not null)
-            errors.Add("A site has no sign-in screen of its own, so it takes no sign-in message.");
+            errors.Add(ServerText.Get("branding.error.siteSignIn"));
         if (branding.SignInMessage is { Length: > MaxSignInMessageLength })
-            errors.Add($"The sign-in message can be at most {MaxSignInMessageLength} characters.");
+            errors.Add(ServerText.Get("branding.error.signInLong", new { max = MaxSignInMessageLength }));
 
-        foreach (var (label, asset) in new[] { ("light logo", branding.LogoLight), ("dark logo", branding.LogoDark), ("browser icon", branding.Favicon) })
+        foreach (var (key, asset) in new[] { ("branding.error.logoLight", branding.LogoLight), ("branding.error.logoDark", branding.LogoDark), ("branding.error.favicon", branding.Favicon) })
         {
-            if (asset is not null && !assetExists(asset)) errors.Add($"The {label} '{asset}' is not an uploaded image.");
+            if (asset is not null && !assetExists(asset)) errors.Add(ServerText.Get(key, new { asset }));
         }
 
-        foreach (var (scheme, colors) in new[] { ("light", branding.Light), ("dark", branding.Dark) })
+        foreach (var (key, colors) in new[] { ("branding.error.colorLight", branding.Light), ("branding.error.colorDark", branding.Dark) })
         {
             if (colors is null) continue;
             foreach (var token in BrandColors.Tokens)
             {
                 if (colors[token] is { } value && !IsColor(value))
-                    errors.Add($"The {scheme} colour '{BrandColors.JsonName(token)}' must be written #rrggbb, such as #2f5be8; it is '{value}'.");
+                    errors.Add(ServerText.Get(key, new { name = BrandColors.JsonName(token), value }));
             }
         }
 
-        foreach (var (label, font) in new[] { ("heading", branding.HeadingFont), ("body", branding.BodyFont) })
+        foreach (var (key, font) in new[] { ("branding.error.headingFont", branding.HeadingFont), ("branding.error.bodyFont", branding.BodyFont) })
         {
             if (font is not null && !BrandFonts.IsSystem(font) && !fonts.Contains(font))
-                errors.Add($"The {label} font '{font}' is neither a system font ({string.Join(", ", BrandFonts.System)}) nor one in the font library.");
+                errors.Add(ServerText.Get(key, new { font, system = string.Join(", ", BrandFonts.System) }));
         }
 
         if (branding.TextSize is < MinTextSize or > MaxTextSize)
-            errors.Add($"The text size must be between {MinTextSize} and {MaxTextSize} pixels.");
+            errors.Add(ServerText.Get("branding.error.textSize", new { min = MinTextSize, max = MaxTextSize }));
         if (branding.HeadingWeight is < MinHeadingWeight or > MaxHeadingWeight)
-            errors.Add($"The heading weight must be between {MinHeadingWeight} and {MaxHeadingWeight}.");
+            errors.Add(ServerText.Get("branding.error.headingWeight", new { min = MinHeadingWeight, max = MaxHeadingWeight }));
         if (branding.Radius is < MinRadius or > MaxRadius)
-            errors.Add($"The corner radius must be between {MinRadius} and {MaxRadius} pixels.");
+            errors.Add(ServerText.Get("branding.error.radius", new { min = MinRadius, max = MaxRadius }));
         if (branding.Density is { } density && (!double.IsFinite(density) || density < MinDensity || density > MaxDensity))
-            errors.Add($"The density must be between {MinDensity.ToString(CultureInfo.InvariantCulture)} and {MaxDensity.ToString(CultureInfo.InvariantCulture)}.");
+            errors.Add(ServerText.Get("branding.error.density", new { min = MinDensity.ToString(CultureInfo.InvariantCulture), max = MaxDensity.ToString(CultureInfo.InvariantCulture) }));
 
         return errors;
     }

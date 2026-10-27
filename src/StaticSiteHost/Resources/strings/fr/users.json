@@ -51,5 +51,22 @@
   "users.action.blocked": "{username} ne peut plus se connecter, et ses clés d'API cessent de fonctionner.",
   "users.action.allowed": "{username} peut de nouveau se connecter.",
   "users.action.deleteConfirm": "Supprimer {username} ? Ses clés d'API cessent immédiatement de fonctionner. Cette action ne peut pas être annulée.",
-  "users.action.deleted": "{username} et ses clés d'API ont été supprimés."
+  "users.action.deleted": "{username} et ses clés d'API ont été supprimés.",
+
+  "users.error.usernameRequired": "Un nom d'utilisateur est obligatoire.",
+  "users.error.usernameLength": "Les noms d'utilisateur doivent compter entre 3 et 64 caractères.",
+  "users.error.usernameCharacters": "Les noms d'utilisateur peuvent contenir des lettres, des chiffres et . _ @ + -, et doivent commencer et finir par une lettre ou un chiffre.",
+  "users.error.usernameTaken": "Ce nom d'utilisateur est déjà pris.",
+  "users.error.passwordRequired": "Un mot de passe est obligatoire.",
+  "users.error.passwordShort.one": "Les mots de passe doivent compter au moins {count} caractère.",
+  "users.error.passwordShort.other": "Les mots de passe doivent compter au moins {count} caractères.",
+  "users.error.passwordLong": "Les mots de passe doivent compter 256 caractères au plus.",
+  "users.error.unknownRole": "Rôle inconnu.",
+  "users.error.noUser": "Cet utilisateur n'existe pas.",
+  "users.error.linkFailed": "Le lien privé n'a pas pu être créé. Réessayez.",
+  "users.error.ownRole": "Vous ne pouvez pas changer votre propre rôle.",
+  "users.error.ownDisable": "Vous ne pouvez pas désactiver votre propre compte.",
+  "users.error.ownDelete": "Vous ne pouvez pas supprimer votre propre compte.",
+  "users.error.bootstrap": "L'administrateur initial ne peut pas être supprimé.",
+  "users.error.lastAdministrator": "Au moins un administrateur actif doit rester."
 }

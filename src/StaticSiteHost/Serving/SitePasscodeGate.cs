@@ -223,9 +223,9 @@ public sealed class SitePasscodeGate
     {
         passcode = passcode?.Trim();
 
-        if (string.IsNullOrEmpty(passcode)) return "A passcode is required.";
-        if (passcode.Length < MinLength) return $"Passcodes must be at least {MinLength} characters.";
-        if (passcode.Length > MaxPasscodeLength) return $"Passcodes must be {MaxPasscodeLength} characters or fewer.";
+        if (string.IsNullOrEmpty(passcode)) return _strings.Text("site.visibility.error.required");
+        if (passcode.Length < MinLength) return _strings.Plural("site.visibility.error.short", MinLength);
+        if (passcode.Length > MaxPasscodeLength) return _strings.Text("site.visibility.error.long", new { max = MaxPasscodeLength });
         return null;
     }
 

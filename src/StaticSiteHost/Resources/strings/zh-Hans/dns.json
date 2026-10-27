@@ -5,7 +5,7 @@
   "dns.cloudflare.title": "Cloudflare",
   "dns.cloudflare.connected": "已连接",
   "dns.cloudflare.notConnected": "未连接",
-  "dns.connect.intro": "此服务器需要你的 Cloudflare 账户中的一个 API 令牌。打开 Cloudflare，在那里创建令牌（所有内容都已填好），然后粘贴到下方。",
+  "dns.connect.intro": "此服务器需要你 Cloudflare 账户中的 API 令牌。打开 Cloudflare，在那里创建令牌（所有内容都已填好），然后粘贴到下方。",
   "dns.connect.howTo": "分步说明：如何创建令牌",
   "dns.connect.step1": "选择**打开 Cloudflare**，如有提示请登录。Cloudflare 的表单打开时已填好名称和下面的权限。",
   "dns.connect.open": "打开 Cloudflare",

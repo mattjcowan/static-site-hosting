@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 
@@ -14,8 +15,10 @@ public sealed record ProxyTestResult(string? Url, int? Status, string? Version, 
     public bool Answered => Status is not null;
 
     public string Describe() => Answered
-        ? $"GET {Url} answered {Status} in {Elapsed.TotalMilliseconds:0} ms over HTTP/{Version}."
-        : Url is null ? $"No request was sent: {Error}" : $"GET {Url} failed after {Elapsed.TotalMilliseconds:0} ms: {Error}";
+        ? ServerText.Get("proxy.test.answered", new { url = Url, status = Status, ms = Milliseconds, version = Version })
+        : Url is null ? ServerText.Get("proxy.test.notSent", new { error = Error }) : ServerText.Get("proxy.test.failed", new { url = Url, ms = Milliseconds, error = Error });
+
+    private string Milliseconds => Elapsed.TotalMilliseconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
 }
 
 /// <summary>
@@ -120,7 +123,7 @@ public sealed class SiteProxyService
         {
             var normalized = ProxyRouteRules.NormalizePath(path);
             if (!enabled && !(await ServerRoutesAsync()).Any(r => r.Path.Equals(normalized, StringComparison.OrdinalIgnoreCase) && ProxySites.Match(r.Sites, site.Domain) is not null))
-                return $"No server-wide proxy route at {normalized} applies to {site.Domain}.";
+                return ServerText.Get("proxy.error.noServerRoute", new { path = normalized, domain = site.Domain });
 
             // A new list, never the old one edited (see SiteRecord.DisabledServerRoutes).
             var disabled = site.DisabledServerRoutes.Where(p => !p.Equals(normalized, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -326,7 +329,7 @@ public sealed class SiteProxyService
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return new ProxyTestResult(url, null, null, clock.Elapsed, "no answer before the timeout");
+            return new ProxyTestResult(url, null, null, clock.Elapsed, ServerText.Get("proxy.test.timedOut"));
         }
         catch (HttpRequestException ex)
         {
@@ -334,9 +337,17 @@ public sealed class SiteProxyService
         }
     }
 
-    /// <summary>An exception's message and its causes', which is where "connection refused" usually is.</summary>
+    /// <summary>
+    /// An exception's message and its causes', which is where "connection refused" usually is. A
+    /// connection this server refused is the whole story, said in the viewer's language.
+    /// </summary>
     private static string Messages(Exception ex)
     {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is ProxyConnectException refused) return refused.Text();
+        }
+
         var messages = new List<string>();
         for (Exception? current = ex; current is not null; current = current.InnerException)
         {

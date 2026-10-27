@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Antiforgery;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services.Ai;
 
@@ -25,7 +26,7 @@ public static class ModelSuggestionEndpoints
             if (!string.IsNullOrWhiteSpace(body?.ProviderId))
             {
                 var provider = await providers.FindAsync(body.ProviderId);
-                if (provider is null) return Results.NotFound(new { error = "That provider no longer exists." });
+                if (provider is null) return Results.NotFound(new { error = ServerText.Get("ai.models.error.providerGone") });
                 list = await catalog.ListAsync(provider, ct);
             }
             else

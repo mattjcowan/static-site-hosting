@@ -210,16 +210,16 @@ public sealed class CertificateManager : BackgroundService
                 return fallback == CertificateSources.LetsEncrypt && !IsPublicName(host) ? (CertificateSources.SelfSigned, null) : (fallback, null);
             case CertificateSources.Shared:
                 return shared is null
-                    ? (CertificateSources.Shared, "No shared certificate covers this host. Upload one under HTTPS, or choose another source.")
+                    ? (CertificateSources.Shared, ServerText.Get("https.problem.noShared"))
                     : (CertificateSources.Shared, null);
             case CertificateSources.LetsEncrypt:
                 return IsPublicName(host)
                     ? (wanted, null)
-                    : (wanted, "Let's Encrypt only issues for public names, and this is not one. Choose self-signed or upload one.");
+                    : (wanted, ServerText.Get("https.problem.letsEncryptPrivate"));
             case CertificateSources.CloudflareOrigin:
                 return IsPublicName(host)
                     ? (wanted, null)
-                    : (wanted, "Cloudflare only makes Origin certificates for names in your zones, and this is not one.");
+                    : (wanted, ServerText.Get("https.problem.originPrivate"));
             default:
                 return (wanted, null);
         }
@@ -262,7 +262,7 @@ public sealed class CertificateManager : BackgroundService
         // The last attempt and its error are Let's Encrypt's or Cloudflare's; under any other source they are history.
         var state = effective is CertificateSources.LetsEncrypt or CertificateSources.CloudflareOrigin ? _store.ReadState(host) : new HostCertificateState();
         if (problem is null && effective == CertificateSources.Uploaded && served.Source != CertificateSources.Uploaded)
-            problem = "No certificate has been uploaded for this site.";
+            problem = ServerText.Get("https.problem.notUploaded");
         return new HostCertificateStatus(host, isSite, wanted, effective, served.Certificate, served.Source, state, _issuing == host, problem)
         {
             RenewsAt = served.Certificate is { } certificate && served.Source is CertificateSources.LetsEncrypt or CertificateSources.SelfSigned or CertificateSources.CloudflareOrigin
@@ -431,9 +431,9 @@ public sealed class CertificateManager : BackgroundService
         {
             source = source.Trim().ToLowerInvariant();
             if (!CertificateSources.ForSites.Contains(source))
-                return $"The source is one of: {string.Join(", ", CertificateSources.ForSites)}.";
+                return ServerText.Get("https.error.source", new { sources = string.Join(", ", CertificateSources.ForSites) });
             if (source == CertificateSources.Uploaded && !_store.HasHost(site.Domain, CertificateSources.Uploaded))
-                return "Upload a certificate for this site first; uploading one chooses it.";
+                return ServerText.Get("https.error.uploadFirst");
             settings.Source = source;
         }
 

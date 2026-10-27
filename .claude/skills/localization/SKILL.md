@@ -68,11 +68,27 @@ too, the same text, so the files stay alike).
 `@L["key"]` and `L.Text(...)` give plain text (marks are removed). Use `L.Html(...)` wherever the
 string has marks or links.
 
-**Page models and services** take `IStringLocalizer<Strings>` in the constructor:
+**Page models** take `IStringLocalizer<Strings>` in the constructor:
 
 ```csharp
 TempData["StatusMessage"] = _strings.Text("site.headers.saved", new { count, domain = site.Domain });
 ```
+
+**Services, stores and rule readers** write their messages (refusals, validation errors, warnings)
+with `ServerText`, which needs no constructor change and works in static code:
+
+```csharp
+if (name.Length == 0) return ServerText.Get("ai.error.nameRequired");
+errors.Add(ServerText.Plural("deploy.warning.skipped", skipped));
+logger.LogError("…: {Problem}", ServerText.English(() => ProxyRouteRules.ResolveTarget(target)).Error);
+```
+
+Both read the current UI language: the viewer's on a page, and English for `/api`, `/mcp`, the
+assistant's tool calls and background work (renewals, DNS, jobs). So one message serves the page
+in French and the API in English. Text that goes to a log or is stored (a certificate's last
+error) must be English: make it with `ServerText.English(...)`, or where no request runs. A message
+built from a label and a problem uses a key for the whole pattern, such as
+`"proxy.error.route": "{label}: {problem}."`, so each language keeps its own punctuation.
 
 **Scripts** call `siteHost.t(key, values)`; only keys that start with `js.` reach the browser
 (the layout writes them into the page for the viewer's language):
@@ -86,9 +102,14 @@ label.textContent = siteHost.t('js.dropzone.files', { count: files.length, names
 
 ## What stays English
 
-The API's answers, MCP tool names and descriptions, log lines, and the README: they are read by
-scripts and AI agents, and a contract that changes language breaks them. Server-side validation
-messages shared with the API are English for now.
+The API's answers, MCP tool names and descriptions and their answers, the assistant's tool
+results, log lines, stored status text, and the README: they are read by scripts and AI agents,
+and a contract that changes language breaks them. The server's messages shared with the API are
+translated on the pages and English in the API, through `ServerText`.
+
+Also English: messages about C# a developer wrote (attribute checks, schedules, loading), which
+appear beside the compiler's own English errors; and errors a provider, Let's Encrypt or
+Cloudflare sends back.
 
 ## The languages there are
 

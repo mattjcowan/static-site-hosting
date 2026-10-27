@@ -51,5 +51,22 @@
   "users.action.blocked": "{username} ya no puede iniciar sesión, y sus claves de API dejan de funcionar.",
   "users.action.allowed": "{username} puede volver a iniciar sesión.",
   "users.action.deleteConfirm": "¿Eliminar a {username}? Sus claves de API dejan de funcionar de inmediato. No se puede deshacer.",
-  "users.action.deleted": "Se eliminó a {username} junto con sus claves de API."
+  "users.action.deleted": "Se eliminó a {username} junto con sus claves de API.",
+
+  "users.error.usernameRequired": "El nombre de usuario es obligatorio.",
+  "users.error.usernameLength": "Los nombres de usuario deben tener entre 3 y 64 caracteres.",
+  "users.error.usernameCharacters": "Los nombres de usuario pueden contener letras, dígitos y . _ @ + -, y deben empezar y terminar con una letra o un dígito.",
+  "users.error.usernameTaken": "Ese nombre de usuario ya está en uso.",
+  "users.error.passwordRequired": "La contraseña es obligatoria.",
+  "users.error.passwordShort.one": "Las contraseñas deben tener al menos {count} carácter.",
+  "users.error.passwordShort.other": "Las contraseñas deben tener al menos {count} caracteres.",
+  "users.error.passwordLong": "Las contraseñas deben tener 256 caracteres como máximo.",
+  "users.error.unknownRole": "Rol desconocido.",
+  "users.error.noUser": "Ese usuario no existe.",
+  "users.error.linkFailed": "No se pudo crear el enlace privado. Vuelve a intentarlo.",
+  "users.error.ownRole": "No puedes cambiar tu propio rol.",
+  "users.error.ownDisable": "No puedes desactivar tu propia cuenta.",
+  "users.error.ownDelete": "No puedes eliminar tu propia cuenta.",
+  "users.error.bootstrap": "El administrador inicial no se puede eliminar.",
+  "users.error.lastAdministrator": "Debe quedar al menos un administrador activo."
 }

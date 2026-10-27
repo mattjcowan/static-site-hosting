@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -55,7 +56,7 @@ public sealed partial class GoogleFonts
     /// </summary>
     public async Task<(string? Url, string? Css, string? Error)> StylesheetAsync(string family, CancellationToken ct)
     {
-        if (!BrandingStore.IsFamilyName(family)) return (null, null, "That is not a font name: use letters, digits, spaces and hyphens, such as Inter.");
+        if (!BrandingStore.IsFamilyName(family)) return (null, null, ServerText.Get("branding.google.error.name"));
 
         var client = _http.CreateClient(HttpClientName);
         foreach (var weights in WeightSets)
@@ -68,17 +69,17 @@ public sealed partial class GoogleFonts
                 using var response = await client.SendAsync(request, ct);
                 if (response.StatusCode == HttpStatusCode.BadRequest) continue;
                 if (!response.IsSuccessStatusCode)
-                    return (null, null, $"Google Fonts answered {(int)response.StatusCode}. Try again later.");
+                    return (null, null, ServerText.Get("branding.google.error.status", new { status = (int)response.StatusCode }));
                 return (url, await response.Content.ReadAsStringAsync(ct), null);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "Could not reach Google Fonts for {Family}", family);
-                return (null, null, "This server could not reach Google Fonts. It needs to reach fonts.googleapis.com and fonts.gstatic.com.");
+                return (null, null, ServerText.Get("branding.google.error.unreachable"));
             }
         }
 
-        return (null, null, $"Google Fonts has no font named '{family.Trim()}'. Check the name on fonts.google.com, including its capital letters.");
+        return (null, null, ServerText.Get("branding.google.error.noFont", new { family = family.Trim() }));
     }
 
     /// <summary>Downloads every file a Google stylesheet names, with what each covers.</summary>
@@ -94,10 +95,10 @@ public sealed partial class GoogleFonts
                 Range: Range().Match(body) is { Success: true } r ? r.Groups["v"].Value.Trim() : null))
             .ToList();
 
-        if (faces.Count == 0) return (null, "Google Fonts sent a stylesheet with no fonts in it.");
-        if (faces.Count > BrandingStore.MaxFontFiles) return (null, $"That font comes in {faces.Count} files, more than the {BrandingStore.MaxFontFiles} this server keeps for one font.");
+        if (faces.Count == 0) return (null, ServerText.Get("branding.google.error.noFaces"));
+        if (faces.Count > BrandingStore.MaxFontFiles) return (null, ServerText.Get("branding.google.error.tooManyFiles", new { count = faces.Count, max = BrandingStore.MaxFontFiles }));
         if (faces.Any(f => !f.Url.StartsWith(FileHost, StringComparison.Ordinal)))
-            return (null, "Google Fonts named a file somewhere other than fonts.gstatic.com, so nothing was downloaded.");
+            return (null, ServerText.Get("branding.google.error.elsewhere"));
 
         // A variable font is one file Google names once per weight: each address is fetched once.
         var client = _http.CreateClient(HttpClientName);
@@ -126,12 +127,12 @@ public sealed partial class GoogleFonts
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && Interlocked.Read(ref total) > BrandingStore.MaxFontBytes)
         {
-            return (null, $"That font's files are larger than the {BrandingStore.MaxFontBytes / (1024 * 1024)} MB this server keeps for one font.");
+            return (null, ServerText.Get("branding.google.error.large", new { size = BrandingStore.MaxFontBytes / (1024 * 1024) }));
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "Could not download a Google Fonts file");
-            return (null, "A font file could not be downloaded from fonts.gstatic.com. Try again later.");
+            return (null, ServerText.Get("branding.google.error.download"));
         }
 
         return (faces.Select(f => (downloaded[f.Url], f.Weight, f.Style, f.Range)).ToList(), null);

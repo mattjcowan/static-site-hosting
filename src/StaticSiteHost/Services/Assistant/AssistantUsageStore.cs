@@ -1,3 +1,5 @@
+using StaticSiteHost.Localization;
+
 namespace StaticSiteHost.Services.Assistant;
 
 /// <summary>One person's use of the assistant on one day.</summary>
@@ -51,8 +53,11 @@ public sealed class AssistantUsageStore
             {
                 var midnight = _time.GetUtcNow().UtcDateTime.Date.AddDays(1);
                 var hours = Math.Max(1, (int)Math.Ceiling((midnight - _time.GetUtcNow().UtcDateTime).TotalHours));
-                return ((string?)$"You have sent today's {limit} message{(limit == 1 ? "" : "s")} to the assistant, the most a member may. " +
-                        $"It starts again at midnight UTC, in about {hours} hour{(hours == 1 ? "" : "s")}. An administrator can raise the limit under AI.", false);
+                return ((string?)ServerText.Get("ai.assistant.limit.message", new
+                {
+                    sent = ServerText.Plural("ai.assistant.limit.sent", limit),
+                    resets = ServerText.Plural("ai.assistant.limit.resets", hours)
+                }), false);
             }
 
             mine.Messages++;

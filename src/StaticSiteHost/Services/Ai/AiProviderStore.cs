@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.DataProtection;
 using StaticSiteHost.Functions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 
@@ -90,7 +91,7 @@ public sealed class AiProviderStore
     {
         kind = kind?.Trim().ToLowerInvariant();
         if (!AiProviderRecord.IsKnownKind(kind))
-            return (null, $"Choose a kind: {AiProviderRecord.KindOpenAi} for OpenAI and anything that copies its API, or {AiProviderRecord.KindAnthropic}.");
+            return (null, ServerText.Get("ai.error.kind", new { openai = AiProviderRecord.KindOpenAi, anthropic = AiProviderRecord.KindAnthropic }));
 
         // A new provider with no base URL gets its kind's own: the common case, OpenAI or Anthropic
         // themselves, needs only a key. A proxy or a local server names its own.
@@ -137,7 +138,7 @@ public sealed class AiProviderStore
         var updated = await ChangeAsync(providers =>
         {
             var index = providers.FindIndex(p => p.Id == id);
-            if (index < 0) return (null, "That provider no longer exists. It may have just been deleted.");
+            if (index < 0) return (null, ServerText.Get("ai.error.providerGone"));
             if (NameTaken(providers, fields.Name, exceptId: id)) return (null, NameTakenError(fields.Name));
 
             var record = providers[index].Clone();
@@ -247,16 +248,16 @@ public sealed class AiProviderStore
         name = name?.Trim() ?? "";
         model = model?.Trim() ?? "";
 
-        if (name.Length == 0) return (default, "Give the provider a name, such as \"OpenAI\" or \"Claude Sonnet\".");
-        if (name.Length > MaxNameLength) return (default, $"A provider's name can be at most {MaxNameLength} characters.");
-        if (name.Any(char.IsControl)) return (default, "A provider's name is one line of text.");
+        if (name.Length == 0) return (default, ServerText.Get("ai.error.nameRequired"));
+        if (name.Length > MaxNameLength) return (default, ServerText.Get("ai.error.nameLong", new { max = MaxNameLength }));
+        if (name.Any(char.IsControl)) return (default, ServerText.Get("ai.error.nameLine"));
 
         var (url, urlError) = NormalizeBaseUrl(baseUrl);
         if (url is null) return (default, urlError);
 
-        if (model.Length == 0) return (default, "Name the default model, such as gpt-4o-mini or claude-sonnet-5.");
-        if (model.Length > MaxModelLength) return (default, $"A model name can be at most {MaxModelLength} characters.");
-        if (model.Any(c => char.IsControl(c) || char.IsWhiteSpace(c))) return (default, "A model name has no spaces.");
+        if (model.Length == 0) return (default, ServerText.Get("ai.error.modelRequired"));
+        if (model.Length > MaxModelLength) return (default, ServerText.Get("ai.error.modelLong", new { max = MaxModelLength }));
+        if (model.Any(c => char.IsControl(c) || char.IsWhiteSpace(c))) return (default, ServerText.Get("ai.error.modelSpaces"));
 
         return (new Fields(name, url, model), null);
     }
@@ -266,10 +267,10 @@ public sealed class AiProviderStore
         if (string.IsNullOrWhiteSpace(apiKey)) return null;
 
         var key = apiKey.Trim();
-        if (Encoding.UTF8.GetByteCount(key) > MaxApiKeyBytes) return $"An API key can be at most {MaxApiKeyBytes / 1024} KB.";
+        if (Encoding.UTF8.GetByteCount(key) > MaxApiKeyBytes) return ServerText.Get("ai.error.keyLarge", new { size = MaxApiKeyBytes / 1024 });
 
         // It goes into a request header, where a line break would be refused, or worse, obeyed.
-        return key.Any(char.IsControl) ? "An API key is one line of text, with no line breaks." : null;
+        return key.Any(char.IsControl) ? ServerText.Get("ai.error.keyLine") : null;
     }
 
     /// <summary>
@@ -279,21 +280,19 @@ public sealed class AiProviderStore
     public static (string? Url, string? Error) NormalizeBaseUrl(string? input)
     {
         var value = input?.Trim() ?? "";
-        const string example = "such as https://api.openai.com/v1 or https://api.anthropic.com";
-
-        if (value.Length == 0) return (null, $"A base URL is required, {example}.");
-        if (value.Length > MaxBaseUrlLength) return (null, $"A base URL can be at most {MaxBaseUrlLength} characters.");
+        if (value.Length == 0) return (null, ServerText.Get("ai.error.baseUrlRequired"));
+        if (value.Length > MaxBaseUrlLength) return (null, ServerText.Get("ai.error.baseUrlLong", new { max = MaxBaseUrlLength }));
 
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
             value.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
         {
-            return (null, $"The base URL must be an absolute http:// or https:// address, {example}.");
+            return (null, ServerText.Get("ai.error.baseUrlForm"));
         }
 
-        if (uri.UserInfo.Length > 0) return (null, "Put the key in the API key box rather than in the base URL.");
+        if (uri.UserInfo.Length > 0) return (null, ServerText.Get("ai.error.baseUrlKey"));
         if (value.Contains('?') || value.Contains('#'))
-            return (null, "The base URL cannot have a query string or a fragment: the server adds the endpoint's path to it.");
+            return (null, ServerText.Get("ai.error.baseUrlQuery"));
 
         return (uri.GetLeftPart(UriPartial.Path).TrimEnd('/'), null);
     }
@@ -302,5 +301,5 @@ public sealed class AiProviderStore
         providers.Any(p => p.Id != exceptId && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
     private static string NameTakenError(string name) =>
-        $"A provider called {name} already exists. Give this one another name, so sites can tell them apart.";
+        ServerText.Get("ai.error.nameTaken", new { name });
 }

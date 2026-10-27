@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Serving;
 using StaticSiteHost.Services.Realtime;
@@ -134,7 +135,7 @@ public sealed class ZipDeploymentService
         var (domain, domainError) = SiteStore.NormalizeDomain(domainInput);
         if (domain is null) return DeployResult.Failed(domainError!);
         if (_options.IsManagementHost(domain))
-            return DeployResult.Failed($"'{domain}' is reserved for the management interface.");
+            return DeployResult.Failed(ServerText.Get("sites.error.reserved", new { domain }));
 
         string? scratchFile = null;
         await _deployGate.WaitAsync(ct);
@@ -163,9 +164,9 @@ public sealed class ZipDeploymentService
                 archive.Seek(0, SeekOrigin.Begin);
             }
 
-            if (archive.Length == 0) return DeployResult.Failed("The uploaded file is empty.");
+            if (archive.Length == 0) return DeployResult.Failed(ServerText.Get("deploy.error.empty"));
             if (archive.Length > _options.MaxUploadBytes)
-                return DeployResult.Failed($"The archive is larger than the {Format.Bytes(_options.MaxUploadBytes)} upload limit.");
+                return DeployResult.Failed(ServerText.Get("deploy.error.uploadLimit", new { limit = Format.Bytes(_options.MaxUploadBytes) }));
 
             var result = await ExtractAndPublishAsync(domain, archive, archiveName, actor, source, canDeployFunctions, ct);
             if (result.Ok && answeredBy is not null) DisconnectStrays(answeredBy);
@@ -173,7 +174,7 @@ public sealed class ZipDeploymentService
         }
         catch (InvalidDataException)
         {
-            return DeployResult.Failed("That file is not a readable zip archive.");
+            return DeployResult.Failed(ServerText.Get("deploy.error.notZip"));
         }
         catch (ExtractionLimitException ex)
         {
@@ -182,7 +183,7 @@ public sealed class ZipDeploymentService
         catch (IOException ex)
         {
             _logger.LogError(ex, "Deploy to {Domain} failed while writing to disk", domain);
-            return DeployResult.Failed("The archive could not be written to disk. Check the server logs.");
+            return DeployResult.Failed(ServerText.Get("deploy.error.disk"));
         }
         finally
         {
@@ -202,7 +203,7 @@ public sealed class ZipDeploymentService
         using var zip = OpenArchive(archive);
 
         if (zip.Entries.Count > _options.MaxEntries)
-            return DeployResult.Failed($"The archive holds more than the {_options.MaxEntries:N0} allowed entries.");
+            return DeployResult.Failed(ServerText.Get("deploy.error.tooManyEntries", new { max = _options.MaxEntries.ToString("N0") }));
 
         var warnings = new List<string>();
         var planned = new List<(ZipArchiveEntry Entry, string[] Segments)>();
@@ -221,22 +222,20 @@ public sealed class ZipDeploymentService
             }
 
             if (entry.Length > _options.MaxEntryBytes)
-                return DeployResult.Failed(
-                    $"'{entry.FullName}' is larger than the {Format.Bytes(_options.MaxEntryBytes)} per-file limit.");
+                return DeployResult.Failed(ServerText.Get("deploy.error.fileLimit", new { path = entry.FullName, limit = Format.Bytes(_options.MaxEntryBytes) }));
 
             planned.Add((entry, segments));
         }
 
         if (planned.Count == 0)
-            return DeployResult.Failed("The archive contains no usable files.");
+            return DeployResult.Failed(ServerText.Get("deploy.error.noFiles"));
 
         if (skipped > 0)
-            warnings.Add($"{skipped} entr{(skipped == 1 ? "y was" : "ies were")} skipped (unsafe path or excluded name).");
+            warnings.Add(ServerText.Plural("deploy.warning.skipped", skipped));
 
         var declaredTotal = planned.Sum(p => p.Entry.Length);
         if (declaredTotal > _options.MaxExtractedBytes)
-            return DeployResult.Failed(
-                $"The archive expands to {Format.Bytes(declaredTotal)}, over the {Format.Bytes(_options.MaxExtractedBytes)} limit.");
+            return DeployResult.Failed(ServerText.Get("deploy.error.expandsTo", new { size = Format.Bytes(declaredTotal), limit = Format.Bytes(_options.MaxExtractedBytes) }));
 
         // "If the zip has a single folder in it, the files are inside that folder."
         var stripRoot = planned.All(p => p.Segments.Length >= 2)
@@ -251,9 +250,7 @@ public sealed class ZipDeploymentService
 
         if (functionEntries.Count > 0 && !canDeployFunctions)
         {
-            return DeployResult.Failed(
-                $"This archive contains a {FunctionsFolder}/ folder, which only administrators can deploy because it runs " +
-                "as code on the server. Remove the folder, or ask an administrator to deploy it.");
+            return DeployResult.Failed(ServerText.Get("deploy.error.functionsAdministrators", new { folder = FunctionsFolder + "/" }));
         }
 
         var functionFiles = new List<FunctionFile>();
@@ -261,20 +258,19 @@ public sealed class ZipDeploymentService
         {
             if (relative.Length != 2 || !FunctionBundleBuilder.IsFunctionFileName(relative[1]))
             {
-                warnings.Add($"{FunctionsFolder}/{string.Join('/', relative[1..])} was ignored: only .cs and .linq files " +
-                             $"directly inside {FunctionsFolder}/ are compiled.");
+                warnings.Add(ServerText.Get("deploy.warning.functionFileIgnored", new { path = $"{FunctionsFolder}/{string.Join('/', relative[1..])}", folder = FunctionsFolder + "/" }));
                 continue;
             }
 
             if (entry.Length > FunctionSourceReader.MaxSourceBytes)
-                return DeployResult.Failed($"{FunctionsFolder}/{relative[1]} is over the {Format.Bytes(FunctionSourceReader.MaxSourceBytes)} limit for one function file.");
+                return DeployResult.Failed(ServerText.Get("deploy.error.functionFileLimit", new { path = $"{FunctionsFolder}/{relative[1]}", limit = Format.Bytes(FunctionSourceReader.MaxSourceBytes) }));
 
             using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
             functionFiles.Add(new FunctionFile(relative[1], await reader.ReadToEndAsync(ct)));
         }
 
         if (functionEntries.Count > 0 && functionFiles.Count == 0)
-            warnings.Add($"{FunctionsFolder}/ holds no .cs or .linq files, so the site keeps the functions it had.");
+            warnings.Add(ServerText.Get("deploy.warning.noFunctionFiles", new { folder = FunctionsFolder + "/" }));
 
         var releaseId = NewReleaseId();
         var stagingDir = Path.Combine(_paths.StagingDir(domain), releaseId);
@@ -346,11 +342,11 @@ public sealed class ZipDeploymentService
                 fileCount++;
             }
 
-            if (fileCount == 0) return DeployResult.Failed("The archive contains no usable files.");
+            if (fileCount == 0) return DeployResult.Failed(ServerText.Get("deploy.error.noFiles"));
 
             var hasRootIndex = File.Exists(Path.Combine(stagingDir, "index.html"));
             if (!hasRootIndex)
-                warnings.Add("No index.html was found at the root of the site — requests will fall back to a 404.");
+                warnings.Add(ServerText.Get("deploy.warning.noIndex"));
 
             // Built after the content is staged and before anything goes live, so a function
             // that does not compile fails the whole deploy: new content never goes out beside
@@ -361,7 +357,7 @@ public sealed class ZipDeploymentService
                 if (!built.Ok)
                 {
                     TryDeleteDirectory(stagingDir);
-                    return DeployResult.Failed($"Nothing was deployed: the functions did not build. {built.Error}", built.Diagnostics);
+                    return DeployResult.Failed(ServerText.Get("deploy.error.functionsDidNotBuild", new { error = built.Error }), built.Diagnostics);
                 }
 
                 bundle = built.Bundle;
@@ -415,9 +411,7 @@ public sealed class ZipDeploymentService
             // Values set on the site carry over, so this is checked against the site as it now stands.
             if (_variables.Resolve(site).Missing is { Count: > 0 } missing)
             {
-                warnings.Add(missing.Count == 1
-                    ? $"The variable {missing[0]} is required but has no value. Set it under Variables on the site page."
-                    : $"The variables {string.Join(", ", missing)} are required but have no value. Set them under Variables on the site page.");
+                warnings.Add(ServerText.Plural("deploy.warning.missingVariables", missing.Count, new { names = string.Join(", ", missing) }));
             }
 
             await _audit.WriteAsync("site.deploy", actor, new { domain, release = releaseId, fileCount, totalBytes, source });
@@ -449,7 +443,7 @@ public sealed class ZipDeploymentService
         }
         catch (ExtractionLimitException)
         {
-            warnings.Add($"'{name}' is larger than {Format.Bytes(MaxRuleFileBytes)} and was ignored.");
+            warnings.Add(ServerText.Get("deploy.warning.ruleFileLarge", new { name, limit = Format.Bytes(MaxRuleFileBytes) }));
             return null;
         }
 
@@ -467,7 +461,7 @@ public sealed class ZipDeploymentService
     {
         if (parse(text, out var rules, out var errors)) return rules;
 
-        warnings.Add($"'{name}' was ignored — {string.Join(" ", errors.Take(3))}");
+        warnings.Add(ServerText.Get("deploy.warning.ruleFileIgnored", new { name, problems = string.Join(" ", errors.Take(3)) }));
         return [];
     }
 
@@ -520,10 +514,10 @@ public sealed class ZipDeploymentService
         try
         {
             var site = _sites.TryGet(domain);
-            if (site is null) return (false, "No such site.");
-            if (site.Releases.All(r => r.Id != releaseId)) return (false, "No such release.");
+            if (site is null) return (false, ServerText.Get("site.releases.error.noSite"));
+            if (site.Releases.All(r => r.Id != releaseId)) return (false, ServerText.Get("site.releases.error.noRelease"));
             if (!Directory.Exists(_paths.ReleaseDir(domain, releaseId)))
-                return (false, "That release is no longer on disk.");
+                return (false, ServerText.Get("site.releases.error.notOnDisk"));
 
             if (keepCurrentFunctions)
             {
@@ -662,13 +656,13 @@ public sealed class ZipDeploymentService
         var (domain, error) = SiteStore.NormalizeDomain(domainInput);
         if (domain is null) return (false, error, null, false);
         if (_options.IsManagementHost(domain))
-            return (false, $"'{domain}' is reserved for the management interface.", null, false);
+            return (false, ServerText.Get("sites.error.reserved", new { domain }), null, false);
 
         // Same gate as a deploy, so a deploy creating the site at the same moment cannot be overwritten.
         await _deployGate.WaitAsync();
         try
         {
-            if (_sites.Exists(domain)) return (false, $"A site is already published at '{domain}'.", domain, true);
+            if (_sites.Exists(domain)) return (false, ServerText.Get("sites.error.exists", new { domain }), domain, true);
             if (SiteAliases.Taken(_sites, domain, administrator) is { } taken) return (false, taken, null, false);
 
             var answeredBy = WildcardAnswering(domain);
@@ -719,8 +713,8 @@ public sealed class ZipDeploymentService
         var (to, error) = SiteStore.NormalizeDomain(newDomainInput);
         if (to is null) return (false, error, null);
         if (_options.IsManagementHost(to))
-            return (false, $"'{to}' is reserved for the management interface.", null);
-        if (to == domain) return (false, $"The site is already published at '{to}'.", null);
+            return (false, ServerText.Get("sites.error.reserved", new { domain = to }), null);
+        if (to == domain) return (false, ServerText.Get("sites.error.renameSame", new { domain = to }), null);
 
         // The old name's functions go first, and are gone, background work, requests and all,
         // before the directory moves: anything of theirs still running would write into a folder
@@ -816,7 +810,7 @@ public sealed class ZipDeploymentService
         await _deployGate.WaitAsync();
         try
         {
-            if (_sites.TryGet(domain) is not { } site) return (false, [$"No site is published at '{domain}'."], []);
+            if (_sites.TryGet(domain) is not { } site) return (false, [ServerText.Get("sites.error.noSite", new { domain })], []);
 
             var (wanted, errors) = SiteAliases.Check(site, aliases ?? [], _sites, _options, managementHost);
             if (errors.Count > 0) return (false, errors, site.Aliases);
@@ -930,16 +924,16 @@ public sealed class ZipDeploymentService
         try
         {
             var site = _sites.TryGet(domain);
-            if (site is null) return (false, $"No site is published at '{domain}'.");
+            if (site is null) return (false, ServerText.Get("sites.error.noSite", new { domain }));
 
             var current = site.Current;
             if (current is null)
             {
-                if (bundle is null) return (false, "This site has no functions to remove.");
+                if (bundle is null) return (false, ServerText.Get("functions.error.noneToRemove"));
                 current = AddEmptyRelease(site, actor);
             }
 
-            if (bundle is null && current.Functions is null) return (false, "This site has no functions to remove.");
+            if (bundle is null && current.Functions is null) return (false, ServerText.Get("functions.error.noneToRemove"));
 
             if (bundle is not null) site.FunctionBundles.Add(bundle);
             current.Functions = bundle?.Id;
@@ -1003,7 +997,7 @@ public sealed class ZipDeploymentService
 
             written += read;
             if (written > remaining)
-                throw new ExtractionLimitException("The archive expands to more than the configured extraction limit.");
+                throw new ExtractionLimitException(ServerText.Get("deploy.error.extractionLimit"));
 
             await destination.WriteAsync(buffer.AsMemory(0, read), ct);
         }

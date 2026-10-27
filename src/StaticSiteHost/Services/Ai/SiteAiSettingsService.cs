@@ -1,4 +1,5 @@
 using System.Text;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services.Ai;
@@ -30,22 +31,22 @@ public sealed class SiteAiSettingsService
         SiteRecord site, string? providerId, string? model, string? systemPrompt, bool allowVisitors, string actor)
     {
         providerId = providerId?.Trim();
-        if (string.IsNullOrEmpty(providerId)) return (false, "Choose a provider, or remove the AI settings instead.");
+        if (string.IsNullOrEmpty(providerId)) return (false, ServerText.Get("ai.site.error.noProvider"));
 
         var provider = await _providers.FindAsync(providerId);
-        if (provider is null) return (false, "That AI provider does not exist. An administrator can add one under AI.");
+        if (provider is null) return (false, ServerText.Get("ai.site.error.unknownProvider"));
 
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
         if (model is { Length: > SiteAiSettings.MaxModelLength })
-            return (false, $"A model name can be at most {SiteAiSettings.MaxModelLength} characters.");
+            return (false, ServerText.Get("ai.error.modelLong", new { max = SiteAiSettings.MaxModelLength }));
         if (model is not null && model.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
-            return (false, "A model name has no spaces.");
+            return (false, ServerText.Get("ai.error.modelSpaces"));
 
         // A textarea posts CRLF line breaks; the prompt is stored with plain ones.
         systemPrompt = systemPrompt?.ReplaceLineEndings("\n").Trim();
         if (string.IsNullOrEmpty(systemPrompt)) systemPrompt = null;
         if (systemPrompt is not null && Encoding.UTF8.GetByteCount(systemPrompt) > SiteAiSettings.MaxSystemPromptBytes)
-            return (false, $"The system prompt can be at most {SiteAiSettings.MaxSystemPromptBytes / 1024} KB.");
+            return (false, ServerText.Get("ai.site.error.promptLarge", new { size = SiteAiSettings.MaxSystemPromptBytes / 1024 }));
 
         site.Ai = new SiteAiSettings
         {

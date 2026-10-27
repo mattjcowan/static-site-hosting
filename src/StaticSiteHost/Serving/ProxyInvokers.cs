@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using Yarp.ReverseProxy.Forwarder;
 
 namespace StaticSiteHost.Serving;
@@ -61,16 +62,19 @@ public sealed partial class ProxyInvokers : IDisposable
 
     public HttpMessageInvoker For(bool acceptAnyCertificate) => acceptAnyCertificate ? Lenient : Strict;
 
-    /// <summary>Why a proxy route may not connect to an address and port, or null when it may.</summary>
+    /// <summary>
+    /// Why a proxy route may not connect to an address and port, as the key of its message
+    /// (<c>proxy.connect.blocked</c> or <c>proxy.connect.self</c>), or null when it may.
+    /// </summary>
     public string? Refusal(IPAddress address, int port)
     {
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
 
         if (_blocked.Any(network => network.Contains(address)))
-            return "resolves to an address proxy routes may not reach (SiteHosting:ProxyBlockedNetworks)";
+            return "proxy.connect.blocked";
 
         if (OwnPorts().Contains(port) && IsThisMachine(address))
-            return "is this server itself, and a proxy route may not point back at it";
+            return "proxy.connect.self";
 
         return null;
     }
@@ -202,9 +206,9 @@ public sealed partial class ProxyInvokers : IDisposable
 
         lastFailure?.Throw();
 
-        throw new HttpRequestException(refusal is not null
-            ? $"{host}:{port} {refusal}."
-            : $"{host} did not resolve to any address.");
+        throw refusal is not null
+            ? new ProxyConnectException(refusal, new { address = $"{host}:{port}" })
+            : new ProxyConnectException("proxy.connect.noAddress", new { host });
     }
 
     public void Dispose()
@@ -212,4 +216,14 @@ public sealed partial class ProxyInvokers : IDisposable
         Strict.Dispose();
         Lenient.Dispose();
     }
+}
+
+/// <summary>
+/// A connection a proxy route may not make, or a target with no address. Its message is English,
+/// for the log; <see cref="Text"/> is in the current language, for the page that tested the route.
+/// </summary>
+public sealed class ProxyConnectException(string key, object values)
+    : HttpRequestException(ServerText.English(() => ServerText.Get(key, values)))
+{
+    public string Text() => ServerText.Get(key, values);
 }

@@ -58,5 +58,5 @@
   "account.changePassword.mismatch": "Les deux mots de passe ne correspondent pas.",
   "account.changePassword.wrongCurrent": "Ce n'est pas votre mot de passe actuel.",
   "account.changePassword.same": "Votre nouveau mot de passe doit être différent de l'actuel.",
-  "account.changePassword.done": "Votre mot de passe est changé. Vos autres sessions sont fermées, partout ailleurs."
+  "account.changePassword.done": "Votre mot de passe a été changé. Vos sessions ouvertes ailleurs ont été fermées."
 }

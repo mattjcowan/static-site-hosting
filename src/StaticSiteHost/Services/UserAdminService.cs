@@ -1,3 +1,4 @@
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 
@@ -50,10 +51,10 @@ public sealed class UserAdminService
     public async Task<(string? Token, string? Error)> InviteAsync(string? userId, string actor)
     {
         var user = await _users.FindByIdAsync(userId);
-        if (user is null) return (null, "No such user.");
+        if (user is null) return (null, ServerText.Get("users.error.noUser"));
 
         var token = await _users.CreateInviteAsync(user.Id);
-        if (token is null) return (null, "The invitation could not be created.");
+        if (token is null) return (null, ServerText.Get("users.error.linkFailed"));
 
         await _audit.WriteAsync("user.invite", actor, new { user.Username });
         return (token, null);
@@ -62,13 +63,13 @@ public sealed class UserAdminService
     /// <summary>Null when the role was set, otherwise why not.</summary>
     public async Task<string?> SetRoleAsync(string? userId, string? role, string? actingUserId, string actor)
     {
-        if (!Roles.IsValid(role)) return "Unknown role.";
-        if (userId == actingUserId) return "You cannot change your own role.";
+        if (!Roles.IsValid(role)) return ServerText.Get("users.error.unknownRole");
+        if (userId == actingUserId) return ServerText.Get("users.error.ownRole");
         if (role != Roles.Administrator && userId is not null && await _users.WouldLeaveNoAdministratorAsync(userId))
-            return "At least one active administrator must remain.";
+            return ServerText.Get("users.error.lastAdministrator");
 
         var user = await _users.FindByIdAsync(userId);
-        if (user is null || !await _users.UpdateAsync(user.Id, u => u.Role = role!)) return "No such user.";
+        if (user is null || !await _users.UpdateAsync(user.Id, u => u.Role = role!)) return ServerText.Get("users.error.noUser");
 
         await _audit.WriteAsync("user.role", actor, new { user.Username, role });
         return null;
@@ -80,12 +81,12 @@ public sealed class UserAdminService
     /// </summary>
     public async Task<string?> SetDisabledAsync(string? userId, bool disabled, string? actingUserId, string actor)
     {
-        if (userId == actingUserId) return "You cannot disable your own account.";
+        if (userId == actingUserId) return ServerText.Get("users.error.ownDisable");
         if (disabled && userId is not null && await _users.WouldLeaveNoAdministratorAsync(userId))
-            return "At least one active administrator must remain.";
+            return ServerText.Get("users.error.lastAdministrator");
 
         var user = await _users.FindByIdAsync(userId);
-        if (user is null) return "No such user.";
+        if (user is null) return ServerText.Get("users.error.noUser");
 
         await _users.UpdateAsync(user.Id, u =>
         {
@@ -100,10 +101,10 @@ public sealed class UserAdminService
     /// <summary>Deletes an account and its API keys. Returns the user name, or why not.</summary>
     public async Task<(string? Username, string? Error)> DeleteAsync(string? userId, string? actingUserId, string actor)
     {
-        if (userId == actingUserId) return (null, "You cannot delete your own account.");
+        if (userId == actingUserId) return (null, ServerText.Get("users.error.ownDelete"));
 
         var user = await _users.FindByIdAsync(userId);
-        if (user is null) return (null, "No such user.");
+        if (user is null) return (null, ServerText.Get("users.error.noUser"));
 
         var (ok, error) = await _users.DeleteAsync(user.Id);
         if (!ok) return (null, error);

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
@@ -382,6 +383,10 @@ builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = Compre
 
 var app = builder.Build();
 
+// Work no request asked for (renewals, DNS, jobs) writes its messages and log lines in English,
+// whatever the machine's own language; each request then picks its own.
+CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.CurrentUICulture = LocalizationSetup.English;
+
 // ---------------------------------------------------------------- startup work
 
 app.Services.GetRequiredService<SiteStore>().Load();
@@ -420,6 +425,9 @@ app.UseMiddleware<BrandingMiddleware>();
 
 // Everything above is shared; from here the Host header decides which app answers.
 app.UseHostedSites();
+
+// The management app's pages keep the viewer's language; the API and MCP answer in English.
+app.UseEnglishForApiAndMcp();
 
 app.UseStaticFiles();
 app.UseRouting();

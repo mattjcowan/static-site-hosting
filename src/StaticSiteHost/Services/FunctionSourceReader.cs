@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -37,7 +38,7 @@ public sealed class FunctionSourceReader
     /// </summary>
     public FunctionReadResult Read(string fileName, string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return FunctionReadResult.Failed("The file is empty.");
+        if (string.IsNullOrWhiteSpace(text)) return FunctionReadResult.Failed(ServerText.Get("functions.error.emptyFile"));
 
         // A BOM would otherwise sit in front of '<Query' or '#:' and defeat both parsers.
         text = text.TrimStart('﻿');

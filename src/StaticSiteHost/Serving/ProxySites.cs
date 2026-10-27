@@ -1,3 +1,4 @@
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Services;
 
@@ -21,7 +22,7 @@ public static class ProxySites
     public static string? Check(string? sites)
     {
         var entries = Split(sites).ToList();
-        if (entries.Count == 0) return "say which sites it applies to: * for every site, or a pattern such as *.apps.example.com";
+        if (entries.Count == 0) return ServerText.Get("proxy.error.sitesRequired");
 
         foreach (var entry in entries)
         {
@@ -30,7 +31,7 @@ public static class ProxySites
             var domain = entry.StartsWith("*.", StringComparison.Ordinal) ? entry[2..] : entry;
             var (normalized, _) = SiteStore.NormalizeDomain(domain);
             if (normalized is null || normalized != domain.ToLowerInvariant() || domain.Contains('*'))
-                return $"'{entry}' is not *, a domain, or *. followed by a domain";
+                return ServerText.Get("proxy.error.sitesInvalid", new { entry });
         }
 
         return null;
@@ -60,8 +61,8 @@ public static class ProxySites
     public static string? CheckParentDomain(string sites, string? parent)
     {
         var (normalized, _) = SiteStore.NormalizeDomain(parent);
-        if (normalized is null) return "name the parent domain cookies are moved to";
-        if (!normalized.Contains('.')) return $"'{normalized}' is too broad to share cookies across";
+        if (normalized is null) return ServerText.Get("proxy.error.parentRequired");
+        if (!normalized.Contains('.')) return ServerText.Get("proxy.error.parentTooBroad", new { parent = normalized });
 
         foreach (var entry in Split(sites))
         {
@@ -69,7 +70,7 @@ public static class ProxySites
             var domain = entry.StartsWith("*.", StringComparison.Ordinal) ? entry[2..] : entry;
             if (!domain.Equals(normalized, StringComparison.OrdinalIgnoreCase) &&
                 !domain.EndsWith("." + normalized, StringComparison.OrdinalIgnoreCase))
-                return $"'{normalized}' does not cover the sites '{entry}' names";
+                return ServerText.Get("proxy.error.parentNotCoveringSites", new { parent = normalized, entry });
         }
 
         return null;

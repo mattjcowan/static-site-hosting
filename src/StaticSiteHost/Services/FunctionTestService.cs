@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using StaticSiteHost.Localization;
 
 namespace StaticSiteHost.Services;
 
@@ -36,8 +37,8 @@ public sealed class FunctionTestService
         {
             return new FunctionTestResult(0, null, [], [], 0, false, false,
                 request.Target is null or "live"
-                    ? "Nothing is live to test. Check the files, then test the checked build."
-                    : "That checked build has expired. Check the files again.");
+                    ? ServerText.Get("functions.test.nothingLive")
+                    : ServerText.Get("functions.test.expired"));
         }
 
         // A site's functions run at the host asked for when it is one of the site's names (one of its

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 
 namespace StaticSiteHost.Services;
@@ -23,7 +24,7 @@ public static class FunctionUploadReader
         // A binary file handed to the compiler comes back as pages of "unexpected character"
         // errors about line 1, which says nothing about what actually went wrong.
         if (Array.IndexOf(content, (byte)0) >= 0)
-            return $"{name} is not a text file. Upload .cs or .linq files, or a .zip of them.";
+            return ServerText.Get("functions.error.notText", new { name });
 
         into.Add(new FunctionFile(name, Encoding.UTF8.GetString(content)));
         return null;
@@ -48,13 +49,13 @@ public static class FunctionUploadReader
         }
         catch (InvalidDataException)
         {
-            return $"{name} is not a readable zip archive.";
+            return ServerText.Get("functions.error.notZip", new { name });
         }
 
         using (zip)
         {
             if (zip.Entries.Count > MaxZipEntries)
-                return $"{name} holds more than {MaxZipEntries} entries, which is more than a set of functions needs.";
+                return ServerText.Get("functions.error.zipEntries", new { name, max = MaxZipEntries });
 
             var entries = zip.Entries
                 .Where(e => !e.FullName.EndsWith('/') && !e.FullName.Contains("__MACOSX"))
@@ -78,7 +79,7 @@ public static class FunctionUploadReader
                 if (path.Length != 1 || !FunctionBundleBuilder.IsFunctionFileName(path[0])) continue;
 
                 if (entry.Length > FunctionSourceReader.MaxSourceBytes)
-                    return $"{name}: {path[0]} is over the {Format.Bytes(FunctionSourceReader.MaxSourceBytes)} limit for one file.";
+                    return ServerText.Get("functions.error.zipFileLimit", new { name, path = path[0], limit = Format.Bytes(FunctionSourceReader.MaxSourceBytes) });
 
                 using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
                 into.Add(new FunctionFile(path[0], reader.ReadToEnd()));
@@ -86,7 +87,7 @@ public static class FunctionUploadReader
             }
 
             return found == 0
-                ? $"{name} has no .cs or .linq files at its top level or in a {ZipDeploymentService.FunctionsFolder}/ folder."
+                ? ServerText.Get("functions.error.zipNoFiles", new { name, folder = ZipDeploymentService.FunctionsFolder + "/" })
                 : null;
         }
     }

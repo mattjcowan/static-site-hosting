@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Options;
 using StaticSiteHost.Configuration;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Models;
 using StaticSiteHost.Security;
 
@@ -62,19 +63,19 @@ public sealed partial class UserStore
     public static string? ValidateUsername(string? username)
     {
         username = username?.Trim();
-        if (string.IsNullOrEmpty(username)) return "A username is required.";
-        if (username.Length is < 3 or > 64) return "Usernames must be between 3 and 64 characters.";
+        if (string.IsNullOrEmpty(username)) return ServerText.Get("users.error.usernameRequired");
+        if (username.Length is < 3 or > 64) return ServerText.Get("users.error.usernameLength");
         if (!UsernamePattern().IsMatch(username))
-            return "Usernames may contain letters, digits and . _ @ + - and must start and end with a letter or digit.";
+            return ServerText.Get("users.error.usernameCharacters");
         return null;
     }
 
     public string? ValidatePassword(string? password)
     {
-        if (string.IsNullOrEmpty(password)) return "A password is required.";
+        if (string.IsNullOrEmpty(password)) return ServerText.Get("users.error.passwordRequired");
         if (password.Length < _options.MinPasswordLength)
-            return $"Passwords must be at least {_options.MinPasswordLength} characters.";
-        if (password.Length > 256) return "Passwords must be 256 characters or fewer.";
+            return ServerText.Plural("users.error.passwordShort", _options.MinPasswordLength);
+        if (password.Length > 256) return ServerText.Get("users.error.passwordLong");
         return null;
     }
 
@@ -83,7 +84,7 @@ public sealed partial class UserStore
     {
         var usernameError = ValidateUsername(username);
         if (usernameError is not null) return (null, usernameError);
-        if (!Roles.IsValid(role)) return (null, "Unknown role.");
+        if (!Roles.IsValid(role)) return (null, ServerText.Get("users.error.unknownRole"));
         if (password is not null && ValidatePassword(password) is { } passwordError) return (null, passwordError);
 
         username = username.Trim();
@@ -91,7 +92,7 @@ public sealed partial class UserStore
         return await _store.UpdateAsync<(UserRecord? User, string? Error)>(users =>
         {
             if (users.Any(u => string.Equals(u.Username, username, StringComparison.OrdinalIgnoreCase)))
-                return ((null, "That username is already taken."), false);
+                return ((null, ServerText.Get("users.error.usernameTaken")), false);
 
             var user = new UserRecord
             {
@@ -174,10 +175,10 @@ public sealed partial class UserStore
         return await _store.UpdateAsync<(bool Ok, string? Error)>(users =>
         {
             var user = users.FirstOrDefault(u => u.Id == userId);
-            if (user is null) return ((false, "No such user."), false);
-            if (user.IsBootstrap) return ((false, "The bootstrap administrator cannot be deleted."), false);
+            if (user is null) return ((false, ServerText.Get("users.error.noUser")), false);
+            if (user.IsBootstrap) return ((false, ServerText.Get("users.error.bootstrap")), false);
             if (user.IsAdministrator && users.Count(u => u.IsAdministrator && !u.IsDisabled) <= 1)
-                return ((false, "At least one active administrator must remain."), false);
+                return ((false, ServerText.Get("users.error.lastAdministrator")), false);
 
             users.Remove(user);
             return ((true, null), true);

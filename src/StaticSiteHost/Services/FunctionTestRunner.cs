@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using StaticSiteHost.Functions;
+using StaticSiteHost.Localization;
 using StaticSiteHost.Services.Ai;
 using StaticSiteHost.Services.Realtime;
 
@@ -110,7 +111,7 @@ public sealed class FunctionTestRunner
         var query = (request.Query ?? "").Trim().TrimStart('?');
 
         if ((request.Body?.Length ?? 0) > MaxRequestBodyChars)
-            return Failed($"The request body is limited to {MaxRequestBodyChars / 1024 / 1024} MB.");
+            return Failed(ServerText.Get("functions.test.bodyLimit", new { size = MaxRequestBodyChars / 1024 / 1024 }));
 
         using var aborted = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var body = new CappedMemoryStream(MaxBodyBytes);
@@ -151,7 +152,7 @@ public sealed class FunctionTestRunner
             {
                 // The handler keeps its thread until it notices; all a test can do is stop waiting.
                 await aborted.CancelAsync();
-                return Failed($"The function did not finish within {Timeout.TotalSeconds:0} seconds.", clock.ElapsedMilliseconds);
+                return Failed(ServerText.Get("functions.test.timeout", new { seconds = Timeout.TotalSeconds.ToString("0") }), clock.ElapsedMilliseconds);
             }
 
             await run;
@@ -161,7 +162,7 @@ public sealed class FunctionTestRunner
             if (!matched)
             {
                 return Failed(
-                    $"No route matches {method} {path}. On the live site this request would fall through to the site's files.",
+                    ServerText.Get("functions.test.noRoute", new { method, path }),
                     clock.ElapsedMilliseconds, matched: false);
             }
 
