@@ -219,7 +219,7 @@
   "site.headers.examplesLabel": "Añade un ejemplo y luego edítalo:",
   "site.headers.example.noCacheJson": "No guardar en caché el JSON",
   "site.headers.example.noCacheJsonHint": "Para archivos de datos que cambian en cada despliegue pero mantienen el nombre. El navegador busca una copia nueva cada vez.",
-  "site.headers.example.fingerprinted": "Guardar en caché 1 año los archivos con hash en el nombre",
+  "site.headers.example.fingerprinted": "Caché de 1 año para archivos con hash",
   "site.headers.example.fingerprintedHint": "Solo es seguro cuando el nombre del archivo cambia con su contenido, como en `app.a1b2c3.js`.",
   "site.headers.example.noStore": "No guardar nunca una carpeta",
   "site.headers.example.noStoreHint": "Más estricto que `no-cache`: el navegador y los proxies no escriben nada en disco.",

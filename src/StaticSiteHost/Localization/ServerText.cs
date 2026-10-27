@@ -23,6 +23,10 @@ public static class ServerText
         return TextFormat.Text(template, all);
     }
 
+    /// <summary>Sentences one after another: a space between them, except in Chinese and Japanese, whose full stop carries its own.</summary>
+    public static string Sentences(IEnumerable<string> sentences) =>
+        string.Join(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName is "zh" or "ja" ? "" : " ", sentences);
+
     /// <summary>Makes text in English whatever the request's language: for a log line or anything stored.</summary>
     public static T English<T>(Func<T> make)
     {

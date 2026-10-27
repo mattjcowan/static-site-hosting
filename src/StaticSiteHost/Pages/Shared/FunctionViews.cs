@@ -132,7 +132,7 @@ public static class FunctionUploads
         if (bundle.Warnings > 0)
             sentences.Add(strings.Plural("functions.deployed.warnings", bundle.Warnings));
 
-        return string.Join(" ", sentences);
+        return ServerText.Sentences(sentences);
     }
 
     /// <summary>The status line after one file was removed and the rest deployed again.</summary>

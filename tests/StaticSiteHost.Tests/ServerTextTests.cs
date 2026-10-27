@@ -50,6 +50,14 @@ public class ServerTextTests
     }
 
     [Fact]
+    public void Sentences_take_a_space_between_them_except_in_chinese()
+    {
+        InLanguage("en", () => Assert.Equal("One. Two.", ServerText.Sentences(["One.", "Two."])));
+        InLanguage("fr", () => Assert.Equal("Un. Deux.", ServerText.Sentences(["Un.", "Deux."])));
+        InLanguage("zh-Hans", () => Assert.Equal("一。二。", ServerText.Sentences(["一。", "二。"])));
+    }
+
+    [Fact]
     public void Text_for_a_log_line_is_english_and_the_language_comes_back_after()
     {
         InLanguage("fr", () =>

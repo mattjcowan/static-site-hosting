@@ -461,7 +461,7 @@ public sealed class ZipDeploymentService
     {
         if (parse(text, out var rules, out var errors)) return rules;
 
-        warnings.Add(ServerText.Get("deploy.warning.ruleFileIgnored", new { name, problems = string.Join(" ", errors.Take(3)) }));
+        warnings.Add(ServerText.Get("deploy.warning.ruleFileIgnored", new { name, problems = ServerText.Sentences(errors.Take(3)) }));
         return [];
     }
 
