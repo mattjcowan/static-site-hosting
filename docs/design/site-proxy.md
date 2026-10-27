@@ -1258,7 +1258,7 @@ another alias and from the domain; renaming the site to its own alias took that 
 The shared passcode cookie in Chromium over HTTPS: unlocking at `abc.app.localhost` set
 `ssh.pass` on that host and `ssh.pass.{domain}` on `.app.localhost` (Secure, HttpOnly, Lax), and
 `def` and `xyz.app.localhost` then opened without the form, while `admin.app.localhost`, a site of
-its own with a passcode of its own, still asked. Not checked in Safari or Firefox. Over MCP
+its own with a passcode of its own, still asked. Firefox and WebKit were checked later (below). Over MCP
 (`tools/list` and calls with an API key) and in the management assistant with Claude Haiku: asked
 to add `*.tenants.localhost` and an `/api` route sharing cookies on `app.localhost`, it called
 `set_site_aliases` with the old list kept and `set_proxy_route` with `cookieMode: parent`; asked for
@@ -1280,7 +1280,52 @@ further down (`deep.abc.…` resolved), which the server answers as any name it 
 README says so. The records pointed at 192.0.2.10, and plain DNS from the WSL machine used drops
 answers with reserved addresses, so the lookups went over HTTPS.
 
-**Not checked:** the DNS page's alias rows in a browser, which need Cloudflare connected.
+**Checked before release** on 2026-10-26, after the commit:
+
+* **Upgrade from v0.10.0.** The v0.10.0 tag, built on its own, filled an empty data folder with
+  HTTPS in the server: a site with a passcode, two proxy routes (one sharing cookies on a parent),
+  header rules, redirects, a plain and a secret variable, its own branding, a self-signed
+  certificate with HSTS; a site with an uploaded certificate and functions; two sites on an
+  uploaded shared wildcard certificate, with a server-wide route that one of them turns off; the
+  server's branding, a member, an API key and an AI provider. A visitor unlocked the private site.
+  This build then started on the same folder. Every API answer was the same apart from the new
+  `aliases` and `aliasOf` fields and timestamps; every host served the same certificate; the old
+  visitor cookie still opened the private site; the routes, rules, function, server-wide route and
+  branding answered as before; the API key made under v0.10.0 worked; and every management page
+  (each site's seven tabs included) loaded with no page or console error. Other domains added to
+  the upgraded private site then worked: its records kept, the exact one got its own self-signed
+  certificate and redirect to HTTPS, a wildcard name the stand-in, and one unlock under the
+  wildcard opened the other names.
+* **Back to v0.10.0** on that folder: it loads every site and serves each at its domain. It
+  ignores other domains (they get the no-site page), and drops them from a site's `site.json` the
+  next time it saves that site, so they have to be set again after upgrading once more. The
+  release notes should say so.
+* **MCP** (`mcp.py`, on a copy of the test data): every tool answered as before. With the site's
+  HTTPS off, `get_tls` gave its wildcard `effective: none` and no problem, and `shared` again when
+  set back to automatic. `get_dns` called straight after `set_site_aliases` still listed the old
+  names: the DNS status is rebuilt in the background about a second after any change, as for a
+  new site. A second later it was right. The exact other domain `www.example.test2` is not a
+  reserved name, so automatic asked Let's Encrypt, which refused it; the error is in `lastError`,
+  as for a site.
+* **The shared passcode cookie in Firefox 144 and WebKit 26**, as in Chromium 143, with
+  Playwright's builds and a small CONNECT proxy sending every name to the server (no root needed):
+  both `*.app.example.test` and `*.app.localhost`. In all three, unlocking at `abc` set `ssh.pass`
+  on that host and `ssh.pass.www.example.test` on the wildcard's domain (Secure, HttpOnly, Lax);
+  `def` and a deep link at `xyz` opened without the form; another site under the same domain, the
+  exact other domain and the site's own domain still asked.
+* **The DNS page with Cloudflare connected**, against the real test zone. v0.10.0 gave a site its
+  record; after the upgrade the record was kept as it was (same id), and the site's wildcard and
+  exact other domains each got one A record, `ok`, with `aliasOf`. A name that already had a
+  record made elsewhere showed a conflict and was left alone. Proxying the site's row proxied its
+  other domains' records too, the wildcard's included. Deleting the site deleted its three records
+  and left the one made elsewhere. The page, at 1280 and 390 pixels: each other domain's row says
+  "other domain of …", links to the site's Other domains card, and has no buttons; no page error,
+  and the page is never wider than the screen. At 390 pixels the table scrolls sideways inside its
+  card, as it already did (the long "other domain of …" badge widens its first column). Every
+  record with the run's label was deleted after, and the token forgotten.
+
+**Not checked:** Safari on a Mac, with mkcert certificates: unlocking at one name under a
+wildcard, then opening another without the form. Only the user can do this.
 
 **Reviewed** on 2026-10-23 by Fable 5.1 at xhigh effort, read-only, over the whole uncommitted
 change. Three defects, each confirmed in the code and fixed:
