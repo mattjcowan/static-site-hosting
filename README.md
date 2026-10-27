@@ -3268,7 +3268,7 @@ change per site.
 **How to use it.**
 
 1. **New service from a Docker image:** `mattjcowan/static-site-hosting:latest`, or a version
-   such as `mattjcowan/static-site-hosting:0.10.1` to choose when to upgrade. The `slim` tag serves
+   such as `mattjcowan/static-site-hosting:0.10.2` to choose when to upgrade. The `slim` tag serves
    static sites only, without functions.
 2. **Add a volume mounted at `/data`.** Users, keys, sites and releases live there. Without a
    volume, every redeploy starts empty.
